@@ -1,0 +1,608 @@
+/* 登录/注册面板样式，由 index.html 中 .lreg-root 容器限定 */
+
+.lreg-root .register-panel {
+    display: none;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 84px;
+    z-index: 160;
+    padding: 0 24px;
+    box-sizing: border-box;
+}
+
+.lreg-root .register-panel.show {
+    display: block;
+}
+
+/* 新人注册（独立窗口，底栏上方） */
+.lreg-root .newuser-register-panel {
+    display: none;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 84px;
+    z-index: 158;
+    padding: 0 24px;
+    box-sizing: border-box;
+}
+
+.lreg-root .newuser-register-panel.show {
+    display: block;
+}
+
+.lreg-root .newuser-register-card {
+    position: relative;
+    width: min(420px, 94vw);
+    margin: 0 auto;
+    padding: 28px 22px 32px;
+    border-radius: 16px;
+    background: #3b38a3;
+    box-shadow: 0 10px 36px rgba(35, 32, 120, 0.45);
+    box-sizing: border-box;
+}
+
+.lreg-root .newuser-register-close {
+    position: absolute;
+    top: 10px;
+    right: 12px;
+    width: 36px;
+    height: 36px;
+    border: none;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 26px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.lreg-root .newuser-register-close:hover {
+    color: #fff;
+}
+
+.lreg-root .newuser-register-title {
+    margin: 0 0 16px;
+    padding: 0 40px 0 0;
+    font-size: 20px;
+    font-weight: 700;
+    color: #fff;
+    text-align: left;
+    letter-spacing: 0.04em;
+}
+
+.lreg-root .newuser-register-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    margin-top: 0;
+}
+
+.lreg-root .newuser-reg-field {
+    display: flex;
+    align-items: stretch;
+    background: #fff;
+    border-radius: 12px;
+    overflow: hidden;
+    min-height: 48px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+.lreg-root .newuser-reg-field--phone {
+    align-items: center;
+    overflow: hidden;
+    padding: 5px 6px 5px 0;
+    box-sizing: border-box;
+}
+
+.lreg-root .newuser-reg-field--phone .newuser-reg-input {
+    padding-top: 12px;
+    padding-bottom: 12px;
+}
+
+.lreg-root .newuser-reg-arrow-slot {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 4px 4px calc(0.5em + 2px);
+    box-sizing: border-box;
+}
+
+.lreg-root .newuser-reg-input {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    outline: none;
+    padding: 14px 16px;
+    font-size: 16px;
+    color: #1a1a1a;
+    background: #fff;
+}
+
+.lreg-root .newuser-reg-input::placeholder {
+    color: #9a9a9a;
+}
+
+.lreg-root .newuser-reg-arrow-btn {
+    flex-shrink: 0;
+    width: 44px;
+    height: 34px;
+    border: none;
+    border-radius: 8px;
+    background: #3b38a3;
+    color: #fff;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    line-height: 1;
+    box-sizing: border-box;
+}
+
+.lreg-root .newuser-reg-arrow-btn:hover {
+    filter: brightness(1.08);
+}
+
+/** 邀请码行：label 与输入框同一行，整体靠左 */
+.lreg-root .newuser-reg-invite-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 10px;
+}
+
+.lreg-root .newuser-reg-invite-label {
+    flex: 0 0 auto;
+    font-size: 13px;
+    font-weight: 600;
+    color: #e5e7eb;
+    white-space: nowrap;
+    user-select: none;
+    margin-left: 0;
+}
+
+.lreg-root .newuser-reg-invite-wrap .newuser-reg-field {
+    flex: 0 0 210px;
+    width: 210px;
+}
+
+.lreg-root .newuser-reg-input--invite {
+    width: 100%;
+    padding-left: 12px;
+    padding-right: 12px;
+}
+
+/**
+ * 非 type=password，避免 Safari / iCloud 钥匙串弹出「强密码」与自动填充。
+ * 用 WebKit 圆点掩码，外观仍类似密码框。
+ */
+.lreg-root .pwd-no-safari-strong {
+    -webkit-text-security: disc;
+}
+
+@supports (text-security: disc) {
+    .lreg-root .pwd-no-safari-strong {
+        text-security: disc;
+    }
+}
+
+.lreg-root .register-dialog {
+    position: relative;
+    width: min(600px, 94vw);
+    margin: 0 auto;
+    border-radius: 16px;
+    background: #fff;
+    padding: 0;
+    box-sizing: border-box;
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.12);
+    overflow: hidden;
+}
+
+.lreg-root .register-dialog .register-close {
+    position: absolute;
+    top: 14px;
+    right: 16px;
+    z-index: 2;
+    background: none;
+    border: none;
+    font-size: 22px;
+    color: #999;
+    cursor: pointer;
+    line-height: 1;
+    padding: 4px;
+}
+
+.lreg-root .register-dialog .register-close:hover {
+    color: #333;
+}
+
+.lreg-root .register-dev-toolbar {
+    display: none;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px 16px;
+    padding: 10px 48px 10px 16px;
+    background: linear-gradient(180deg, #fff9e6 0%, #fff3cc 100%);
+    border-bottom: 1px solid #e8d4a8;
+    font-size: 13px;
+    color: #5c4a21;
+}
+
+.lreg-root .register-dev-toolbar.is-visible {
+    display: flex;
+}
+
+.lreg-root .register-dev-toolbar-title {
+    font-weight: 700;
+    color: #8a6d1b;
+}
+
+.lreg-root .register-dev-toolbar-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.lreg-root .register-dev-toolbar-label input {
+    width: 16px;
+    height: 16px;
+    accent-color: #c92a2a;
+}
+
+.lreg-root .register-dev-toolbar-link {
+    color: #1864ab;
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.lreg-root .register-dev-toolbar-link:hover {
+    text-decoration: underline;
+}
+
+.lreg-root .register-split-inner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    min-height: 320px;
+    padding-top: 40px;
+}
+
+.lreg-root .register-col-qr {
+    flex: 0 0 auto;
+    width: 40%;
+    min-width: 200px;
+    text-align: center;
+    padding: 20px 16px 24px;
+    box-sizing: border-box;
+    border-right: 1px solid #ebebeb;
+}
+
+.lreg-root .register-col-form {
+    flex: 1;
+    min-width: 200px;
+    padding: 16px 20px 20px;
+    box-sizing: border-box;
+}
+
+.lreg-root .register-col-title {
+    color: #161823;
+    font-size: 15px;
+    margin: 0 0 14px;
+    font-weight: 600;
+}
+
+.lreg-root .register-qr-wrap {
+    background: #fff;
+    border-radius: 8px;
+    padding: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 168px;
+    border: 1px solid #f0f0f0;
+}
+
+.lreg-root .register-qr-wrap img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+}
+
+.lreg-root .register-qr-hint {
+    color: #999;
+    font-size: 12px;
+    margin: 12px 8px 0;
+    line-height: 1.5;
+}
+
+.lreg-root .register-qr-countdown {
+    color: #666;
+    font-size: 13px;
+    font-weight: 600;
+    margin: 8px 8px 0;
+    line-height: 1.5;
+    font-variant-numeric: tabular-nums;
+}
+
+.lreg-root .register-col-qr .qr-wrap {
+    margin-top: 8px;
+}
+
+.lreg-root .register-col-qr .action-wrap {
+    margin-top: 10px;
+    padding-top: 10px;
+    text-align: center;
+    display: none !important;
+}
+
+.lreg-root .register-col-qr .form-inner-container {
+    margin-left: 0;
+    max-width: 100%;
+}
+
+.lreg-root .register-col-qr .input-row label {
+    width: 56px;
+    font-size: 12px;
+}
+
+.lreg-root .register-col-qr .email-edit {
+    width: 118px !important;
+    max-width: calc(100% - 64px);
+}
+
+.lreg-root .register-col-qr .code-edit {
+    width: 118px !important;
+}
+
+.lreg-root .register-col-qr #phoneInput {
+    width: 148px !important;
+    max-width: 100%;
+}
+
+.lreg-root .register-col-qr .send-code-button {
+    min-width: 88px;
+    font-size: 12px;
+    padding: 6px 8px;
+}
+
+.lreg-root .register-col-qr .submit-btn {
+    margin-top: 10px;
+}
+
+.lreg-root .register-col-qr #emailInput {
+    width: 148px !important;
+    max-width: 100%;
+}
+
+.lreg-root .register-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 20px;
+    border-bottom: none;
+    margin-bottom: 18px;
+}
+
+.lreg-root .register-tab {
+    flex: 0 0 auto;
+    padding: 0 2px 10px;
+    font-size: 15px;
+    color: #999;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    margin-bottom: 0;
+}
+
+.lreg-root .register-tab.active {
+    color: #161823;
+    font-weight: 600;
+    border-bottom-color: #161823;
+}
+
+.lreg-root .register-tab-panel {
+    display: none;
+}
+
+.lreg-root .register-tab-panel.active {
+    display: block;
+}
+
+.lreg-root .register-super-auth-hint {
+    margin: -6px 0 12px;
+    padding: 7px 10px;
+    border: 1px solid #d0e8ff;
+    background: #f4faff;
+    color: #1f4b7a;
+    border-radius: 8px;
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.lreg-root .register-super-auth-hint[hidden] {
+    display: none !important;
+}
+
+.lreg-root .register-field-label {
+    display: block;
+    font-size: 13px;
+    color: #666;
+    margin: 0 0 8px;
+}
+
+.lreg-root .register-field-label--mt {
+    margin-top: 16px;
+}
+
+.lreg-root .register-input-line {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    max-width: 100%;
+    background: #f8f8f8;
+    border-radius: 8px;
+    border: 1px solid #eee;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+.lreg-root .register-input-line:focus-within {
+    border-color: #ccc;
+    background: #fff;
+}
+
+.lreg-root .register-cc {
+    flex-shrink: 0;
+    padding: 0 12px;
+    font-size: 15px;
+    color: #161823;
+    border-right: 1px solid #e8e8e8;
+    line-height: 46px;
+    height: 46px;
+}
+
+.lreg-root .register-field-input {
+    flex: 1;
+    border: none;
+    outline: none;
+    font-size: 15px;
+    padding: 12px 14px;
+    color: #161823;
+    min-width: 0;
+    background: transparent;
+}
+
+.lreg-root .register-input-line .register-send-code {
+    flex-shrink: 0;
+    border: none;
+    background: transparent;
+    color: #fe2c55;
+    font-size: 14px;
+    padding: 0 14px;
+    cursor: pointer;
+    white-space: nowrap;
+    height: 46px;
+}
+
+.lreg-root .register-input-line .register-send-code:hover {
+    opacity: 0.85;
+}
+
+.lreg-root .register-input-line .register-send-code:disabled {
+    color: #bbb;
+    cursor: not-allowed;
+    opacity: 0.85;
+}
+
+.lreg-root .register-send-code-cooldown {
+    flex-shrink: 0;
+    box-sizing: border-box;
+    width: 0;
+    padding: 0;
+    overflow: hidden;
+    font-size: 14px;
+    color: #888;
+    text-align: right;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+    line-height: 46px;
+    height: 46px;
+}
+
+.lreg-root .register-send-code-cooldown.visible {
+    width: 58px;
+    padding-right: 8px;
+}
+
+.lreg-root .register-primary-btn {
+    width: 33.333%;
+    max-width: 100%;
+    margin-left: auto;
+    margin-right: auto;
+    display: block;
+    margin-top: 20px;
+    padding: 12px 16px;
+    border: none;
+    border-radius: 24px;
+    background: #fe2c55;
+    color: #fff;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.lreg-root .register-primary-btn:hover {
+    opacity: 0.92;
+}
+
+.lreg-root .register-kv-preview {
+    display: none;
+    width: min(600px, 94vw);
+    margin: 0 auto 12px;
+    padding: 12px 14px;
+    box-sizing: border-box;
+    background: rgba(255, 255, 255, 0.95);
+    border-radius: 10px;
+    color: #222;
+    font-size: 12px;
+    max-height: 42vh;
+    overflow: auto;
+}
+
+@media (max-width: 640px) {
+    .lreg-root .register-split-inner {
+        flex-direction: column;
+    }
+    .lreg-root .register-col-qr {
+        width: 100%;
+        border-right: none;
+        border-bottom: 1px solid #ebebeb;
+    }
+}
+
+.lreg-root .register-kv-save-status {
+    margin: 10px 0 0;
+    font-size: 12px;
+    font-weight: 600;
+    color: #2b8a3e;
+}
+
+.lreg-root .register-kv-save-status.is-error {
+    color: #c92a2a;
+}
+
+.lreg-root .register-kv-section {
+    margin-bottom: 12px;
+}
+
+.lreg-root .register-kv-section:last-child {
+    margin-bottom: 0;
+}
+
+.lreg-root .register-kv-title {
+    font-weight: 700;
+    color: #2e30c7;
+    margin-bottom: 6px;
+    font-size: 13px;
+}
+
+.lreg-root .register-kv-pre {
+    margin: 0;
+    padding: 8px 10px;
+    background: #f4f4f8;
+    border-radius: 6px;
+    white-space: pre-wrap;
+    word-break: break-all;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 11px;
+    line-height: 1.45;
+}

@@ -1,0 +1,297 @@
+.lreg-root .register-panel,
+.lreg-root .newuser-register-panel {
+  top: 50%;
+  bottom: auto;
+  transform: translateY(-50%);
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.lreg-root .register-split-inner--single {
+  min-height: auto;
+  padding-top: 40px;
+}
+
+.lreg-root .register-tabs {
+  gap: 0 24px;
+  margin-bottom: 20px;
+}
+
+.lreg-root .register-tab {
+  color: #666;
+  font-size: 16px;
+  padding-bottom: 12px;
+}
+
+.lreg-root .register-tab:hover {
+  color: #161823;
+}
+
+.lreg-root .register-tab.active {
+  color: #161823;
+}
+
+.lreg-root .register-login-status {
+  margin: 10px 0 0;
+  min-height: 1.4em;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #666;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.lreg-root .register-login-status.is-pending {
+  color: #1f4b7a;
+}
+
+.lreg-root .register-login-status.is-ok {
+  color: #2b8a3e;
+}
+
+.lreg-root .register-login-status.is-error {
+  color: #c92a2a;
+}
+
+.lreg-root .register-split-inner--single .register-col-form {
+  width: 100%;
+  min-width: 0;
+  padding: 16px 20px 20px;
+}
+
+.lreg-root .register-input-line--stack {
+  margin-bottom: 12px;
+}
+
+.lreg-root .register-input-line--stack:last-of-type {
+  margin-bottom: 0;
+}
+
+.lreg-root .register-field-input--ghost {
+  color: #161823;
+}
+
+.lreg-root .register-field-input--ghost::placeholder {
+  color: #b8b8b8;
+  font-weight: 400;
+}
+
+.lreg-root .register-field-input--ghost:not(:placeholder-shown) {
+  color: #161823;
+}
+
+.lreg-root .register-code-qr-section {
+  margin: 8px 0 12px;
+  text-align: center;
+}
+
+.lreg-root .register-qr-wrap--inline {
+  display: inline-flex;
+  min-height: 148px;
+  margin: 0 auto;
+}
+
+.lreg-root .register-qr-hint--inline {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: #999;
+  line-height: 1.5;
+}
+
+.lreg-root .register-code-qr-section .register-qr-countdown {
+  margin-top: 6px;
+}
+
+.lreg-root .turnstile-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  background: rgba(0, 0, 0, 0.45);
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.lreg-root .turnstile-overlay.show {
+  display: flex;
+}
+
+.lreg-root .turnstile-card {
+  background: #fff;
+  border-radius: 12px;
+  padding: 20px;
+  min-width: 320px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+}
+
+.lreg-root .turnstile-cancel-btn {
+  border: none;
+  background: transparent;
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+#userAdminNav {
+  display: flex;
+  gap: 12px;
+  padding: 8px 28px;
+  background: #2f5578;
+}
+
+#userAdminNav[hidden] {
+  display: none !important;
+}
+
+#userAdminNav button {
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  background: transparent;
+  color: #fff;
+  border-radius: 4px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.profile-modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 1800;
+  background: rgba(0, 0, 0, 0.45);
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  box-sizing: border-box;
+}
+
+.profile-modal-overlay.show {
+  display: flex;
+}
+
+.profile-modal-sheet {
+  position: relative;
+  width: min(1200px, 96vw);
+  max-height: 90vh;
+  background: #fff;
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.profile-modal-close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 2;
+  border: none;
+  background: transparent;
+  font-size: 24px;
+  cursor: pointer;
+  color: #666;
+}
+
+.user-list-modal-head {
+  padding: 16px 48px 12px 16px;
+  border-bottom: 1px solid #eee;
+}
+
+.user-list-modal-head-left {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.user-list-modal-title {
+  margin: 0;
+  font-size: 18px;
+}
+
+.user-list-modal-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.user-list-modal-search-input,
+.user-list-modal-filter-select {
+  height: 32px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 0 8px;
+  font-size: 13px;
+}
+
+.user-list-modal-filter-btn {
+  height: 32px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: #f7f7f7;
+  padding: 0 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.user-list-default-group-row {
+  padding: 10px 16px;
+  border-bottom: 1px solid #eee;
+}
+
+.user-list-default-group-row-inner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.user-manage-split {
+  display: flex;
+  min-height: 420px;
+  flex: 1;
+  overflow: hidden;
+}
+
+.user-manage-tree-column {
+  width: 220px;
+  border-right: 1px solid #eee;
+  display: flex;
+  flex-direction: column;
+}
+
+.user-manage-tree-pane {
+  flex: 1;
+  overflow: auto;
+  padding: 8px;
+}
+
+.user-manage-tree-list button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.user-manage-tree-list button:hover,
+.user-manage-tree-list button.is-active {
+  background: #eef4ff;
+}
+
+.user-list-grid-section {
+  flex: 1;
+  overflow: auto;
+  padding: 8px;
+}
+
+#userListModalGrid {
+  width: 100%;
+  min-height: 360px;
+}
