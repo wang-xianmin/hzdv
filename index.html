@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hello World</title>
+  <style>
+    :root {
+      --nav-bg: #3d6a96;
+      --nav-text: #ffffff;
+      --nav-height: 64px;
+      --dropdown-bg: #ffffff;
+      --dropdown-text: #1a1a1a;
+      --dropdown-hover: #f2f5f8;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+        "Noto Sans SC", sans-serif;
+      background: #f5f7fa;
+      color: #1a1a1a;
+      min-height: 100vh;
+    }
+
+    .site-header {
+      position: sticky;
+      top: 0;
+      z-index: 1000;
+      height: var(--nav-height);
+      background: var(--nav-bg);
+      color: var(--nav-text);
+    }
+
+    .nav {
+      max-width: 1400px;
+      margin: 0 auto;
+      height: 100%;
+      padding: 0 28px;
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 32px;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 40px;
+      height: 40px;
+      border: 1.5px solid rgba(255, 255, 255, 0.7);
+      border-radius: 8px;
+      color: var(--nav-text);
+      text-decoration: none;
+      font-size: 11px;
+      letter-spacing: 0.04em;
+      opacity: 0.9;
+      flex-shrink: 0;
+    }
+
+    .logo:hover {
+      opacity: 1;
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 36px;
+      list-style: none;
+    }
+
+    .nav-links a {
+      color: var(--nav-text);
+      text-decoration: none;
+      font-size: 15px;
+      font-weight: 400;
+      white-space: nowrap;
+      opacity: 0.92;
+      transition: opacity 0.15s ease;
+    }
+
+    .nav-links a:hover {
+      opacity: 1;
+    }
+
+    .menu-toggle {
+      display: none;
+      flex-direction: column;
+      justify-content: center;
+      gap: 5px;
+      width: 36px;
+      height: 36px;
+      padding: 8px;
+      border: none;
+      background: transparent;
+      color: var(--nav-text);
+      cursor: pointer;
+      border-radius: 4px;
+      flex-shrink: 0;
+    }
+
+    .menu-toggle:hover,
+    .menu-toggle[aria-expanded="true"] {
+      background: rgba(255, 255, 255, 0.12);
+    }
+
+    .menu-toggle span {
+      display: block;
+      width: 100%;
+      height: 2px;
+      background: currentColor;
+      border-radius: 1px;
+      transition: transform 0.2s ease, opacity 0.2s ease;
+    }
+
+    .menu-toggle[aria-expanded="true"] span:nth-child(1) {
+      transform: translateY(7px) rotate(45deg);
+    }
+
+    .menu-toggle[aria-expanded="true"] span:nth-child(2) {
+      opacity: 0;
+    }
+
+    .menu-toggle[aria-expanded="true"] span:nth-child(3) {
+      transform: translateY(-7px) rotate(-45deg);
+    }
+
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      flex-shrink: 0;
+    }
+
+    .cta-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      height: 34px;
+      padding: 0 16px;
+      border: 1px solid rgba(255, 255, 255, 0.85);
+      border-radius: 4px;
+      color: var(--nav-text);
+      text-decoration: none;
+      font-size: 14px;
+      white-space: nowrap;
+      transition: background 0.15s ease;
+    }
+
+    .cta-btn:hover {
+      background: rgba(255, 255, 255, 0.12);
+    }
+
+    .lang-wrap {
+      position: relative;
+    }
+
+    .icon-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      border: none;
+      background: transparent;
+      color: var(--nav-text);
+      cursor: pointer;
+      border-radius: 4px;
+    }
+
+    .icon-btn:hover,
+    .icon-btn[aria-expanded="true"] {
+      background: rgba(255, 255, 255, 0.12);
+    }
+
+    .icon-btn svg {
+      width: 20px;
+      height: 20px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.5;
+    }
+
+    .login-link {
+      color: var(--nav-text);
+      text-decoration: none;
+      font-size: 15px;
+      white-space: nowrap;
+      opacity: 0.92;
+    }
+
+    .login-link:hover {
+      opacity: 1;
+    }
+
+    .lang-dropdown {
+      position: absolute;
+      top: calc(100% + 8px);
+      right: 0;
+      min-width: 120px;
+      padding: 6px 0;
+      background: var(--dropdown-bg);
+      color: var(--dropdown-text);
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+      list-style: none;
+      display: none;
+      overflow: hidden;
+    }
+
+    .lang-dropdown.open {
+      display: block;
+    }
+
+    .lang-dropdown button {
+      display: block;
+      width: 100%;
+      padding: 10px 16px;
+      border: none;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      font-size: 14px;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .lang-dropdown button:hover,
+    .lang-dropdown button.active {
+      background: var(--dropdown-hover);
+    }
+
+    .lang-dropdown button.active {
+      font-weight: 600;
+    }
+
+    main {
+      padding: 48px 28px;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    main h1 {
+      font-size: 2rem;
+      font-weight: 600;
+    }
+
+    @media (max-width: 768px) {
+      .nav {
+        padding: 0 16px;
+        gap: 16px;
+        grid-template-columns: auto auto 1fr;
+        position: relative;
+      }
+
+      .menu-toggle {
+        display: flex;
+      }
+
+      .nav-links {
+        display: none;
+        position: absolute;
+        top: var(--nav-height);
+        left: 0;
+        right: 0;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0;
+        padding: 8px 0;
+        background: var(--nav-bg);
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15);
+      }
+
+      .nav-links.open {
+        display: flex;
+      }
+
+      .nav-links li {
+        width: 100%;
+      }
+
+      .nav-links a {
+        display: block;
+        padding: 14px 20px;
+      }
+
+      .nav-links a:hover {
+        background: rgba(255, 255, 255, 0.1);
+      }
+
+      .nav-actions {
+        justify-self: end;
+      }
+
+      .cta-btn {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <nav class="nav" aria-label="Main">
+      <a class="logo" href="#" data-i18n="logo" aria-label="Logo">LOGO</a>
+
+      <button
+        type="button"
+        class="menu-toggle"
+        id="menu-toggle"
+        aria-label="Menu"
+        aria-controls="nav-links"
+        aria-expanded="false"
+      >
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+
+      <ul class="nav-links" id="nav-links">
+        <li><a href="#" data-i18n="products"></a></li>
+        <li><a href="#" data-i18n="news"></a></li>
+        <li><a href="#" data-i18n="contact"></a></li>
+      </ul>
+
+      <div class="nav-actions">
+        <a class="cta-btn" href="#" data-i18n="testdrive"></a>
+
+        <div class="lang-wrap">
+          <button
+            type="button"
+            class="icon-btn"
+            id="lang-toggle"
+            aria-label="Language"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M3 12h18" />
+              <path d="M12 3a14 14 0 0 1 0 18" />
+              <path d="M12 3a14 14 0 0 0 0 18" />
+              <path d="M4.5 7.5h15" />
+              <path d="M4.5 16.5h15" />
+            </svg>
+          </button>
+          <ul class="lang-dropdown" id="lang-menu" role="listbox">
+            <li role="option">
+              <button type="button" data-lang="zh">中文</button>
+            </li>
+            <li role="option">
+              <button type="button" data-lang="en">English</button>
+            </li>
+          </ul>
+        </div>
+
+        <a class="login-link" href="#" data-i18n="login"></a>
+      </div>
+    </nav>
+  </header>
+
+  <main>
+    <h1>Hello World</h1>
+  </main>
+
+  <script>
+    const translations = {
+      zh: {
+        logo: "LOGO",
+        products: "产品",
+        news: "新闻与活动",
+        about_us: "了解我们",
+        contact: "联系我们",
+        login: "登录",
+      },
+      en: {
+        logo: "LOGO",
+        products: "Products",
+        news: "News & Activity",
+        about_us: "About DV",
+        contact: "Contact Us",
+        login: "Login",
+      },
+    };
+
+    let currentLang = "zh";
+
+    const langToggle = document.getElementById("lang-toggle");
+    const langMenu = document.getElementById("lang-menu");
+    const menuToggle = document.getElementById("menu-toggle");
+    const navLinks = document.getElementById("nav-links");
+
+    function applyLanguage(lang) {
+      currentLang = lang;
+      const dict = translations[lang];
+      document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+
+      document.querySelectorAll("[data-i18n]").forEach((el) => {
+        const key = el.getAttribute("data-i18n");
+        if (dict[key] != null) {
+          el.textContent = dict[key];
+        }
+      });
+
+      langMenu.querySelectorAll("[data-lang]").forEach((btn) => {
+        btn.classList.toggle("active", btn.getAttribute("data-lang") === lang);
+      });
+    }
+
+    function closeLangMenu() {
+      langMenu.classList.remove("open");
+      langToggle.setAttribute("aria-expanded", "false");
+    }
+
+    function closeMobileMenu() {
+      navLinks.classList.remove("open");
+      menuToggle.setAttribute("aria-expanded", "false");
+    }
+
+    menuToggle.addEventListener("click", (e) => {
+      e.stopPropagation();
+      closeLangMenu();
+      const open = navLinks.classList.toggle("open");
+      menuToggle.setAttribute("aria-expanded", String(open));
+    });
+
+    navLinks.addEventListener("click", (e) => {
+      if (e.target.closest("a")) closeMobileMenu();
+    });
+
+    langToggle.addEventListener("click", (e) => {
+      e.stopPropagation();
+      closeMobileMenu();
+      const open = langMenu.classList.toggle("open");
+      langToggle.setAttribute("aria-expanded", String(open));
+    });
+
+    langMenu.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-lang]");
+      if (!btn) return;
+      applyLanguage(btn.getAttribute("data-lang"));
+      closeLangMenu();
+    });
+
+    document.addEventListener("click", () => {
+      closeLangMenu();
+      closeMobileMenu();
+    });
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        closeLangMenu();
+        closeMobileMenu();
+      }
+    });
+
+    window.addEventListener("resize", () => {
+      if (window.innerWidth > 768) closeMobileMenu();
+    });
+
+    applyLanguage(currentLang);
+  </script>
+</body>
+</html>
