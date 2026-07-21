@@ -80,6 +80,24 @@ export async function onRequest(context) {
     /** 与已有 KV 浅合并，避免客户端收据缺字段时覆盖掉权限等 metadata / value */
     const valueMerged = Object.assign({}, prev.value || {}, value || {});
     const metadataMerged = Object.assign({}, prev.metadata || {}, metadata || {});
+    /** 已废弃：原「权限设置」列，保存时从 metadata 剔除 */
+    [
+      "uA_perms",
+      "uA_act_perms",
+      "stfA_perms_can_ban_post",
+      "uA_perms_add",
+      "uA_perms_del",
+      "uA_perms_block",
+      "uA_perms_unban_usr",
+      "uA_perms_act_post",
+      "uA_perms_act_cmt",
+      "uA_perms_act_hide",
+      "uA_perms_act_del",
+    ].forEach((k) => {
+      if (Object.prototype.hasOwnProperty.call(metadataMerged, k)) {
+        delete metadataMerged[k];
+      }
+    });
     const valueToStore = valueMerged;
 
     try {

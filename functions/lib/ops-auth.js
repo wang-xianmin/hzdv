@@ -1,11 +1,15 @@
 /**
  * 运维接口鉴权：超管 | 技术调试员（与前端 USER_TYPE_OPS_MENU 一致）。
+ * OPS_TEMP_OPEN_TO_ANY_LOGIN=true 时：只要 KV 中存在该登录用户即可（临时调试）。
  */
 
 import { readKvUser } from "./kv-secure.js";
 import { pickKvBinding } from "./kv-binding.js";
 
 const OPS_TYPE_MASK = 0x01 | 0x02;
+
+/** 临时：登录用户均可调运维 API；正式收紧时改 false */
+const OPS_TEMP_OPEN_TO_ANY_LOGIN = true;
 
 function parseTypeMask(raw) {
   const text = String(raw == null ? "" : raw).trim();
@@ -39,7 +43,7 @@ export async function assertOpsAccess(env, phone) {
     throw err;
   }
   const mask = parseTypeMask(row.metadata.type);
-  if ((mask & OPS_TYPE_MASK) === 0) {
+  if (!OPS_TEMP_OPEN_TO_ANY_LOGIN && (mask & OPS_TYPE_MASK) === 0) {
     const err = new Error("Forbidden");
     err.status = 403;
     throw err;

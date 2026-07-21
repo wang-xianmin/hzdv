@@ -268,6 +268,29 @@ export async function updateHeroBackgroundItem(d1, env, id, patch) {
       patch.media_type === "image" || patch.media_type === "video"
         ? patch.media_type
         : existing.media_type,
+    r2_key:
+      patch.r2_key != null && String(patch.r2_key).trim() !== ""
+        ? normalizeHeroR2Key(patch.r2_key)
+        : existing.r2_key,
+    r2_key_mobile:
+      patch.r2_key_mobile === null
+        ? null
+        : patch.r2_key_mobile != null && String(patch.r2_key_mobile).trim() !== ""
+          ? normalizeHeroR2Key(patch.r2_key_mobile)
+          : existing.r2_key_mobile,
+    poster_r2_key:
+      patch.poster_r2_key === null
+        ? null
+        : patch.poster_r2_key != null && String(patch.poster_r2_key).trim() !== ""
+          ? normalizeHeroR2Key(patch.poster_r2_key)
+          : existing.poster_r2_key,
+    poster_r2_key_mobile:
+      patch.poster_r2_key_mobile === null
+        ? null
+        : patch.poster_r2_key_mobile != null &&
+            String(patch.poster_r2_key_mobile).trim() !== ""
+          ? normalizeHeroR2Key(patch.poster_r2_key_mobile)
+          : existing.poster_r2_key_mobile,
     title: patch.title != null ? String(patch.title) : existing.title,
     subtitle: patch.subtitle != null ? String(patch.subtitle) : existing.subtitle,
     cta_label: patch.cta_label != null ? String(patch.cta_label) : existing.cta_label,
@@ -289,12 +312,17 @@ export async function updateHeroBackgroundItem(d1, env, id, patch) {
   await d1
     .prepare(
       `UPDATE hero_background_items SET
-         media_type = ?, title = ?, subtitle = ?, cta_label = ?, cta_url = ?,
+         media_type = ?, r2_key = ?, r2_key_mobile = ?, poster_r2_key = ?, poster_r2_key_mobile = ?,
+         title = ?, subtitle = ?, cta_label = ?, cta_url = ?,
          sort_order = ?, duration_ms = ?, is_active = ?, updated_at = ?
        WHERE id = ?`
     )
     .bind(
       next.media_type,
+      next.r2_key,
+      next.r2_key_mobile,
+      next.poster_r2_key,
+      next.poster_r2_key_mobile,
       next.title,
       next.subtitle,
       next.cta_label,
@@ -310,14 +338,6 @@ export async function updateHeroBackgroundItem(d1, env, id, patch) {
   return mapHeroItemRow(row, env);
 }
 
-export async function deleteHeroBackgroundItem(d1, id) {
-  const rs = await d1
-    .prepare("UPDATE hero_background_items SET is_active = 0, updated_at = ? WHERE id = ?")
-    .bind(Date.now(), id)
-    .run();
-  return rs && typeof rs.changes === "number" ? rs.changes > 0 : false;
-}
-
 export function guessHeroContentType(filename) {
   const lower = String(filename || "").toLowerCase();
   if (lower.endsWith(".mp4")) return "video/mp4";
@@ -326,14 +346,78 @@ export function guessHeroContentType(filename) {
   if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
   if (lower.endsWith(".png")) return "image/png";
   if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".heic") || lower.endsWith(".heif")) return "image/heic";
   return "application/octet-stream";
 }
 
 export function guessHeroMediaType(filename) {
   const lower = String(filename || "").toLowerCase();
   if (/\.(mp4|webm|mov)$/.test(lower)) return "video";
-  if (/\.(jpg|jpeg|png|webp|gif)$/.test(lower)) return "image";
+  if (/\.(jpg|jpeg|png|webp|gif|heic|heif)$/.test(lower)) return "image";
   return "video";
+}
+
+/** 收集一条背景在 R2 上的全部 key（原图/缩略图 × 桌面/手机） */
+export function collectHeroItemR2Keys(row) {
+  if (!row) return [];
+  const keys = [
+    row.r2_key,
+    row.r2_key_mobile,
+    row.poster_r2_key,
+    row.poster_r2_key_mobile,
+  ];
+  const out = [];
+  const seen = Object.create(null);
+  for (const raw of keys) {
+    const k = normalizeHeroR2Key(raw);
+    if (!k || seen[k]) continue;
+    seen[k] = true;
+    out.push(k);
+  }
+  return out;
+}
+
+async function deleteR2Keys(r2, keys) {
+  if (!r2 || !keys || !keys.length) return;
+  await Promise.all(
+    keys.map(async (key) => {
+      try {
+        await r2.delete(key);
+      } catch (e) {
+        console.warn("hero R2 delete failed:", key, e);
+      }
+    })
+  );
+}
+
+/**
+ * 硬删除：先删 R2 原图+缩略图（桌面/手机），再删 D1 行
+ */
+export async function deleteHeroBackgroundItem(d1, id, r2) {
+  const row = await d1
+    .prepare("SELECT * FROM hero_background_items WHERE id = ?")
+    .bind(id)
+    .first();
+  if (!row) return false;
+  await deleteR2Keys(r2, collectHeroItemR2Keys(row));
+  const rs = await d1
+    .prepare("DELETE FROM hero_background_items WHERE id = ?")
+    .bind(id)
+    .run();
+  return rs && typeof rs.changes === "number" ? rs.changes > 0 : true;
+}
+
+/** 替换槽位前删掉该槽旧的原图/缩略图 */
+export async function deleteHeroSlotR2Keys(r2, row, slot) {
+  if (!r2 || !row) return;
+  const keys =
+    slot === "mobile"
+      ? [row.r2_key_mobile, row.poster_r2_key_mobile]
+      : [row.r2_key, row.poster_r2_key];
+  await deleteR2Keys(
+    r2,
+    keys.map((k) => normalizeHeroR2Key(k)).filter(Boolean)
+  );
 }
 
 export function buildHeroUploadKey(filename) {
