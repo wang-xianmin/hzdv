@@ -14,7 +14,7 @@
  * 5) 删除组索引（group:{group}:l/m:{phone}）
  * 6) 删除主 KV 记录（phone:...）
  */
-import { assertPhoneKey, readKvUser } from "../lib/kv-secure.js";
+import { assertPhoneKey, deleteKvUser, readKvUser } from "../lib/kv-secure.js";
 import { getPhoneFromPhoneKey, removeUserGroupIndexes } from "../lib/group-index.js";
 import { kvBindingHint, pickKvBinding } from "../lib/kv-binding.js";
 
@@ -214,18 +214,18 @@ export async function onRequest(context) {
       }
     }
 
-    // ⑤ 删除组索引（组员/组长）
+    // ⑤ 删除组索引（组员/组长，新旧格式）
     let groupIndexDeleted = 0;
     if (group && phone) {
       try {
-        groupIndexDeleted = await removeUserGroupIndexes(kv, group, phone);
+        groupIndexDeleted = await removeUserGroupIndexes(kv, env, group, phone);
       } catch (e) {
         console.warn("delete-kv-user delete group indexes failed:", e);
       }
     }
 
-    // ⑥ 删除主 KV 记录（幂等）
-    await kv.delete(key);
+    // ⑥ 删除主 KV 记录（uk: + 旧 phone:，幂等）
+    await deleteKvUser(kv, env, key);
 
     // ⑦ 记审计（即使头像未执行删除，也记录本次调用）
     try {

@@ -8,6 +8,7 @@
 import { assertPhoneKey, readKvUser, writeKvUser } from "../lib/kv-secure.js";
 import { getPhoneFromPhoneKey, syncUserGroupIndexOnUpdate } from "../lib/group-index.js";
 import { kvBindingHint, pickKvBinding } from "../lib/kv-binding.js";
+
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -79,7 +80,6 @@ export async function onRequest(context) {
     /** 与已有 KV 浅合并，避免客户端收据缺字段时覆盖掉权限等 metadata / value */
     const valueMerged = Object.assign({}, prev.value || {}, value || {});
     const metadataMerged = Object.assign({}, prev.metadata || {}, metadata || {});
-
     const valueToStore = valueMerged;
 
     try {
@@ -99,6 +99,7 @@ export async function onRequest(context) {
       if (phone) {
         indexSync = await syncUserGroupIndexOnUpdate(
           kv,
+          env,
           phone,
           prev.value || {},
           valueToStore || {}

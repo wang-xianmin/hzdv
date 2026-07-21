@@ -3,30 +3,20 @@
  * Body: { key, value, metadata, turnstileToken? }
  * 默认须通过 Turnstile（与 verify-turnstile 同源 siteverify）；
  * Pages 环境变量：TURNSTILE_SECRET_KEY；可选 REGISTER_KV_SKIP_TURNSTILE=1/true/yes 跳过校验（仅本地排错）。
- * KV 加密见 functions/lib/kv-secure.js（ENCRYPTION_KEY / HMAC_SECRET，喂PDF0409）。
+ * KV：仅写 uk:+HMAC（禁止新用户写明文 phone:）；ENCRYPTION_KEY / HMAC_SECRET 缺失 fail-closed。
  */
 import { assertPhoneKey, readKvUser, writeKvUser } from "../lib/kv-secure.js";
 import { kvBindingHint, pickKvBinding } from "../lib/kv-binding.js";
 import {
   getPhoneFromPhoneKey,
-  normalizeGroup,
   upsertUserGroupIndex,
 } from "../lib/group-index.js";
+import {
+  normalizeSixDigitsFromStored,
+  readInviteCodeFromKv,
+  sanitizeGroupForInvite,
+} from "../lib/group-invite-kv.js";
 
-const INVITE_KV_PREFIX = "invite:group:";
-
-function sanitizeGroupForInviteKey(raw) {
-  const s = normalizeGroup(raw);
-  if (!s || s.length > 24) return "";
-  if (!/^[\dA-Za-z._-]+$/.test(s)) return "";
-  return s;
-}
-
-function normalizeSixDigitsInvite(raw) {
-  const d = String(raw == null ? "" : raw).replace(/\D/g, "").slice(0, 6);
-  if (d.length !== 6) return "";
-  return d;
-}
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -141,35 +131,26 @@ export async function onRequest(context) {
       );
     }
 
-    const grp = sanitizeGroupForInviteKey(value.group);
+    const grp = sanitizeGroupForInvite(value.group);
     if (grp) {
-      const invRaw = await kv.get(INVITE_KV_PREFIX + grp);
-      if (invRaw && typeof invRaw === "string") {
-        let expected = "";
-        try {
-          const o = JSON.parse(invRaw);
-          expected = normalizeSixDigitsInvite(o && o.code != null ? o.code : "");
-        } catch {
-          expected = "";
-        }
-        if (expected.length === 6) {
-          const submitted = normalizeSixDigitsInvite(
-            body.inviteCode != null
-              ? body.inviteCode
-              : body.invite_code != null
-                ? body.invite_code
-                : ""
+      const expected = await readInviteCodeFromKv(kv, env, grp);
+      if (expected.length === 6) {
+        const submitted = normalizeSixDigitsFromStored(
+          body.inviteCode != null
+            ? body.inviteCode
+            : body.invite_code != null
+              ? body.invite_code
+              : ""
+        );
+        if (submitted !== expected) {
+          return jsonResponse(
+            {
+              success: false,
+              error: "邀请码不正确，请向组长索取「组号(六位数字)」中的六位数字。",
+              code: "INVITE_MISMATCH",
+            },
+            403
           );
-          if (submitted !== expected) {
-            return jsonResponse(
-              {
-                success: false,
-                error: "邀请码不正确，请向组长索取「组号(六位数字)」中的六位数字。",
-                code: "INVITE_MISMATCH",
-              },
-              403
-            );
-          }
         }
       }
     }
@@ -180,7 +161,7 @@ export async function onRequest(context) {
     try {
       const phone = getPhoneFromPhoneKey(key);
       if (phone) {
-        await upsertUserGroupIndex(kv, phone, value);
+        await upsertUserGroupIndex(kv, env, phone, value);
       }
     } catch (e) {
       indexSynced = false;

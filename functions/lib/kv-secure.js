@@ -1,9 +1,10 @@
 /**
- * Cloudflare KV 安全存储（喂PDF0409）：
- * - ENCRYPTION_KEY：AES-256-GCM 加密内层 JSON（uuid/name/email/pwd 哈希/savedAt/keyMac）
- * - HMAC_SECRET：对 KV key（如 phone:138…）做 HMAC-SHA256，hex 写入内层 keyMac，读出校验
- * - Argon2id 哈希写入 value.pwd_hash（保留 value.pwd 供业务展示/编辑）；metadata 走 KV 原生 metadata 明文
- * 未配置 ENCRYPTION_KEY 时保持旧版「整段 JSON 存在 value」行为。
+ * Cloudflare KV 安全存储（喂PDF0409 + 方案 A HMAC-as-key）：
+ * - ENCRYPTION_KEY：AES-256-GCM 加密内层 JSON（uuid/name/email/pwd 哈希/savedAt/keyMac/logicalKey）
+ * - HMAC_SECRET：① 对逻辑 key（phone:138…）做 HMAC → 外层存储键 uk:{hex}；② 内层 keyMac 仍签逻辑 key
+ * - 新写 fail-closed：ENCRYPTION_KEY 与 HMAC_SECRET 均须配置
+ * - 读路径：先 uk: 后旧 phone:（只读双读，不写回）
+ * - Argon2id/KDF 哈希写入 value.pwd_hash（保留 value.pwd 供业务展示/编辑）
  */
 
 import {
@@ -13,6 +14,10 @@ import {
 } from "./password-normalize.js";
 
 const ENC_PREFIX = "e1.";
+/** 外层 opaque 用户主记录前缀（方案 A） */
+export const UK_PREFIX = "uk:";
+/** 旧版明文主记录前缀（仅只读双读） */
+export const LEGACY_PHONE_PREFIX = "phone:";
 
 function utf8(s) {
   return new TextEncoder().encode(s);
@@ -92,6 +97,114 @@ export function assertPhoneKey(key) {
   if (typeof key !== "string" || !/^phone:\d{6,20}$/.test(key)) {
     throw new Error("Invalid key: expected phone:digits (6–20)");
   }
+}
+
+/** 新写必须同时具备 AES 与 HMAC；缺失则 fail-closed */
+export function requireOpaqueWriteSecrets(env) {
+  if (!encryptionEnabled(env) || !hmacEnabled(env)) {
+    throw new Error(
+      "ENCRYPTION_KEY and HMAC_SECRET required for new KV writes (fail-closed)"
+    );
+  }
+}
+
+/**
+ * HMAC-SHA256 hex（message 为 UTF-8 字符串）
+ * @param {any} env
+ * @param {string} message
+ */
+export async function hmacHex(env, message) {
+  const sec = parseHmacSecret(env);
+  if (!sec) throw new Error("HMAC_SECRET missing");
+  const k = await crypto.subtle.importKey(
+    "raw",
+    sec,
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const sig = await crypto.subtle.sign("HMAC", k, utf8(String(message)));
+  return hex(new Uint8Array(sig));
+}
+
+/**
+ * 逻辑 key（phone:digits）→ 外层存储键 uk:{HMAC(HMAC_SECRET, "phone:"+phone)}
+ * @param {any} env
+ * @param {string} logicalKey
+ */
+export async function phoneToStorageKey(env, logicalKey) {
+  assertPhoneKey(logicalKey);
+  const mac = await hmacHex(env, logicalKey);
+  return UK_PREFIX + mac;
+}
+
+export function isUkStorageKey(key) {
+  return typeof key === "string" && key.startsWith(UK_PREFIX);
+}
+
+export function isLegacyPhoneStorageKey(key) {
+  return typeof key === "string" && /^phone:\d{6,20}$/.test(key);
+}
+
+/**
+ * 双读存在性：先 uk: 后旧 phone:
+ * @returns {Promise<boolean>}
+ */
+export async function kvUserExists(kv, env, logicalKey) {
+  assertPhoneKey(logicalKey);
+  if (hmacEnabled(env)) {
+    try {
+      const sk = await phoneToStorageKey(env, logicalKey);
+      const v = await kv.get(sk);
+      if (v != null) return true;
+    } catch {
+      /* fall through */
+    }
+  }
+  const legacy = await kv.get(logicalKey);
+  return legacy != null;
+}
+
+/**
+ * 删除主记录：新旧键都删（幂等）
+ */
+export async function deleteKvUser(kv, env, logicalKey) {
+  assertPhoneKey(logicalKey);
+  const jobs = [kv.delete(logicalKey)];
+  if (hmacEnabled(env)) {
+    try {
+      const sk = await phoneToStorageKey(env, logicalKey);
+      jobs.push(kv.delete(sk));
+    } catch {
+      /* ignore */
+    }
+  }
+  await Promise.all(jobs);
+}
+
+/**
+ * 列出全部用户存储键（uk: + 旧 phone:），供扫描/重建。
+ * @returns {Promise<string[]>}
+ */
+export async function listKvUserStorageKeys(kv) {
+  const out = [];
+  for (const prefix of [UK_PREFIX, LEGACY_PHONE_PREFIX]) {
+    let cursor;
+    do {
+      const page = await kv.list({ prefix, limit: 1000, cursor });
+      const keys = (page && page.keys) || [];
+      for (const k of keys) {
+        if (k && k.name) {
+          if (prefix === LEGACY_PHONE_PREFIX && !isLegacyPhoneStorageKey(k.name)) {
+            continue;
+          }
+          out.push(k.name);
+        }
+      }
+      cursor = page && !page.list_complete ? page.cursor : undefined;
+    } while (cursor);
+  }
+  return out;
 }
 
 function isProbablyArgon2Encoded(s) {
@@ -339,61 +452,33 @@ async function verifyKeyMacIfNeeded(env, kvKey, macHex) {
 }
 
 /**
- * 写入：encryption 开 → 完整 metadata 放入密文内层（v>=2），KV 附属 metadata 仅极小 JSON（<=1024 字节）
- * 关 → put(JSON.stringify({ value, metadata, savedAt }))
+ * 在已知存储键上解析一条用户记录（不做双读 / 不写回）
+ * @param {string} storageKey
+ * @param {string|null} logicalKeyHint - 已知逻辑 key 时用于 keyMac 校验；uk 记录可从 inner.logicalKey 取得
+ * @returns {Promise<{ value: object, metadata: object, savedAt?: number, logicalKey: string, storageKey: string } | null>}
  */
-export async function writeKvUser(kv, env, kvKey, value, metadata) {
-  assertPhoneKey(kvKey);
-  const savedAt = Date.now();
-  const valueForStore = await hashPwdInValue(env, normalizePasswordInValueObject(value));
-
-  if (!encryptionEnabled(env)) {
-    const payload = JSON.stringify({
-      value: valueForStore,
-      metadata,
-      savedAt,
-    });
-    await kv.put(kvKey, payload);
-    return;
-  }
-
-  const keyMac = await computeKeyMac(env, kvKey);
-  const metaObj =
-    metadata && typeof metadata === "object" ? { ...metadata } : {};
-  const inner = {
-    v: 2,
-    value: valueForStore,
-    metadata: metaObj,
-    savedAt,
-    keyMac,
-  };
-  const enc = await encryptKvInner(env, inner);
-  /** Workers KV 附属 metadata 上限 1024 字节；完整权限表在密文 inner.metadata */
-  const sidecar = {
-    _kv: 2,
-    s: metaObj.status != null ? Number(metaObj.status) || 0 : 0,
-  };
-  const metaStr = JSON.stringify(sidecar);
-  if (metaStr.length > 1024) {
-    throw new Error("KV 附属 metadata 占位仍超长（内部错误）");
-  }
-  await kv.put(kvKey, enc, { metadata: metaStr });
-}
-
-/**
- * 读出并解密；兼容旧版单 JSON；encryption 关时仅解析旧格式
- * @returns {Promise<{ value: object, metadata: object, savedAt?: number } | null>}
- */
-export async function readKvUser(kv, env, kvKey) {
-  const got = await kv.getWithMetadata(kvKey);
+async function readKvUserAtStorageKey(kv, env, storageKey, logicalKeyHint) {
+  const got = await kv.getWithMetadata(storageKey);
   if (!got || got.value == null) return null;
 
   const raw = got.value;
   const metaRaw = got.metadata;
+  let logicalKey =
+    typeof logicalKeyHint === "string" && logicalKeyHint
+      ? logicalKeyHint
+      : isLegacyPhoneStorageKey(storageKey)
+        ? storageKey
+        : "";
 
   if (encryptionEnabled(env) && typeof raw === "string" && raw.startsWith(ENC_PREFIX)) {
     const inner = await decryptKvInner(env, raw);
-    await verifyKeyMacIfNeeded(env, kvKey, inner.keyMac);
+    if (typeof inner.logicalKey === "string" && /^phone:\d{6,20}$/.test(inner.logicalKey)) {
+      logicalKey = inner.logicalKey;
+    }
+    if (!logicalKey) {
+      throw new Error("Encrypted KV record missing logicalKey");
+    }
+    await verifyKeyMacIfNeeded(env, logicalKey, inner.keyMac);
     if (!inner.value || typeof inner.value !== "object") {
       throw new Error("Invalid value in encrypted payload");
     }
@@ -410,6 +495,8 @@ export async function readKvUser(kv, env, kvKey) {
       value: normalizeValuePwdShape(inner.value),
       metadata,
       savedAt: inner.savedAt,
+      logicalKey,
+      storageKey,
     };
   }
 
@@ -425,9 +512,89 @@ export async function readKvUser(kv, env, kvKey) {
   if (!obj || typeof obj !== "object") return null;
   if (typeof obj.value !== "object" || obj.value === null) return null;
   if (typeof obj.metadata !== "object" || obj.metadata === null) return null;
+  if (!logicalKey) {
+    if (isLegacyPhoneStorageKey(storageKey)) logicalKey = storageKey;
+    else return null;
+  }
   return {
     value: normalizeValuePwdShape(obj.value),
     metadata: obj.metadata,
     savedAt: obj.savedAt,
+    logicalKey,
+    storageKey,
   };
+}
+
+/**
+ * 写入：仅写 uk:（禁止新用户再写明文 phone:）。ENCRYPTION_KEY / HMAC_SECRET 缺失 → fail-closed。
+ * keyMac / logicalKey 使用逻辑 phone: 键。写成功后若存在旧 phone: 则删除。
+ */
+export async function writeKvUser(kv, env, kvKey, value, metadata) {
+  assertPhoneKey(kvKey);
+  requireOpaqueWriteSecrets(env);
+  const storageKey = await phoneToStorageKey(env, kvKey);
+  const savedAt = Date.now();
+  const valueForStore = await hashPwdInValue(env, normalizePasswordInValueObject(value));
+
+  const keyMac = await computeKeyMac(env, kvKey);
+  const metaObj =
+    metadata && typeof metadata === "object" ? { ...metadata } : {};
+  const inner = {
+    v: 2,
+    value: valueForStore,
+    metadata: metaObj,
+    savedAt,
+    keyMac,
+    logicalKey: kvKey,
+  };
+  const enc = await encryptKvInner(env, inner);
+  /** Workers KV 附属 metadata 上限 1024 字节；完整权限表在密文 inner.metadata */
+  const sidecar = {
+    _kv: 2,
+    s: metaObj.status != null ? Number(metaObj.status) || 0 : 0,
+  };
+  const metaStr = JSON.stringify(sidecar);
+  if (metaStr.length > 1024) {
+    throw new Error("KV 附属 metadata 占位仍超长（内部错误）");
+  }
+  await kv.put(storageKey, enc, { metadata: metaStr });
+  try {
+    await kv.delete(kvKey);
+  } catch {
+    /* ignore legacy cleanup */
+  }
+}
+
+/**
+ * 读出并解密；双读 uk: → 旧 phone:（只读兜底，不写回）。
+ * @returns {Promise<{ value: object, metadata: object, savedAt?: number, logicalKey?: string, storageKey?: string } | null>}
+ */
+export async function readKvUser(kv, env, kvKey) {
+  assertPhoneKey(kvKey);
+
+  if (hmacEnabled(env)) {
+    try {
+      const sk = await phoneToStorageKey(env, kvKey);
+      const neo = await readKvUserAtStorageKey(kv, env, sk, kvKey);
+      if (neo) return neo;
+    } catch (e) {
+      /* 新键损坏时仍尝试旧键 */
+      console.warn("readKvUser uk: failed, trying legacy:", e);
+    }
+  }
+
+  return readKvUserAtStorageKey(kv, env, kvKey, kvKey);
+}
+
+/**
+ * 按存储键读取（list 扫描用）；返回逻辑 key 便于 API 对外仍用 phone:
+ */
+export async function readKvUserByStorageKey(kv, env, storageKey) {
+  if (isLegacyPhoneStorageKey(storageKey)) {
+    return readKvUser(kv, env, storageKey);
+  }
+  if (isUkStorageKey(storageKey)) {
+    return readKvUserAtStorageKey(kv, env, storageKey, null);
+  }
+  return null;
 }

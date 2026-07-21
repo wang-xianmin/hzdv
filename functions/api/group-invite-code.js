@@ -2,11 +2,10 @@
  * 小组六位邀请码（存 KV，注册时校验）。
  * GET  /api/group-invite-code?group=88  → { success, group, code }（无记录则 code 为空串）
  * POST /api/group-invite-code           body: { group: "88" } → 生成/刷新六位数字并写入 KV
- * KV 键：invite:group:{group}
+ * KV 键：ig:{HMAC(...)}（双读旧 invite:group:）
  */
 import {
-  inviteKvKey,
-  normalizeSixDigitsFromStored,
+  readInviteCodeFromKv,
   sanitizeGroupForInvite,
   writeNewInviteCodeToKv,
 } from "../lib/group-invite-kv.js";
@@ -40,16 +39,7 @@ export async function onRequest(context) {
       if (!g) {
         return jsonResponse({ success: false, error: "Missing or invalid group" }, 400);
       }
-      const raw = await kv.get(inviteKvKey(g));
-      let code = "";
-      if (raw && typeof raw === "string") {
-        try {
-          const o = JSON.parse(raw);
-          code = normalizeSixDigitsFromStored(o && o.code != null ? o.code : "");
-        } catch {
-          code = "";
-        }
-      }
+      const code = await readInviteCodeFromKv(kv, env, g);
       return jsonResponse({ success: true, group: g, code });
     }
 
@@ -59,7 +49,7 @@ export async function onRequest(context) {
       if (!g) {
         return jsonResponse({ success: false, error: "Missing or invalid group" }, 400);
       }
-      const code = await writeNewInviteCodeToKv(kv, g);
+      const code = await writeNewInviteCodeToKv(kv, env, g);
       return jsonResponse({ success: true, group: g, code });
     }
 

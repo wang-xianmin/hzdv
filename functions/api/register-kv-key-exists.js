@@ -1,7 +1,8 @@
 /**
  * 查询 KV 中是否已存在某 key：GET /api/register-kv-key-exists?key=phone%3A13800138000
+ * 双读：uk: → 旧 phone:
  */
-import { assertPhoneKey } from "../lib/kv-secure.js";
+import { assertPhoneKey, kvUserExists } from "../lib/kv-secure.js";
 import { kvBindingHint, pickKvBinding } from "../lib/kv-binding.js";
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -37,8 +38,8 @@ export async function onRequest(context) {
     );
   }
   try {
-    const v = await kv.get(key);
-    return jsonResponse({ success: true, exists: v != null });
+    const exists = await kvUserExists(kv, env, key);
+    return jsonResponse({ success: true, exists });
   } catch (e) {
     console.error("register-kv-key-exists:", e);
     return jsonResponse(

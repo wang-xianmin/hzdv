@@ -65,7 +65,7 @@ export async function onRequest(context) {
           400
         );
       }
-      const code = await writeNewInviteCodeToKv(kv, g);
+      const code = await writeNewInviteCodeToKv(kv, env, g);
       return jsonResponse({
         success: true,
         scope: "group",
@@ -82,7 +82,7 @@ export async function onRequest(context) {
     const groups = Array.from(uniq).sort();
     const codes = [];
     for (const g of groups) {
-      const code = await writeNewInviteCodeToKv(kv, g);
+      const code = await writeNewInviteCodeToKv(kv, env, g);
       codes.push({ group: g, code });
     }
     return jsonResponse({
