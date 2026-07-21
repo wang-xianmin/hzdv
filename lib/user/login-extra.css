@@ -196,77 +196,155 @@
 }
 
 .user-list-modal-head {
-  padding: 16px 48px 12px 16px;
-  border-bottom: 1px solid #eee;
+  padding: 10px 44px 8px 14px;
+  border-bottom: 1px solid #e6e6e6;
 }
 
 .user-list-modal-head-left {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px 10px;
   align-items: center;
 }
 
 .user-list-modal-title {
-  margin: 0;
-  font-size: 18px;
+  margin: 0 4px 0 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #1a1a1a;
 }
 
 .user-list-modal-search {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
+}
+
+.user-list-modal-search-label,
+.user-list-show-all-label,
+.user-list-invite-hint {
+  font-size: 12px;
+  line-height: 1.25;
+  color: #444;
+  white-space: nowrap;
+}
+
+.user-list-invite-hint {
+  color: #3d6a96;
+  max-width: min(520px, 42vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.user-list-show-all-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.user-list-show-all-label input,
+.user-manage-tree-collapse-check input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  flex-shrink: 0;
+  accent-color: #3d6a96;
 }
 
 .user-list-modal-search-input,
 .user-list-modal-filter-select {
-  height: 32px;
-  border: 1px solid #ddd;
-  border-radius: 6px;
+  height: 28px;
+  border: 1px solid #ccd3da;
+  border-radius: 4px;
   padding: 0 8px;
-  font-size: 13px;
+  font-size: 12px;
+  background: #fff;
+  color: #222;
+}
+
+.user-list-modal-search-input {
+  width: 130px;
+}
+
+.user-list-modal-filter-select {
+  min-width: 96px;
 }
 
 .user-list-modal-filter-btn {
-  height: 32px;
-  border: 1px solid #ddd;
-  border-radius: 6px;
-  background: #f7f7f7;
+  height: 28px;
+  border: 1px solid #3d6a96;
+  border-radius: 4px;
+  background: #3d6a96;
+  color: #fff;
   padding: 0 10px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.user-list-modal-filter-btn:hover {
+  filter: brightness(1.06);
+}
+
+.user-list-modal-filter-btn--secondary {
+  background: #fff;
+  color: #444;
+  border-color: #ccd3da;
 }
 
 .user-list-default-group-row {
-  padding: 10px 16px;
-  border-bottom: 1px solid #eee;
+  padding: 8px 14px;
+  border-bottom: 1px solid #e6e6e6;
+  background: #fafbfc;
 }
 
 .user-list-default-group-row-inner {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px 8px;
   align-items: center;
+}
+
+.user-list-default-group-row .user-list-modal-search-input {
+  width: 72px;
 }
 
 .user-manage-split {
   display: flex;
-  min-height: 420px;
-  flex: 1;
+  min-height: 0;
+  flex: 1 1 auto;
   overflow: hidden;
 }
 
 .user-manage-tree-column {
-  width: 220px;
-  border-right: 1px solid #eee;
+  width: 168px;
+  flex-shrink: 0;
+  border-right: 1px solid #e6e6e6;
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  background: #fff;
 }
 
 .user-manage-tree-pane {
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
-  padding: 8px;
+  padding: 6px;
+}
+
+.user-manage-tree-list {
+  font-size: 12px;
+}
+
+.user-manage-tree-section-toggle,
+.user-manage-tree-node-label,
+.user-manage-tree-empty {
+  font-size: 12px;
+  line-height: 1.3;
 }
 
 .user-manage-tree-list button {
@@ -275,23 +353,105 @@
   text-align: left;
   border: none;
   background: transparent;
-  padding: 8px 10px;
-  border-radius: 6px;
+  padding: 5px 8px;
+  border-radius: 4px;
   cursor: pointer;
+  font-size: 12px;
+  line-height: 1.3;
+  color: #333;
 }
 
 .user-manage-tree-list button:hover,
 .user-manage-tree-list button.is-active {
-  background: #eef4ff;
+  background: #e8f0fa;
+}
+
+.user-manage-tree-footer {
+  flex: 0 0 auto;
+  padding: 8px 8px 10px;
+  border-top: 1px solid #e6e6e6;
+  background: #f7f8fa;
+  box-sizing: border-box;
+}
+
+.user-manage-tree-collapse-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.3;
+  color: #333;
+  cursor: pointer;
+  user-select: none;
+}
+
+.user-manage-tree-collapse-check span {
+  flex: 1;
+  min-width: 0;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .user-list-grid-section {
-  flex: 1;
-  overflow: auto;
-  padding: 8px;
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+  background: #fff;
 }
 
+/* AG Grid 必须有确定高度；在 flex 里用绝对铺满，避免高度算成 0 只剩白块 */
 #userListModalGrid {
+  position: absolute;
+  inset: 0;
   width: 100%;
-  min-height: 360px;
+  height: 100%;
+  min-height: 0;
+}
+
+/* 对齐 L_ENG：深红表头 + 紧凑单元格 */
+#userListModalGrid.ag-theme-quartz {
+  --ag-font-size: 12px;
+  --ag-font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  --ag-row-height: 32px;
+  --ag-header-height: 34px;
+  --ag-header-background-color: #7a2430;
+  --ag-header-foreground-color: #fff;
+  --ag-header-cell-hover-background-color: #8e2d3b;
+  --ag-odd-row-background-color: #fffdf5;
+  --ag-selected-row-background-color: #e8f0fa;
+  --ag-border-color: #e2e2e2;
+  --ag-cell-horizontal-padding: 6px;
+}
+
+#userListModalGrid.ag-theme-quartz .ag-header-cell-label,
+#userListModalGrid.ag-theme-quartz .ag-header-group-cell-label {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+#userListModalGrid.ag-theme-quartz .ag-cell {
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+#userListModalGrid.ag-theme-quartz .user-list-row-leader {
+  background-color: #fff3cd;
+}
+
+.profile-modal-sheet.user-list-modal-sheet {
+  width: min(1280px, 98vw);
+  max-height: 92vh;
+  height: min(760px, 92vh);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.user-list-modal-sheet .user-list-modal-head,
+.user-list-modal-sheet .user-list-default-group-row {
+  flex: 0 0 auto;
 }
