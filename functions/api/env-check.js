@@ -4,26 +4,13 @@
  */
 
 import { pickKvBinding } from "../lib/kv-binding.js";
+import { pickD1Binding, pickR2Binding } from "../lib/cloudflare-bindings.js";
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { "Content-Type": "application/json; charset=utf-8" },
   });
-}
-
-function hasKv(env) {
-  return !!pickKvBinding(env);
-}
-
-function hasD1(env) {
-  const cands = [env.AVATARS_DB, env.D1, env.DB, env.MY_DB, env.avatar_db];
-  return cands.some((db) => db && typeof db.prepare === "function");
-}
-
-function hasR2(env) {
-  const cands = [env.AVATARS_R2, env.R2, env.MY_R2, env.avatar_r2, env.BUCKET];
-  return cands.some((b) => b && typeof b.get === "function");
 }
 
 export async function onRequest(context) {
@@ -33,10 +20,11 @@ export async function onRequest(context) {
   }
   return jsonResponse({
     success: true,
-    has_my_kv: hasKv(env),
-    has_avatars_db: hasD1(env),
-    has_avatars_r2: hasR2(env),
+    has_my_kv: !!pickKvBinding(env),
+    has_avatars_db: !!pickD1Binding(env),
+    has_avatars_r2: !!pickR2Binding(env),
+    d1_binding_names: ["DV_D1", "AVATARS_DB", "D1", "DB", "MY_DB", "avatar_db"],
+    r2_binding_names: ["R2", "AVATARS_R2", "MY_R2", "avatar_r2", "BUCKET"],
     timestamp: Date.now(),
   });
 }
-

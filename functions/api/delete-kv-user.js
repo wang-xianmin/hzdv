@@ -17,28 +17,13 @@
 import { assertPhoneKey, deleteKvUser, readKvUser } from "../lib/kv-secure.js";
 import { getPhoneFromPhoneKey, removeUserGroupIndexes } from "../lib/group-index.js";
 import { kvBindingHint, pickKvBinding } from "../lib/kv-binding.js";
+import { pickD1Binding, pickR2Binding } from "../lib/cloudflare-bindings.js";
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { "Content-Type": "application/json; charset=utf-8" },
   });
-}
-
-function pickD1Binding(env) {
-  const cands = [env.AVATARS_DB, env.D1, env.DB, env.MY_DB, env.avatar_db];
-  for (const db of cands) {
-    if (db && typeof db.prepare === "function") return db;
-  }
-  return null;
-}
-
-function pickR2Binding(env) {
-  const cands = [env.AVATARS_R2, env.R2, env.MY_R2, env.avatar_r2, env.BUCKET];
-  for (const b of cands) {
-    if (b && typeof b.delete === "function") return b;
-  }
-  return null;
 }
 
 function normalizeAvatarR2Key(rawKey) {

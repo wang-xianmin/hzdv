@@ -9,6 +9,8 @@
   <link rel="stylesheet" href="lib/vendor/ag-grid/agGridQuartzFont.min.css" />
   <link rel="stylesheet" href="lib/user/login.css" />
   <link rel="stylesheet" href="lib/user/login-extra.css" />
+  <link rel="stylesheet" href="lib/user/hero-background.css" />
+  <link rel="stylesheet" href="lib/user/hero-background-admin.css" />
   <style>
     :root {
       --nav-bg: #3d6a96;
@@ -28,17 +30,13 @@
     body {
       font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
         "Noto Sans SC", sans-serif;
-      background: #f5f7fa;
+      background: #0a0f14;
       color: #1a1a1a;
       min-height: 100vh;
     }
 
     .site-header {
-      position: sticky;
-      top: 0;
-      z-index: 1000;
       height: var(--nav-height);
-      background: var(--nav-bg);
       color: var(--nav-text);
     }
 
@@ -327,13 +325,13 @@
       font-weight: 600;
     }
 
-    main {
+    main.site-content {
       padding: 48px 28px;
       max-width: 1400px;
       margin: 0 auto;
     }
 
-    main h1 {
+    main.site-content h1 {
       font-size: 2rem;
       font-weight: 600;
     }
@@ -387,7 +385,7 @@
   </style>
 </head>
 <body>
-  <header class="site-header">
+  <header class="site-header site-header--overlay">
     <nav class="nav" aria-label="Main">
       <a class="logo" href="#" data-i18n="logo" aria-label="Logo">LOGO</a>
 
@@ -417,6 +415,14 @@
                 id="topNavUserList"
                 data-i18n="ops_user_list"
               >用户列表</button>
+            </li>
+            <li role="none">
+              <button
+                type="button"
+                role="menuitem"
+                id="topNavHeroBackground"
+                data-i18n="ops_hero_background"
+              >网站背景</button>
             </li>
           </ul>
         </div>
@@ -498,7 +504,18 @@
     <button type="button" id="topNavNewRegister">新人注册</button>
   </div>
 
-  <main>
+  <section class="site-hero" id="site-hero" aria-label="Hero">
+    <div class="site-hero__media" id="hero-media"></div>
+    <div class="site-hero__overlay" aria-hidden="true"></div>
+    <div class="site-hero__content">
+      <h1 class="site-hero__title" id="hero-title" hidden></h1>
+      <p class="site-hero__subtitle" id="hero-subtitle" hidden></p>
+      <div class="site-hero__cta" id="hero-cta" hidden></div>
+    </div>
+    <div class="site-hero__dots" id="hero-dots" hidden></div>
+  </section>
+
+  <main class="site-content">
     <h1>Hello World</h1>
   </main>
 
@@ -516,6 +533,7 @@
         auth_logout: "退出",
         auth_ops: "系统运维",
         ops_user_list: "用户列表",
+        ops_hero_background: "网站背景",
       },
       en: {
         logo: "LOGO",
@@ -529,6 +547,7 @@
         auth_logout: "Log out",
         auth_ops: "System Ops",
         ops_user_list: "User List",
+        ops_hero_background: "Site Background",
       },
     };
 
@@ -724,12 +743,14 @@
     applyLanguage(currentLang);
   </script>
   <script src="lib/user/config.js"></script>
+  <script src="lib/user/hero-background.js"></script>
   <script src="lib/user/app-stubs.js"></script>
   <script src="lib/vendor/ag-grid/ag-grid-community.min.js"></script>
   <script src="lib/user/login-shell.js"></script>
   <script src="lib/user/new-user-register.js"></script>
   <script src="lib/user/user-list-grid.js"></script>
   <script src="lib/user/user-list-modal.js"></script>
+  <script src="lib/user/hero-background-admin-modal.js"></script>
   <script src="lib/user/login.js"></script>
 </body>
 </html>
