@@ -136,6 +136,12 @@
   background: #fafbfc;
 }
 
+.hero-bg-admin-bottom-head-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .hero-bg-admin-bottom-head h3 {
   margin: 0;
   font-size: 14px;
@@ -206,25 +212,43 @@
   margin: 0 auto;
   border-radius: 6px;
   overflow: hidden;
-  background: #111;
+  background: #0a0a0a;
   display: flex;
   align-items: center;
   justify-content: center;
   position: relative;
   cursor: pointer;
   outline: none;
-  border: 2px solid transparent;
+  border: 2px dashed rgba(255, 255, 255, 0.28);
   box-sizing: border-box;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
 
-.hero-bg-admin-thumb:hover,
-.hero-bg-admin-thumb:focus-visible {
-  border-color: #3d6a96;
+.hero-bg-admin-thumb.has-media {
+  border-style: solid;
+  border-color: transparent;
+}
+
+.hero-bg-admin-thumb:hover {
+  border-color: #5b8fbf;
+  background: #121212;
+}
+
+.hero-bg-admin-thumb:focus-visible,
+.hero-bg-admin-thumb.is-active-slot {
+  border-style: solid;
+  border-color: #3d9be0;
+  box-shadow:
+    0 0 0 3px rgba(61, 155, 224, 0.35),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+  background: #151515;
 }
 
 .hero-bg-admin-thumb.is-drop-target {
-  border-color: #0b7285;
-  box-shadow: inset 0 0 0 2px rgba(11, 114, 133, 0.35);
+  border-style: solid;
+  border-color: #2bbbad;
+  box-shadow: 0 0 0 3px rgba(43, 187, 173, 0.35);
+  background: #102018;
 }
 
 .hero-bg-admin-thumb.is-busy {
@@ -233,15 +257,15 @@
 }
 
 .hero-bg-admin-thumb--mobile {
-  /* 竖向预览 */
-  width: 64px;
-  height: 114px;
+  /* 竖向：手机预览框，方便拖入 */
+  width: 72px;
+  height: 128px;
 }
 
 .hero-bg-admin-thumb--desktop {
-  /* 横向预览 */
-  width: 152px;
-  height: 86px;
+  /* 横向：电脑预览框 */
+  width: 180px;
+  height: 100px;
 }
 
 .hero-bg-admin-thumb video,
@@ -262,11 +286,12 @@
 }
 
 .hero-bg-admin-thumb-empty {
-  color: rgba(255, 255, 255, 0.55);
-  font-size: 22px;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 28px;
   font-weight: 300;
   line-height: 1;
   pointer-events: none;
+  margin-bottom: 18px;
 }
 
 .hero-bg-admin-thumb-hint {
@@ -274,13 +299,18 @@
   left: 0;
   right: 0;
   bottom: 0;
-  padding: 4px 2px;
-  font-size: 9px;
-  line-height: 1.2;
+  padding: 8px 4px 6px;
+  font-size: 10px;
+  line-height: 1.35;
   text-align: center;
-  color: rgba(255, 255, 255, 0.75);
-  background: linear-gradient(transparent, rgba(0, 0, 0, 0.75));
+  color: rgba(255, 255, 255, 0.82);
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.85));
   pointer-events: none;
+  white-space: pre-line;
+}
+
+.hero-bg-admin-thumb.is-active-slot .hero-bg-admin-thumb-hint {
+  color: #fff;
 }
 
 .hero-bg-admin-thumb-badge {
@@ -322,12 +352,12 @@
 @media (min-width: 900px) {
   .hero-bg-admin-thumb--mobile {
     width: 78px;
-    height: 138px;
+    height: 140px;
   }
 
   .hero-bg-admin-thumb--desktop {
-    width: 200px;
-    height: 112px;
+    width: 220px;
+    height: 124px;
   }
 }
 
@@ -345,13 +375,13 @@
   }
 
   .hero-bg-admin-thumb--mobile {
-    width: 52px;
-    height: 92px;
+    width: 56px;
+    height: 100px;
   }
 
   .hero-bg-admin-thumb--desktop {
-    width: 112px;
-    height: 63px;
+    width: 120px;
+    height: 68px;
   }
 
   .hero-bg-admin-col-idx {

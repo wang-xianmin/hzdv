@@ -4,6 +4,7 @@
 
 export function pickD1Binding(env) {
   const cands = [
+    env.hzdvd1,
     env.DV_D1,
     env.AVATARS_DB,
     env.D1,

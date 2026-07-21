@@ -42,7 +42,7 @@ export async function onRequest(context) {
         success: false,
         error: "D1 not bound to Pages",
         hint:
-          "Cloudflare Pages → hzdv → Settings → Bindings → Add D1，变量名填 DV_D1（或 D1 / AVATARS_DB）",
+          "Cloudflare Pages → hzdv → Settings → Bindings → Add D1，变量名填 hzdvd1（或 DV_D1 / D1 / AVATARS_DB）",
       },
       503
     );

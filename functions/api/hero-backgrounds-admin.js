@@ -2,8 +2,9 @@
  * 网站背景管理（运维）
  * GET    /api/hero-backgrounds-admin?phone=...
  * PUT    JSON { phone, config }
- * POST   multipart 新建: phone, file, [poster], [file_mobile], ...
+ * POST   JSON { phone, action: "create_empty" }  新增空行（占位图）
  * POST   multipart 替换槽位: phone, id, slot=desktop|mobile, file, [poster]
+ * POST   multipart 新建（兼容旧）：phone, file, ...
  * PATCH  JSON { phone, id, ...fields }
  * DELETE JSON { phone, id }
  */
@@ -45,11 +46,27 @@ function phoneFromUrl(request) {
   return new URL(request.url).searchParams.get("phone") || "";
 }
 
+/** 1×1 黑 JPEG，作「新增」空行占位（首页默认不启用） */
+const PLACEHOLDER_JPEG = Uint8Array.from(
+  atob(
+    "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAn/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAGcP//Z"
+  ),
+  (c) => c.charCodeAt(0)
+);
+
 async function putR2File(r2, file, namePrefix) {
   const filename = (namePrefix || "") + (file.name || "upload.bin");
   const r2Key = buildHeroUploadKey(filename);
   await r2.put(r2Key, file.stream(), {
     httpMetadata: { contentType: guessHeroContentType(filename) },
+  });
+  return r2Key;
+}
+
+async function putR2Bytes(r2, bytes, filename, contentType) {
+  const r2Key = buildHeroUploadKey(filename);
+  await r2.put(r2Key, bytes, {
+    httpMetadata: { contentType: contentType || "application/octet-stream" },
   });
   return r2Key;
 }
@@ -112,8 +129,8 @@ export async function onRequest(context) {
     if (!id) return jsonResponse({ success: false, error: "Missing id" }, 400);
     try {
       await assertOpsAccess(env, body.phone);
-      const r2 = pickR2Binding(env);
-      const ok = await deleteHeroBackgroundItem(d1, id, r2);
+      const r2Del = pickR2Binding(env);
+      const ok = await deleteHeroBackgroundItem(d1, id, r2Del);
       return jsonResponse({ success: ok });
     } catch (e) {
       return opsAuthErrorResponse(e);
@@ -124,8 +141,49 @@ export async function onRequest(context) {
     const r2 = pickR2Binding(env);
     if (!r2) return jsonResponse({ success: false, error: "R2 not configured" }, 503);
     const contentType = request.headers.get("content-type") || "";
+
+    /** 新增空行 */
+    if (contentType.includes("application/json")) {
+      const body = await readJsonBody(request);
+      if (!body) return jsonResponse({ success: false, error: "Invalid JSON" }, 400);
+      try {
+        const auth = await assertOpsAccess(env, body.phone);
+        if (body.action !== "create_empty") {
+          return jsonResponse({ success: false, error: "Unknown action" }, 400);
+        }
+        const r2Key = await putR2Bytes(
+          r2,
+          PLACEHOLDER_JPEG,
+          "empty-placeholder.jpg",
+          "image/jpeg"
+        );
+        const posterKey = await putR2Bytes(
+          r2,
+          PLACEHOLDER_JPEG,
+          "empty-placeholder-thumb.jpg",
+          "image/jpeg"
+        );
+        const item = await insertHeroBackgroundItem(d1, env, {
+          media_type: "image",
+          r2_key: r2Key,
+          poster_r2_key: posterKey,
+          title: "",
+          subtitle: "",
+          is_active: false,
+          created_by: auth.phone,
+        });
+        return jsonResponse({ success: true, item, created_empty: true });
+      } catch (e) {
+        if (e && e.status) return opsAuthErrorResponse(e);
+        return jsonResponse({ success: false, error: String(e.message || e) }, 500);
+      }
+    }
+
     if (!contentType.includes("multipart/form-data")) {
-      return jsonResponse({ success: false, error: "Expected multipart/form-data" }, 400);
+      return jsonResponse(
+        { success: false, error: "Expected multipart/form-data or JSON" },
+        400
+      );
     }
     try {
       const form = await request.formData();
@@ -135,7 +193,7 @@ export async function onRequest(context) {
       if (!file || typeof file === "string") {
         return jsonResponse({ success: false, error: "Missing file" }, 400);
       }
-      const auth = await assertOpsAccess(env, phone);
+      await assertOpsAccess(env, phone);
       const filename = file.name || "upload.bin";
       const mediaType =
         String(form.get("media_type") || "").trim() || guessHeroMediaType(filename);
@@ -144,6 +202,12 @@ export async function onRequest(context) {
 
       /** 替换已有条目的 desktop / mobile 槽位 */
       if (replaceId && (slot === "desktop" || slot === "mobile")) {
+        if (slot === "mobile" && mediaType === "video") {
+          return jsonResponse(
+            { success: false, error: "手机端请使用图片（不支持视频）" },
+            400
+          );
+        }
         const existing = await d1
           .prepare("SELECT * FROM hero_background_items WHERE id = ?")
           .bind(replaceId)
@@ -163,7 +227,6 @@ export async function onRequest(context) {
         const patch =
           slot === "mobile"
             ? {
-                media_type: mediaType,
                 r2_key_mobile: r2Key,
                 poster_r2_key_mobile: posterKey,
               }
@@ -212,7 +275,7 @@ export async function onRequest(context) {
         cta_label: form.get("cta_label"),
         cta_url: form.get("cta_url"),
         duration_ms: form.get("duration_ms"),
-        created_by: auth.phone,
+        created_by: String(phone || "").replace(/\D/g, ""),
       });
       return jsonResponse({ success: true, item, r2_key: normalizeHeroR2Key(r2Key) });
     } catch (e) {
