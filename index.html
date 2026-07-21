@@ -200,6 +200,55 @@
       opacity: 1;
     }
 
+    .ops-nav-btn {
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      font: inherit;
+      padding: 0;
+    }
+
+    .ops-wrap {
+      position: relative;
+    }
+
+    .ops-dropdown {
+      position: absolute;
+      top: calc(100% + 8px);
+      right: 0;
+      min-width: 140px;
+      padding: 6px 0;
+      background: var(--dropdown-bg);
+      color: var(--dropdown-text);
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+      list-style: none;
+      display: none;
+      overflow: hidden;
+      z-index: 1001;
+    }
+
+    .ops-dropdown.open {
+      display: block;
+    }
+
+    .ops-dropdown button {
+      display: block;
+      width: 100%;
+      padding: 10px 16px;
+      border: none;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      font-size: 14px;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .ops-dropdown button:hover {
+      background: var(--dropdown-hover);
+    }
+
     .lang-dropdown {
       position: absolute;
       top: calc(100% + 8px);
@@ -350,6 +399,28 @@
       </ul>
 
       <div class="nav-actions">
+        <div class="ops-wrap auth-menu-ops" id="ops-wrap" hidden>
+          <button
+            type="button"
+            class="login-link ops-nav-btn"
+            id="topNavSystemOps"
+            data-i18n="auth_ops"
+            aria-haspopup="menu"
+            aria-expanded="false"
+            aria-controls="ops-menu"
+          >系统运维</button>
+          <ul class="ops-dropdown" id="ops-menu" role="menu">
+            <li role="none">
+              <button
+                type="button"
+                role="menuitem"
+                id="topNavUserList"
+                data-i18n="ops_user_list"
+              >用户列表</button>
+            </li>
+          </ul>
+        </div>
+
         <div class="lang-wrap">
           <button
             type="button"
@@ -389,11 +460,14 @@
             aria-controls="auth-menu"
           >登录</button>
           <ul class="auth-dropdown" id="auth-menu" role="menu">
-            <li role="none">
+            <li role="none" class="auth-menu-guest">
               <button type="button" role="menuitem" data-auth="register" data-i18n="auth_register">注册</button>
             </li>
-            <li role="none">
+            <li role="none" class="auth-menu-guest">
               <button type="button" role="menuitem" data-auth="login" data-i18n="auth_login_item">登录</button>
+            </li>
+            <li role="none" class="auth-menu-user" hidden>
+              <button type="button" role="menuitem" data-auth="logout" data-i18n="auth_logout">退出</button>
             </li>
           </ul>
         </div>
@@ -414,16 +488,14 @@
     </nav>
   </header>
 
-  <nav class="user-admin-nav" id="userAdminNav" hidden aria-label="Admin">
-    <button type="button" id="topNavUserList">用户列表</button>
-    <button type="button" id="topNavNewRegister">新人注册</button>
-  </nav>
+  <nav class="user-admin-nav" id="userAdminNav" hidden aria-label="Admin"></nav>
 
   <div hidden aria-hidden="true">
     <button type="button" id="topRegisterBtn"></button>
     <div id="topAuthDropdown"></div>
     <div id="topAuthHover"></div>
     <button type="button" id="topNavAvatarManage"></button>
+    <button type="button" id="topNavNewRegister">新人注册</button>
   </div>
 
   <main>
@@ -441,6 +513,9 @@
         login: "登录",
         auth_register: "注册",
         auth_login_item: "登录",
+        auth_logout: "退出",
+        auth_ops: "系统运维",
+        ops_user_list: "用户列表",
       },
       en: {
         logo: "LOGO",
@@ -451,6 +526,9 @@
         login: "Login",
         auth_register: "Register",
         auth_login_item: "Login",
+        auth_logout: "Log out",
+        auth_ops: "System Ops",
+        ops_user_list: "User List",
       },
     };
 
@@ -460,8 +538,34 @@
     const langMenu = document.getElementById("lang-menu");
     const authToggle = document.getElementById("topNavUserLogin");
     const authMenu = document.getElementById("auth-menu");
+    const opsToggle = document.getElementById("topNavSystemOps");
+    const opsMenu = document.getElementById("ops-menu");
+    const opsWrap = document.getElementById("ops-wrap");
     const menuToggle = document.getElementById("menu-toggle");
     const navLinks = document.getElementById("nav-links");
+
+    function isLoggedIn() {
+      try {
+        return localStorage.getItem("leng_logged_in") === "1";
+      } catch (e) {
+        return false;
+      }
+    }
+
+    function syncAuthMenuMode() {
+      const loggedIn = isLoggedIn();
+      authMenu.querySelectorAll(".auth-menu-guest").forEach((el) => {
+        el.hidden = loggedIn;
+      });
+      authMenu.querySelectorAll(".auth-menu-user").forEach((el) => {
+        el.hidden = !loggedIn;
+      });
+      if (typeof window.syncOpsMenuVisibility === "function") {
+        window.syncOpsMenuVisibility();
+      } else if (opsWrap) {
+        opsWrap.hidden = true;
+      }
+    }
 
     function applyLanguage(lang) {
       currentLang = lang;
@@ -469,7 +573,7 @@
       document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
 
       document.querySelectorAll("[data-i18n]").forEach((el) => {
-        if (el.id === "topNavUserLogin" && localStorage.getItem("leng_logged_in") === "1") {
+        if (el.id === "topNavUserLogin" && isLoggedIn()) {
           return;
         }
         const key = el.getAttribute("data-i18n");
@@ -481,6 +585,7 @@
       langMenu.querySelectorAll("[data-lang]").forEach((btn) => {
         btn.classList.toggle("active", btn.getAttribute("data-lang") === lang);
       });
+      syncAuthMenuMode();
     }
 
     function closeLangMenu() {
@@ -493,6 +598,12 @@
       authToggle.setAttribute("aria-expanded", "false");
     }
 
+    function closeOpsMenu() {
+      if (!opsMenu || !opsToggle) return;
+      opsMenu.classList.remove("open");
+      opsToggle.setAttribute("aria-expanded", "false");
+    }
+
     function closeMobileMenu() {
       navLinks.classList.remove("open");
       menuToggle.setAttribute("aria-expanded", "false");
@@ -502,6 +613,7 @@
       e.stopPropagation();
       closeLangMenu();
       closeAuthMenu();
+      closeOpsMenu();
       const open = navLinks.classList.toggle("open");
       menuToggle.setAttribute("aria-expanded", String(open));
     });
@@ -514,6 +626,7 @@
       e.stopPropagation();
       closeMobileMenu();
       closeAuthMenu();
+      closeOpsMenu();
       const open = langMenu.classList.toggle("open");
       langToggle.setAttribute("aria-expanded", String(open));
     });
@@ -528,10 +641,30 @@
     authToggle.addEventListener("click", (e) => {
       e.stopPropagation();
       closeLangMenu();
+      closeOpsMenu();
       closeMobileMenu();
       const open = authMenu.classList.toggle("open");
       authToggle.setAttribute("aria-expanded", String(open));
     });
+
+    if (opsToggle && opsMenu) {
+      opsToggle.addEventListener("click", (e) => {
+        e.stopPropagation();
+        closeLangMenu();
+        closeAuthMenu();
+        closeMobileMenu();
+        if (typeof window.userHasOpsMenuAccess === "function" && !window.userHasOpsMenuAccess()) {
+          return;
+        }
+        const open = opsMenu.classList.toggle("open");
+        opsToggle.setAttribute("aria-expanded", String(open));
+      });
+      opsMenu.addEventListener("click", (e) => {
+        if (e.target.closest("[role='menuitem']")) {
+          closeOpsMenu();
+        }
+      });
+    }
 
     authMenu.addEventListener("click", (e) => {
       const btn = e.target.closest("[data-auth]");
@@ -539,6 +672,19 @@
       e.stopPropagation();
       closeAuthMenu();
       const action = btn.getAttribute("data-auth");
+      if (action === "logout") {
+        if (typeof window.clearProfileNavOnLogout === "function") {
+          window.clearProfileNavOnLogout();
+        } else {
+          try {
+            localStorage.removeItem("leng_logged_in");
+          } catch (err) {}
+          authToggle.textContent =
+            (translations[currentLang] && translations[currentLang].login) || "登录";
+          syncAuthMenuMode();
+        }
+        return;
+      }
       if (!window.L_ENG_Register) return;
       if (action === "login") {
         window.L_ENG_Register.closeNew();
@@ -553,9 +699,12 @@
       }
     });
 
+    window.syncAuthMenuMode = syncAuthMenuMode;
+
     document.addEventListener("click", () => {
       closeLangMenu();
       closeAuthMenu();
+      closeOpsMenu();
       closeMobileMenu();
     });
 
@@ -563,6 +712,7 @@
       if (e.key === "Escape") {
         closeLangMenu();
         closeAuthMenu();
+        closeOpsMenu();
         closeMobileMenu();
       }
     });
