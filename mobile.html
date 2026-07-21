@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>扫码确认</title>
+  <style>
+    :root {
+      --bg: #f4f6f8;
+      --card: #fff;
+      --text: #1a1a1a;
+      --muted: #666;
+      --ok: #2b8a3e;
+      --err: #c92a2a;
+      --accent: #3d6a96;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 16px;
+    }
+    .card {
+      width: min(420px, 100%);
+      background: var(--card);
+      border-radius: 16px;
+      padding: 28px 22px 32px;
+      box-shadow: 0 10px 36px rgba(0, 0, 0, 0.08);
+      text-align: center;
+    }
+    h1 {
+      margin: 0 0 10px;
+      font-size: 20px;
+      font-weight: 700;
+    }
+    p {
+      margin: 0;
+      font-size: 14px;
+      line-height: 1.55;
+      color: var(--muted);
+    }
+    .status {
+      margin-top: 18px;
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--accent);
+      min-height: 1.5em;
+    }
+    .status.is-ok { color: var(--ok); }
+    .status.is-err { color: var(--err); }
+    .hint {
+      margin-top: 14px;
+      font-size: 12px;
+      color: #999;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>扫码登录确认</h1>
+    <p id="desc">正在把扫码结果回传到电脑端…</p>
+    <p class="status" id="status">处理中…</p>
+    <p class="hint" id="hint"></p>
+  </div>
+  <script>
+    (function () {
+      var params = new URLSearchParams(window.location.search);
+      var sessionId =
+        params.get("sessionId") ||
+        params.get("sessionid") ||
+        params.get("key") ||
+        "";
+      var statusEl = document.getElementById("status");
+      var descEl = document.getElementById("desc");
+      var hintEl = document.getElementById("hint");
+
+      function setStatus(text, kind) {
+        statusEl.textContent = text || "";
+        statusEl.classList.remove("is-ok", "is-err");
+        if (kind) statusEl.classList.add("is-" + kind);
+      }
+
+      if (!sessionId) {
+        descEl.textContent = "链接无效：缺少 sessionId。";
+        setStatus("请返回电脑端重新扫码", "err");
+        return;
+      }
+
+      hintEl.textContent = "会话：" + sessionId.slice(0, 8) + "…";
+
+      fetch("/api/scan-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({
+          sessionId: sessionId,
+          data: {
+            scanned: true,
+            scannedAt: Date.now(),
+            ua: navigator.userAgent || "",
+          },
+        }),
+      })
+        .then(function (r) {
+          return r.text().then(function (text) {
+            var j = null;
+            if (text) {
+              try {
+                j = JSON.parse(text);
+              } catch (e) {}
+            }
+            return { ok: r.ok, status: r.status, j: j, text: text };
+          });
+        })
+        .then(function (x) {
+          if (x.ok && x.j && x.j.success === true) {
+            descEl.textContent = "扫码已成功回传到电脑端。";
+            setStatus("请回到电脑查看提示，并查收邮箱验证码", "ok");
+            return;
+          }
+          var msg =
+            (x.j && (x.j.msg || x.j.error)) ||
+            ("HTTP " + x.status);
+          descEl.textContent = "扫码结果未能写入服务器。";
+          setStatus(msg, "err");
+          if (x.status === 503) {
+            hintEl.textContent = "服务器 KV 未配置，请联系管理员。";
+          }
+        })
+        .catch(function (err) {
+          descEl.textContent = "网络异常，未能回传扫码结果。";
+          setStatus(String((err && err.message) || err || "网络错误"), "err");
+        });
+    })();
+  </script>
+</body>
+</html>
