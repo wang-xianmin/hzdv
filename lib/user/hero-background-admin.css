@@ -437,6 +437,90 @@
   filter: brightness(1.12);
 }
 
+.hero-bg-convert-preview {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 10050;
+  width: min(280px, calc(100vw - 24px));
+  pointer-events: none;
+}
+
+.hero-bg-convert-preview__card {
+  background: rgba(18, 22, 28, 0.94);
+  color: #fff;
+  border-radius: 12px;
+  box-shadow: 0 10px 36px rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+  backdrop-filter: blur(8px);
+}
+
+.hero-bg-convert-preview__title {
+  padding: 10px 12px 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.hero-bg-convert-preview__stage {
+  margin: 0 10px;
+  height: 150px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.hero-bg-convert-preview__video,
+.hero-bg-convert-preview__canvas {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  background: #000;
+}
+
+.hero-bg-convert-preview__msg {
+  padding: 16px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.85);
+  text-align: center;
+  line-height: 1.45;
+}
+
+.hero-bg-convert-preview__meta {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 12px 4px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.78);
+  font-variant-numeric: tabular-nums;
+}
+
+.hero-bg-convert-preview__bar {
+  margin: 0 12px 8px;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.15);
+  overflow: hidden;
+}
+
+.hero-bg-convert-preview__bar > i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, #3d9be0, #2bbbad);
+  transition: width 0.2s ease;
+}
+
+.hero-bg-convert-preview__hint {
+  padding: 0 12px 10px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.55);
+}
+
 .hero-bg-admin-empty {
   padding: 28px 12px;
   text-align: center;
