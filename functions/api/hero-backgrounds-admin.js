@@ -219,6 +219,34 @@ export async function onRequest(context) {
           .bind(replaceId)
           .first();
         if (!existing) return jsonResponse({ success: false, error: "Not found" }, 404);
+
+        /** 仅补封面：不删原视频 */
+        const posterOnly = String(form.get("poster_only") || "") === "1";
+        if (posterOnly) {
+          if (!poster || typeof poster === "string" || !(Number(poster.size) > 0)) {
+            return jsonResponse({ success: false, error: "Missing poster" }, 400);
+          }
+          const oldPoster =
+            slot === "mobile" ? existing.poster_r2_key_mobile : existing.poster_r2_key;
+          if (oldPoster) {
+            try {
+              await r2.delete(normalizeHeroR2Key(oldPoster));
+            } catch (eDel) {}
+          }
+          const posterKey = await putR2File(
+            r2,
+            poster,
+            slot === "mobile" ? "m-poster-" : "poster-"
+          );
+          const patch =
+            slot === "mobile"
+              ? { poster_r2_key_mobile: posterKey }
+              : { poster_r2_key: posterKey };
+          const item = await updateHeroBackgroundItem(d1, env, replaceId, patch);
+          if (!item) return jsonResponse({ success: false, error: "Not found" }, 404);
+          return jsonResponse({ success: true, item, poster_only: true, slot });
+        }
+
         await deleteHeroSlotR2Keys(r2, existing, slot);
 
         const r2Key = await putR2File(r2, file, slot === "mobile" ? "m-" : "");
