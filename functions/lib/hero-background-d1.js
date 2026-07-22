@@ -422,6 +422,41 @@ export async function deleteHeroBackgroundItem(d1, id, r2) {
   return rs && typeof rs.changes === "number" ? rs.changes > 0 : true;
 }
 
+/**
+ * 上下移动一行：交换位置后按 0..n-1 重写 sort_order
+ * @param {"up"|"down"} direction
+ */
+export async function moveHeroBackgroundItem(d1, env, id, direction) {
+  const dir = direction === "up" ? "up" : direction === "down" ? "down" : "";
+  if (!dir) throw new Error("Invalid direction");
+  const rs = await d1
+    .prepare(
+      `SELECT id, sort_order FROM hero_background_items
+       ORDER BY sort_order ASC, id ASC`
+    )
+    .all();
+  const list = (rs && rs.results) || [];
+  const idx = list.findIndex((row) => Number(row.id) === Number(id));
+  if (idx < 0) return null;
+  const swapIdx = dir === "up" ? idx - 1 : idx + 1;
+  if (swapIdx < 0 || swapIdx >= list.length) {
+    return listAllHeroBackgroundItems(d1, env);
+  }
+  const ordered = list.slice();
+  const [moved] = ordered.splice(idx, 1);
+  ordered.splice(swapIdx, 0, moved);
+  const now = Date.now();
+  for (let i = 0; i < ordered.length; i++) {
+    await d1
+      .prepare(
+        `UPDATE hero_background_items SET sort_order = ?, updated_at = ? WHERE id = ?`
+      )
+      .bind(i, now, Number(ordered[i].id))
+      .run();
+  }
+  return listAllHeroBackgroundItems(d1, env);
+}
+
 /** 替换槽位前删掉该槽旧的原图/缩略图 */
 export async function deleteHeroSlotR2Keys(r2, row, slot) {
   if (!r2 || !row) return;

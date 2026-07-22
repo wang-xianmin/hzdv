@@ -225,14 +225,14 @@
 }
 
 .hero-bg-admin-col-ops {
-  width: 88px;
+  width: 148px;
 }
 
 .hero-bg-admin-ops {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 4px;
 }
 
 .hero-bg-admin-icon-btn {
@@ -249,16 +249,29 @@
   justify-content: center;
 }
 
-.hero-bg-admin-icon-btn:hover {
+.hero-bg-admin-icon-btn:hover:not(:disabled) {
   background: rgba(0, 0, 0, 0.06);
   color: #333;
+}
+
+.hero-bg-admin-icon-btn:disabled {
+  opacity: 0.32;
+  cursor: default;
+}
+
+.hero-bg-admin-icon-btn--move {
+  width: 24px;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+  color: #445;
 }
 
 .hero-bg-admin-icon-btn--danger {
   color: #888;
 }
 
-.hero-bg-admin-icon-btn--danger:hover {
+.hero-bg-admin-icon-btn--danger:hover:not(:disabled) {
   color: #b42318;
   background: rgba(180, 35, 24, 0.08);
 }
@@ -607,11 +620,11 @@
   }
 
   .hero-bg-admin-col-ops {
-    width: 78px;
+    width: 132px;
   }
 
   .hero-bg-admin-ops {
-    gap: 6px;
+    gap: 3px;
   }
 
   .hero-bg-admin-row input[type="file"] {

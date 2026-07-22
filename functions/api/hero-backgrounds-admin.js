@@ -3,6 +3,7 @@
  * GET    /api/hero-backgrounds-admin?phone=...
  * PUT    JSON { phone, config }
  * POST   JSON { phone, action: "create_empty" }  新增空行（占位图）
+ * POST   JSON { phone, action: "move", id, direction: "up"|"down" }  上下移顺序
  * POST   multipart 替换槽位: phone, id, slot=desktop|mobile, file, [poster]
  * POST   multipart 新建（兼容旧）：phone, file, ...
  * PATCH  JSON { phone, id, ...fields }
@@ -21,6 +22,7 @@ import {
   guessHeroMediaType,
   insertHeroBackgroundItem,
   listAllHeroBackgroundItems,
+  moveHeroBackgroundItem,
   normalizeHeroR2Key,
   pickHeroD1,
   saveHeroBackgroundConfig,
@@ -154,6 +156,19 @@ export async function onRequest(context) {
       if (!body) return jsonResponse({ success: false, error: "Invalid JSON" }, 400);
       try {
         const auth = await assertOpsAccess(env, body.phone);
+        if (body.action === "move") {
+          const moveId = Number(body.id);
+          if (!moveId) {
+            return jsonResponse({ success: false, error: "Missing id" }, 400);
+          }
+          const direction = body.direction === "up" ? "up" : body.direction === "down" ? "down" : "";
+          if (!direction) {
+            return jsonResponse({ success: false, error: "direction 须为 up 或 down" }, 400);
+          }
+          const items = await moveHeroBackgroundItem(d1, env, moveId, direction);
+          if (!items) return jsonResponse({ success: false, error: "Not found" }, 404);
+          return jsonResponse({ success: true, items });
+        }
         if (body.action !== "create_empty") {
           return jsonResponse({ success: false, error: "Unknown action" }, 400);
         }
