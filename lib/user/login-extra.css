@@ -416,21 +416,28 @@
 #userListModalGrid.ag-theme-quartz {
   --ag-font-size: 12px;
   --ag-font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
-  --ag-row-height: 32px;
-  --ag-header-height: 34px;
+  --ag-row-height: 30px;
+  --ag-header-height: 30px;
   --ag-header-background-color: #7a2430;
   --ag-header-foreground-color: #fff;
   --ag-header-cell-hover-background-color: #8e2d3b;
   --ag-odd-row-background-color: #fffdf5;
   --ag-selected-row-background-color: #e8f0fa;
   --ag-border-color: #e2e2e2;
-  --ag-cell-horizontal-padding: 6px;
+  --ag-cell-horizontal-padding: 4px;
 }
 
 #userListModalGrid.ag-theme-quartz .ag-header-cell-label,
 #userListModalGrid.ag-theme-quartz .ag-header-group-cell-label {
   font-size: 12px;
   font-weight: 600;
+  white-space: nowrap;
+}
+
+#userListModalGrid.ag-theme-quartz .ag-header-cell,
+#userListModalGrid.ag-theme-quartz .ag-cell {
+  padding-left: 4px;
+  padding-right: 4px;
 }
 
 #userListModalGrid.ag-theme-quartz .ag-cell {
