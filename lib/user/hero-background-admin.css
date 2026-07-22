@@ -142,6 +142,25 @@
   gap: 10px;
 }
 
+.hero-bg-admin-mute-opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  font-size: 12px;
+  color: #445;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.hero-bg-admin-mute-opt input {
+  margin: 0;
+  width: 14px;
+  height: 14px;
+  accent-color: #2563eb;
+}
+
 .hero-bg-admin-bottom-head h3 {
   margin: 0;
   font-size: 14px;
