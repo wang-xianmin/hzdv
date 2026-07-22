@@ -57,8 +57,14 @@ const PLACEHOLDER_JPEG = Uint8Array.from(
 async function putR2File(r2, file, namePrefix) {
   const filename = (namePrefix || "") + (file.name || "upload.bin");
   const r2Key = buildHeroUploadKey(filename);
-  await r2.put(r2Key, file.stream(), {
-    httpMetadata: { contentType: guessHeroContentType(filename) },
+  const buf = await file.arrayBuffer();
+  if (!buf || buf.byteLength === 0) {
+    throw new Error("上传文件为空");
+  }
+  const contentType =
+    (file.type && String(file.type).trim()) || guessHeroContentType(filename);
+  await r2.put(r2Key, buf, {
+    httpMetadata: { contentType },
   });
   return r2Key;
 }
@@ -217,7 +223,7 @@ export async function onRequest(context) {
 
         const r2Key = await putR2File(r2, file, slot === "mobile" ? "m-" : "");
         let posterKey = null;
-        if (poster && typeof poster !== "string" && poster.name) {
+        if (poster && typeof poster !== "string" && Number(poster.size) > 0) {
           posterKey = await putR2File(
             r2,
             poster,

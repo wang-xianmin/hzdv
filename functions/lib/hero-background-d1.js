@@ -61,9 +61,13 @@ export function normalizeHeroR2Key(rawKey) {
 }
 
 function resolvePublicUrl(env, storedUrl, r2Key) {
+  const key = normalizeHeroR2Key(r2Key);
+  // 有 R2 时一律走同源代理，避免 public_url 残留错误外链导致破图
+  if (key && pickR2Binding(env)) {
+    return `/api/hero-media?key=${encodeURIComponent(key)}`;
+  }
   const direct = String(storedUrl || "").trim();
   if (direct) return direct;
-  const key = normalizeHeroR2Key(r2Key);
   if (!key) return "";
   const base = String(
     env.HERO_MEDIA_PUBLIC_BASE || env.R2_PUBLIC_BASE || env.MEDIA_PUBLIC_BASE || ""
@@ -71,9 +75,6 @@ function resolvePublicUrl(env, storedUrl, r2Key) {
     .trim()
     .replace(/\/+$/, "");
   if (base) return `${base}/${key}`;
-  if (pickR2Binding(env)) {
-    return `/api/hero-media?key=${encodeURIComponent(key)}`;
-  }
   return "";
 }
 
@@ -82,6 +83,20 @@ export async function ensureHeroBackgroundTables(d1) {
   await d1.prepare(CREATE_CONFIG_SQL).run();
   await d1.prepare(CREATE_ITEMS_SQL).run();
   await d1.prepare(CREATE_INDEX_SQL).run();
+  // 旧表可能缺手机列：幂等补齐
+  const alterCols = [
+    "ALTER TABLE hero_background_items ADD COLUMN r2_key_mobile TEXT",
+    "ALTER TABLE hero_background_items ADD COLUMN poster_r2_key_mobile TEXT",
+    "ALTER TABLE hero_background_items ADD COLUMN public_url_mobile TEXT",
+    "ALTER TABLE hero_background_items ADD COLUMN poster_public_url_mobile TEXT",
+  ];
+  for (const sql of alterCols) {
+    try {
+      await d1.prepare(sql).run();
+    } catch (e) {
+      // duplicate column name → ignore
+    }
+  }
   const now = Date.now();
   await d1
     .prepare(

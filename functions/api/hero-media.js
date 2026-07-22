@@ -36,7 +36,11 @@ export async function onRequest(context) {
 
   let object;
   try {
-    object = await r2.get(key, { range: request });
+    const getOpts = {};
+    if (request.headers.has("range")) {
+      getOpts.range = request.headers;
+    }
+    object = await r2.get(key, getOpts);
   } catch (e) {
     return new Response(String((e && e.message) || e || "R2 read failed"), {
       status: 500,
