@@ -404,12 +404,26 @@
   position: absolute;
   left: 4px;
   bottom: 4px;
+  z-index: 2;
   font-size: 10px;
   line-height: 1;
   padding: 3px 5px;
   border-radius: 3px;
-  background: rgba(0, 0, 0, 0.65);
+  background: rgba(0, 0, 0, 0.72);
   color: #fff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+  pointer-events: none;
+}
+
+.hero-bg-admin-thumb-badge.is-ok {
+  background: rgba(11, 114, 133, 0.88);
+}
+
+.hero-bg-admin-thumb-badge.is-warn {
+  background: rgba(180, 83, 9, 0.92);
+  box-shadow: 0 0 0 1px rgba(255, 200, 120, 0.35);
 }
 
 .hero-bg-admin-empty {
