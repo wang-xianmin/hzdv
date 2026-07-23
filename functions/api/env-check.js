@@ -23,6 +23,8 @@ export async function onRequest(context) {
     has_my_kv: !!pickKvBinding(env),
     has_avatars_db: !!pickD1Binding(env),
     has_avatars_r2: !!pickR2Binding(env),
+    has_ocr_service_url: !!(env.OCR_SERVICE_URL || env.OCR_URL),
+    has_ocr_api_key: !!env.OCR_API_KEY,
     d1_binding_names: ["hzdvd1", "DV_D1", "AVATARS_DB", "D1", "DB", "MY_DB", "avatar_db"],
     r2_binding_names: ["R2", "AVATARS_R2", "MY_R2", "avatar_r2", "BUCKET"],
     timestamp: Date.now(),

@@ -1,0 +1,17 @@
+# 在 VPS / Mac 上启动同一套 OCR 服务
+# 用法：
+#   cd services/ocr && docker compose up -d --build
+# 健康检查：
+#   curl http://127.0.0.1:8089/health
+
+services:
+  ocr:
+    build: .
+    image: hzdv-ocr:latest
+    container_name: hzdv-ocr
+    ports:
+      - "${OCR_PUBLISH_PORT:-8089}:8089"
+    environment:
+      OCR_API_KEY: "${OCR_API_KEY:-}"
+      OCR_CORS_ORIGINS: "${OCR_CORS_ORIGINS:-*}"
+    restart: unless-stopped
