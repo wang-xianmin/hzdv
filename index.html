@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="lib/user/login-extra.css?v=20260722r" />
   <link rel="stylesheet" href="lib/user/hero-background.css?v=20260723a" />
   <link rel="stylesheet" href="lib/user/hero-background-admin.css?v=20260722p" />
+  <link rel="stylesheet" href="lib/user/ai-assist.css?v=20260723a" />
   <style>
     :root {
       --nav-bg: #3d6a96;
@@ -617,6 +618,7 @@
 
     function applyLanguage(lang) {
       currentLang = lang;
+      window.currentLang = lang;
       const dict = translations[lang];
       document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
 
@@ -634,6 +636,9 @@
         btn.classList.toggle("active", btn.getAttribute("data-lang") === lang);
       });
       syncAuthMenuMode();
+      if (window.AiAssist && typeof window.AiAssist.refreshLang === "function") {
+        window.AiAssist.refreshLang();
+      }
     }
 
     function closeLangMenu() {
@@ -773,6 +778,7 @@
   </script>
   <script src="lib/user/config.js"></script>
   <script src="lib/user/hero-background.js?v=20260722q"></script>
+  <script src="lib/user/ai-assist.js?v=20260723a"></script>
   <script src="lib/user/app-stubs.js"></script>
   <script src="lib/vendor/ag-grid/ag-grid-community.min.js"></script>
   <script src="lib/user/login-shell.js"></script>
