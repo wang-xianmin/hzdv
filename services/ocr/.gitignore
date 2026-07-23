@@ -1,0 +1,8 @@
+.env
+.ocr_api_key
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.onnx
+.DS_Store
