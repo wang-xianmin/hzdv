@@ -15,6 +15,7 @@
 }
 
 .site-header--overlay .nav-links a,
+.site-header--overlay .nav-ai-assist,
 .site-header--overlay .login-link {
   color: #fff;
 }

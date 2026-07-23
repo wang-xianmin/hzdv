@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="lib/vendor/ag-grid/agGridQuartzFont.min.css" />
   <link rel="stylesheet" href="lib/user/login.css" />
   <link rel="stylesheet" href="lib/user/login-extra.css?v=20260722r" />
-  <link rel="stylesheet" href="lib/user/hero-background.css?v=20260722p" />
+  <link rel="stylesheet" href="lib/user/hero-background.css?v=20260723a" />
   <link rel="stylesheet" href="lib/user/hero-background-admin.css?v=20260722p" />
   <style>
     :root {
@@ -50,6 +50,14 @@
       gap: 24px;
     }
 
+    .nav-brand {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-shrink: 0;
+      margin-right: auto;
+    }
+
     .logo {
       display: flex;
       align-items: center;
@@ -64,12 +72,25 @@
       letter-spacing: 0.04em;
       opacity: 0.9;
       flex-shrink: 0;
-      margin-right: auto;
     }
 
     .logo:hover {
       opacity: 1;
       background: rgba(255, 255, 255, 0.08);
+    }
+
+    .nav-ai-assist {
+      color: var(--nav-text);
+      text-decoration: none;
+      font-size: 15px;
+      font-weight: 500;
+      white-space: nowrap;
+      opacity: 0.92;
+      transition: opacity 0.15s ease;
+    }
+
+    .nav-ai-assist:hover {
+      opacity: 1;
     }
 
     .nav-links {
@@ -343,8 +364,13 @@
         position: relative;
       }
 
-      .logo {
+      .nav-brand {
         margin-right: auto;
+        gap: 12px;
+      }
+
+      .nav-ai-assist {
+        font-size: 14px;
       }
 
       .menu-toggle {
@@ -387,7 +413,10 @@
 <body>
   <header class="site-header site-header--overlay">
     <nav class="nav" aria-label="Main">
-      <a class="logo" href="#" data-i18n="logo" aria-label="Logo">LOGO</a>
+      <div class="nav-brand">
+        <a class="logo" href="#" data-i18n="logo" aria-label="Logo">LOGO</a>
+        <a class="nav-ai-assist" href="#" id="topNavAiAssist" data-i18n="ai_assist">AI助手</a>
+      </div>
 
       <ul class="nav-links" id="nav-links">
         <li><a href="#" data-i18n="products"></a></li>
@@ -521,6 +550,7 @@
     const translations = {
       zh: {
         logo: "LOGO",
+        ai_assist: "AI助手",
         products: "产品",
         news: "新闻与活动",
         about_us: "了解我们",
@@ -535,6 +565,7 @@
       },
       en: {
         logo: "LOGO",
+        ai_assist: "AI Assistant",
         products: "Products",
         news: "News & Activity",
         about_us: "About DV",
