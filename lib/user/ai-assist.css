@@ -298,11 +298,7 @@
 }
 
 .ai-assist__toolbar {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-height: 32px;
-  padding-left: 2px;
+  display: none;
 }
 
 .ai-assist__toolbar-spacer {
@@ -329,7 +325,7 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  max-width: 180px;
+  max-width: 140px;
 }
 
 .ai-assist__model-btn:hover,
@@ -366,7 +362,8 @@
 .ai-assist__model-menu {
   display: none;
   position: absolute;
-  left: 0;
+  right: 0;
+  left: auto;
   bottom: calc(100% + 8px);
   width: min(280px, 78vw);
   max-height: min(320px, 45vh);
