@@ -54,8 +54,11 @@ curl -X POST http://127.0.0.1:8089/ocr \
 
 | 变量 | 说明 |
 |------|------|
-| `OCR_SERVICE_URL` | 如 `http://你的VPS公网IP:8089` 或域名 `https://ocr.example.com` |
+| `OCR_SERVICE_URL` | **必须用域名**（Workers/Pages 不能 `fetch` 裸 IP，会报 1003）。例：`http://ocr.hobby-era.com` |
 | `OCR_API_KEY` | 与容器 `OCR_API_KEY` 一致（可选但建议生产开启） |
+
+DNS（Cloudflare）：`ocr` A 记录 → VPS IP，**灰云 DNS only**（不要橙云代理）。  
+本机可用 Nginx 把 `ocr.你的域名:80` 反代到 `127.0.0.1:8089`。
 
 前端只请求同源 `/api/ocr`，不要把密钥写进浏览器。
 

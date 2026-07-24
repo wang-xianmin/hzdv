@@ -121,7 +121,7 @@
         .then(function (x) {
           if (x.ok && x.j && x.j.success === true) {
             descEl.textContent = "扫码已成功回传到电脑端。";
-            setStatus("请回到电脑查看提示，并查收邮箱验证码", "ok");
+            setStatus("请回到电脑查收邮箱，并点击邮件里的「确认登录」", "ok");
             return;
           }
           var msg =
