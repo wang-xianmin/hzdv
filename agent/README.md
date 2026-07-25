@@ -60,5 +60,7 @@ Python + RapidOCR 仍在仓库 `services/ocr/`（Docker，VPS 跑一份）。
 
 | 在 agent 内 | 留在宿主项目 |
 |-------------|--------------|
-| 助手 UI、模型库 API、OCR 代理 | 登录、`phone` 运维鉴权实现、站点品牌与顶栏入口 |
+| 助手 UI、模型库 API、OCR 代理 | 登录、`phone` 运维鉴权实现、站点品牌与顶栏「系统运维 → AI 模型库」入口 |
 | OpenAI 兼容调用（后续 chat 网关） | D1/R2 等非 agent 绑定 |
+
+开发调试阶段：任意登录用户可进模型库；正式收紧为仅超级用户（前端入口 + `/api/llm-models` 写鉴权）。

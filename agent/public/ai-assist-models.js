@@ -1,6 +1,9 @@
 /**
- * AI 助手 · 模型库管理（第二/三梯队，Cursor 风格增删排序）
- * 依赖：已登录（leng_user.phone）才能写；读公开列表不需登录
+ * AI 助手 · 模型库管理（第二/三梯队）
+ * 入口：顶栏「系统运维」→「AI 模型库」
+ *
+ * 开发调试阶段：任意已登录用户可打开/编辑（与 OPS_TEMP_OPEN_TO_ANY_LOGIN 一致）。
+ * 正式收紧时改为仅超级用户。
  */
 (function (global) {
   "use strict";
@@ -401,4 +404,26 @@
     close: close,
     fetchPickerModels: fetchPickerModels,
   };
+
+  function bindOpsMenuEntry() {
+    var menuBtn = document.getElementById("topNavAiModels");
+    if (!menuBtn || menuBtn.dataset.aiModelsBound === "1") return;
+    menuBtn.dataset.aiModelsBound = "1";
+    menuBtn.addEventListener("click", function () {
+      if (localStorage.getItem("leng_logged_in") !== "1") {
+        alert(
+          t("请先登录后再打开 AI 模型库", "Please log in to open AI Models")
+        );
+        return;
+      }
+      // 开发期：任意登录用户可调试；正式改为仅超管
+      open();
+    });
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", bindOpsMenuEntry);
+  } else {
+    bindOpsMenuEntry();
+  }
 })(typeof window !== "undefined" ? window : this);

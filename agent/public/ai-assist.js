@@ -576,20 +576,6 @@
       });
       modelMenu.appendChild(btn);
     });
-
-    var manage = document.createElement("button");
-    manage.type = "button";
-    manage.className = "ai-assist__model-manage";
-    manage.textContent = t("管理模型库…", "Manage models…");
-    manage.addEventListener("click", function (e) {
-      e.preventDefault();
-      e.stopPropagation();
-      closeModelMenu();
-      if (global.AiAssistModels && typeof global.AiAssistModels.open === "function") {
-        global.AiAssistModels.open();
-      }
-    });
-    modelMenu.appendChild(manage);
   }
 
   function renderCopy() {
