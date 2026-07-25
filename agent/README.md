@@ -26,6 +26,7 @@ agent/
 
 - `functions/api/llm-models.js` → re-export `agent/functions/api/llm-models.js`
 - `functions/api/llm-ping.js` → re-export `agent/functions/api/llm-ping.js`
+- `functions/api/llm-chat.js` → re-export `agent/functions/api/llm-chat.js`
 - `functions/api/ocr.js` → re-export `agent/functions/api/ocr.js`
 
 ## 接入本站

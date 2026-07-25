@@ -646,6 +646,32 @@
     root.classList.toggle("is-chatting", messages.length > 0);
   }
 
+  function currentPhone() {
+    try {
+      if (global.__LENG_USER && global.__LENG_USER.phone) {
+        return String(global.__LENG_USER.phone);
+      }
+      var raw = localStorage.getItem("leng_user");
+      if (!raw) return "";
+      var u = JSON.parse(raw);
+      return String((u && u.phone) || "");
+    } catch (e) {
+      return "";
+    }
+  }
+
+  function formatModelBadge(meta, selectedId) {
+    if (!meta) {
+      var sel = findModel(selectedId || selectedModelId);
+      return sel && sel.id === "auto" ? "Auto" : (sel && sel.label) || "";
+    }
+    var name = meta.label || meta.modelId || "";
+    if (meta.via && String(meta.via).indexOf("auto") === 0) {
+      return "Auto → " + name;
+    }
+    return name;
+  }
+
   function renderThread() {
     if (!threadEl) return;
     threadEl.innerHTML = "";
@@ -654,37 +680,106 @@
       bubble.className =
         "ai-assist__bubble ai-assist__bubble--" +
         (m.role === "user" ? "user" : "assistant");
-      bubble.textContent = m.text;
+      if (m.role === "assistant" && m.modelBadge) {
+        var meta = document.createElement("div");
+        meta.className = "ai-assist__bubble-model";
+        meta.textContent = m.modelBadge;
+        bubble.appendChild(meta);
+      }
+      var body = document.createElement("div");
+      body.className = "ai-assist__bubble-text";
+      body.textContent = m.text;
+      bubble.appendChild(body);
       threadEl.appendChild(bubble);
     });
     threadEl.scrollTop = threadEl.scrollHeight;
     syncChattingClass();
   }
 
-  function appendMessage(role, text) {
-    messages.push({ role: role, text: String(text || ""), model: selectedModelId });
+  function appendMessage(role, text, extra) {
+    var row = {
+      role: role,
+      text: String(text || ""),
+      model: selectedModelId,
+    };
+    if (extra && typeof extra === "object") {
+      if (extra.modelBadge) row.modelBadge = extra.modelBadge;
+      if (extra.modelMeta) row.modelMeta = extra.modelMeta;
+    }
+    messages.push(row);
     renderThread();
   }
 
-  function appendAssistant(text) {
-    appendMessage("assistant", text);
+  function appendAssistant(text, extra) {
+    appendMessage("assistant", text, extra);
   }
 
   function submitPrompt(text) {
     var q = String(text || "").trim();
     if (!q) return;
-    var model = findModel(selectedModelId);
+    var phone = currentPhone();
+    var want = selectedModelId;
     appendMessage("user", q);
     inputEl.value = "";
     syncSendState();
-    setTimeout(function () {
+
+    if (!phone) {
       appendAssistant(
-        t(
-          "已收到（模型：" + model.label + "）。对话能力即将接入。",
-          "Received (model: " + model.label + "). Chat coming soon."
-        )
+        t("请先登录后再对话。", "Please log in to chat."),
+        { modelBadge: formatModelBadge(null, want) }
       );
-    }, 280);
+      return;
+    }
+
+    appendAssistant(t("思考中…", "Thinking…"), {
+      modelBadge: want === "auto" ? "Auto …" : formatModelBadge(null, want),
+    });
+    var thinkingIdx = messages.length - 1;
+
+    fetch("/api/llm-chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({ phone: phone, message: q, modelId: want }),
+    })
+      .then(function (r) {
+        return r.json().then(function (j) {
+          return { ok: r.ok, j: j };
+        });
+      })
+      .then(function (pack) {
+        var j = pack.j || {};
+        var badge = formatModelBadge(j.model, want);
+        var latency =
+          j.latencyMs != null ? " · " + j.latencyMs + "ms" : "";
+        if (j.success && j.reply) {
+          messages[thinkingIdx] = {
+            role: "assistant",
+            text: String(j.reply),
+            model: want,
+            modelBadge: badge + latency,
+            modelMeta: j.model || null,
+          };
+        } else {
+          messages[thinkingIdx] = {
+            role: "assistant",
+            text: t("调用失败：", "Failed: ") + (j.error || "unknown"),
+            model: want,
+            modelBadge: (badge || "LLM") + latency,
+            modelMeta: j.model || null,
+          };
+        }
+        renderThread();
+      })
+      .catch(function (err) {
+        messages[thinkingIdx] = {
+          role: "assistant",
+          text: t("网络错误：", "Network error: ") + String((err && err.message) || err),
+          model: want,
+          modelBadge: formatModelBadge(null, want),
+        };
+        renderThread();
+      });
   }
 
   function closePlusMenuSafe() {

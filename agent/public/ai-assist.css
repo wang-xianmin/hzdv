@@ -78,6 +78,23 @@
   border-bottom-right-radius: 6px;
 }
 
+.ai-assist__bubble-model {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  opacity: 0.72;
+  margin-bottom: 4px;
+  line-height: 1.2;
+}
+
+.ai-assist__bubble--assistant .ai-assist__bubble-model {
+  color: rgba(180, 220, 255, 0.95);
+}
+
+.ai-assist__bubble-text {
+  white-space: pre-wrap;
+}
+
 /* 预对话：建议问题（开始对话后隐藏） */
 .ai-assist__prompts {
   display: none;
