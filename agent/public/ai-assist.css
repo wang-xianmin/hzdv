@@ -95,6 +95,15 @@
   white-space: pre-wrap;
 }
 
+.ai-assist__bubble-note {
+  margin-top: 5px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.16);
+  font-size: 10px;
+  line-height: 1.35;
+  color: rgba(255, 214, 160, 0.92);
+}
+
 /* 预对话：建议问题（开始对话后隐藏） */
 .ai-assist__prompts {
   display: none;

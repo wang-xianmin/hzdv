@@ -3,11 +3,11 @@
  * 最小对话入口（调试用）：按所选模型或 Auto 解析后的模型调用 OpenAI 兼容接口。
  *
  * Body: { phone, message, modelId?: "auto" | <registry id>, lang?: "zh"|"en" }
- * Returns: { success, reply, model: { id, label, modelId, tier, via }, latencyMs, error? }
+ * Returns: { success, reply, model: {...}, attempts, notes, latencyMs, error? }
  *
- * Auto：
- *   第一梯队按界面语言选主备（中文 Doubao 首选 / 英文 Qwen 首选），主失败则试备；
- *   若第一梯队都不可用，再落到第二/三梯队第一个有 Key 的启用模型。
+ * Auto：菜单语言决定第一梯队主备（中文 Doubao 首选 / 英文 Qwen 首选），
+ * 主失败则试备，都不可用再落到第二/三梯队。
+ * 回复语言只看提问语言，与菜单语言无关。
  */
 
 import { assertOpsAccess, opsAuthErrorResponse, pickKvBinding, kvBindingHint } from "../lib/host.js";
@@ -17,7 +17,7 @@ import {
   extractAssistantText,
   resolveApiKey,
 } from "../lib/openai-compat.js";
-import { normalizeUiLang, tier1Candidates } from "../lib/tier1.js";
+import { detectTextLang, normalizeUiLang, tier1Plan } from "../lib/tier1.js";
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -60,7 +60,24 @@ function modelMeta(target, via, extra) {
   };
 }
 
-async function callModel(env, target, message, lang) {
+function systemPrompt(replyLang) {
+  if (replyLang === "en") {
+    return (
+      "You are the HZDV site assistant. Be concise and direct. " +
+      "Always answer in the same language the user wrote in. " +
+      "The user wrote in English, so answer in English. " +
+      "Ignore the site menu language."
+    );
+  }
+  return (
+    "你是 HZDV 站点助手。回答简洁、直接。" +
+    "始终使用与用户提问相同的语言回答。" +
+    "本次用户用中文提问，请用中文回答。" +
+    "不要参考站点菜单语言。"
+  );
+}
+
+async function callModel(env, target, message, replyLang) {
   const apiKey = resolveApiKey(env, target.apiKeyEnv);
   if (!apiKey) {
     return {
@@ -83,27 +100,33 @@ async function callModel(env, target, message, lang) {
     };
   }
 
-  const sys =
-    lang === "en"
-      ? "You are the HZDV site assistant. Be concise and direct. Reply in English."
-      : "你是 HZDV 站点助手。回答简洁、直接。用中文回复。";
-
   const result = await chatCompletions({
     baseUrl: target.baseUrl,
     apiKey,
     model: target.modelId,
     messages: [
-      { role: "system", content: sys },
+      { role: "system", content: systemPrompt(replyLang) },
       { role: "user", content: message },
     ],
     temperature: 0.3,
     max_tokens: 1024,
     timeoutMs: 60000,
   });
-  return {
-    ...result,
-    reply: extractAssistantText(result.data) || "",
-  };
+  return { ...result, reply: extractAssistantText(result.data) || "" };
+}
+
+function skipNote(item, uiLang) {
+  const miss = (item.missing || []).join(", ") || "配置不全";
+  return uiLang === "en"
+    ? item.label + " skipped (missing " + miss + ")"
+    : item.label + " 跳过（缺 " + miss + "）";
+}
+
+function failNote(attempt, uiLang) {
+  const why = attempt.error || "failed";
+  return uiLang === "en"
+    ? attempt.label + " failed: " + why
+    : attempt.label + " 调用失败：" + why;
 }
 
 export async function onRequest(context) {
@@ -130,22 +153,23 @@ export async function onRequest(context) {
     return jsonResponse({ success: false, error: "缺少 message" }, 400);
   }
 
-  const lang = normalizeUiLang(body.lang || body.locale || "zh");
+  const uiLang = normalizeUiLang(body.lang || body.locale || "zh");
+  const replyLang = detectTextLang(message, uiLang);
+  const langInfo = { uiLang, replyLang };
   const wantId = String(body.modelId || body.model || "auto").trim() || "auto";
+
   const kv = pickKvBinding(env);
   if (!kv) {
     return jsonResponse({ success: false, error: "KV not configured", hint: kvBindingHint() }, 503);
   }
-
   const { models } = await loadLlmModels(kv);
 
-  // 手动指定模型库条目
   if (wantId !== "auto") {
     const hit = (models || []).find((m) => m.id === wantId);
     if (!hit) {
       return jsonResponse({ success: false, error: "模型不存在：" + wantId }, 404);
     }
-    const result = await callModel(env, hit, message, lang);
+    const result = await callModel(env, hit, message, replyLang);
     return jsonResponse(
       {
         success: !!result.ok,
@@ -153,32 +177,30 @@ export async function onRequest(context) {
         latencyMs: result.latencyMs,
         upstreamStatus: result.status,
         error: result.error || null,
-        model: modelMeta(hit, "manual", { lang }),
+        model: modelMeta(hit, "manual", langInfo),
+        notes: [],
         upstream: result.ok ? undefined : result.data,
       },
       result.ok ? 200 : 502
     );
   }
 
-  // Auto：第一梯队主→备，再 registry
-  const { candidates, lang: uiLang } = tier1Candidates(env, lang);
+  const plan = tier1Plan(env, uiLang);
   const attempts = [];
+  const notes = plan.skipped.map((s) => skipNote(s, uiLang));
 
-  for (const cand of candidates) {
-    const via =
-      "auto→tier1/" +
-      (cand.preference || "primary") +
-      "/" +
-      (cand.role || cand.label);
-    const result = await callModel(env, cand, message, uiLang);
-    attempts.push({
+  for (const cand of plan.candidates) {
+    const via = "auto→tier1/" + (cand.preference || "primary") + "/" + cand.role;
+    const result = await callModel(env, cand, message, replyLang);
+    const attempt = {
       label: cand.label,
       modelId: cand.modelId,
       preference: cand.preference,
       ok: !!result.ok,
       error: result.error || null,
       latencyMs: result.latencyMs,
-    });
+    };
+    attempts.push(attempt);
     if (result.ok) {
       return jsonResponse({
         success: true,
@@ -186,15 +208,17 @@ export async function onRequest(context) {
         latencyMs: result.latencyMs,
         upstreamStatus: result.status,
         error: null,
-        model: modelMeta(cand, via, { lang: uiLang }),
+        model: modelMeta(cand, via, langInfo),
         attempts,
+        notes,
       });
     }
+    notes.push(failNote(attempt, uiLang));
   }
 
   const fallback = pickRegistryFallback(env, models);
   if (fallback.target) {
-    const result = await callModel(env, fallback.target, message, uiLang);
+    const result = await callModel(env, fallback.target, message, replyLang);
     attempts.push({
       label: fallback.target.label,
       modelId: fallback.target.modelId,
@@ -210,8 +234,9 @@ export async function onRequest(context) {
         latencyMs: result.latencyMs,
         upstreamStatus: result.status,
         error: result.error || null,
-        model: modelMeta(fallback.target, fallback.via, { lang: uiLang }),
+        model: modelMeta(fallback.target, fallback.via, langInfo),
         attempts,
+        notes,
         upstream: result.ok ? undefined : result.data,
       },
       result.ok ? 200 : 502
@@ -222,9 +247,12 @@ export async function onRequest(context) {
     {
       success: false,
       error:
-        "Auto 未找到可用模型（中文首选 Doubao / 英文首选 Qwen；请检查 ARK_API_KEY、SILICONFLOW_API_KEY 与模型环境变量）",
-      model: { id: "auto", label: "Auto", modelId: "", tier: 0, via: "auto→none", lang: uiLang },
+        uiLang === "en"
+          ? "No usable model for Auto. Check ARK_API_KEY / SILICONFLOW_API_KEY and model env vars."
+          : "Auto 未找到可用模型（检查 ARK_API_KEY、SILICONFLOW_API_KEY 与模型环境变量）",
+      model: { id: "auto", label: "Auto", modelId: "", tier: 0, via: "auto→none", ...langInfo },
       attempts,
+      notes,
     },
     400
   );

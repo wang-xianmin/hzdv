@@ -667,7 +667,14 @@
     }
     var name = meta.label || meta.modelId || "";
     if (meta.via && String(meta.via).indexOf("auto") === 0) {
-      return "Auto → " + name;
+      var uiTag = meta.uiLang === "en" ? "EN" : "中";
+      var role = "";
+      if (String(meta.via).indexOf("tier1/backup") >= 0) {
+        role = t("（备选）", " (backup)");
+      } else if (String(meta.via).indexOf("tier1/primary") >= 0) {
+        role = t("（首选）", " (primary)");
+      }
+      return "Auto[" + uiTag + "] → " + name + role;
     }
     return name;
   }
@@ -690,6 +697,12 @@
       body.className = "ai-assist__bubble-text";
       body.textContent = m.text;
       bubble.appendChild(body);
+      if (m.role === "assistant" && m.modelNote) {
+        var note = document.createElement("div");
+        note.className = "ai-assist__bubble-note";
+        note.textContent = m.modelNote;
+        bubble.appendChild(note);
+      }
       threadEl.appendChild(bubble);
     });
     threadEl.scrollTop = threadEl.scrollHeight;
@@ -705,6 +718,7 @@
     if (extra && typeof extra === "object") {
       if (extra.modelBadge) row.modelBadge = extra.modelBadge;
       if (extra.modelMeta) row.modelMeta = extra.modelMeta;
+      if (extra.modelNote) row.modelNote = extra.modelNote;
     }
     messages.push(row);
     renderThread();
@@ -757,12 +771,14 @@
         var badge = formatModelBadge(j.model, want);
         var latency =
           j.latencyMs != null ? " · " + j.latencyMs + "ms" : "";
+        var note = (j.notes || []).join("；") || "";
         if (j.success && j.reply) {
           messages[thinkingIdx] = {
             role: "assistant",
             text: String(j.reply),
             model: want,
             modelBadge: badge + latency,
+            modelNote: note,
             modelMeta: j.model || null,
           };
         } else {
@@ -771,6 +787,7 @@
             text: t("调用失败：", "Failed: ") + (j.error || "unknown"),
             model: want,
             modelBadge: (badge || "LLM") + latency,
+            modelNote: note,
             modelMeta: j.model || null,
           };
         }

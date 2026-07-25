@@ -1,8 +1,11 @@
 /**
  * 第一梯队（分类器 / 前锋）选模
  *
- * 中文 UI：Doubao-1.5-lite 首选，Qwen2.5-7B 备选
- * 英文 UI：Qwen2.5-7B 首选，Doubao-1.5-lite 备选
+ * 菜单语言决定主备顺序：
+ *   中文 UI：Doubao-1.5-lite-32k 首选，Qwen2.5-7B 备选
+ *   英文 UI：Qwen2.5-7B 首选，Doubao-1.5-lite-32k 备选
+ *
+ * 注意：主备顺序只看菜单语言；回复语言由提问语言决定（见 detectTextLang）。
  */
 
 import { resolveApiKey } from "./openai-compat.js";
@@ -13,72 +16,100 @@ export function normalizeUiLang(lang) {
   return "zh";
 }
 
-export function getDoubaoLite(env) {
+/** 提问语言：含中日韩字符判为中文，含拉丁字母判为英文，否则回落菜单语言 */
+export function detectTextLang(text, fallbackLang) {
+  const s = String(text || "");
+  if (/[\u3400-\u4dbf\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/.test(s)) return "zh";
+  if (/[A-Za-z]/.test(s)) return "en";
+  return normalizeUiLang(fallbackLang);
+}
+
+const DOUBAO_DEFAULT_BASE = "https://ark.cn-beijing.volces.com/api/v3";
+const QWEN_DEFAULT_BASE = "https://api.siliconflow.cn/v1";
+const QWEN_DEFAULT_MODEL = "Qwen/Qwen2.5-7B-Instruct";
+
+/** @returns {{ role: string, label: string, target: object|null, missing: string[] }} */
+export function describeDoubao(env) {
   const modelId = String(env.DOUBAO_LITE_MODEL || "").trim();
-  const baseUrl = String(
-    env.DOUBAO_BASE_URL || "https://ark.cn-beijing.volces.com/api/v3"
-  ).trim();
-  if (!modelId || !baseUrl || !resolveApiKey(env, "ARK_API_KEY")) return null;
+  const baseUrl = String(env.DOUBAO_BASE_URL || DOUBAO_DEFAULT_BASE).trim();
+  const missing = [];
+  if (!modelId) missing.push("DOUBAO_LITE_MODEL");
+  if (!baseUrl) missing.push("DOUBAO_BASE_URL");
+  if (!resolveApiKey(env, "ARK_API_KEY")) missing.push("ARK_API_KEY");
+
   return {
-    id: "builtin:doubao-lite",
-    label: "Doubao-1.5-lite-32k",
-    modelId,
-    baseUrl,
-    apiKeyEnv: "ARK_API_KEY",
-    tier: 1,
     role: "doubao",
+    label: "Doubao-1.5-lite-32k",
+    missing,
+    target: missing.length
+      ? null
+      : {
+          id: "builtin:doubao-lite",
+          label: "Doubao-1.5-lite-32k",
+          modelId,
+          baseUrl,
+          apiKeyEnv: "ARK_API_KEY",
+          tier: 1,
+          role: "doubao",
+        },
   };
 }
 
-export function getQwenLite(env) {
-  const modelId = String(
-    env.QWEN_LITE_MODEL || "Qwen/Qwen2.5-7B-Instruct"
-  ).trim();
+/** @returns {{ role: string, label: string, target: object|null, missing: string[] }} */
+export function describeQwen(env) {
+  const modelId = String(env.QWEN_LITE_MODEL || QWEN_DEFAULT_MODEL).trim();
   const baseUrl = String(
-    env.QWEN_BASE_URL || env.SILICONFLOW_BASE_URL || "https://api.siliconflow.cn/v1"
+    env.QWEN_BASE_URL || env.SILICONFLOW_BASE_URL || QWEN_DEFAULT_BASE
   ).trim();
-  if (!modelId || !baseUrl || !resolveApiKey(env, "SILICONFLOW_API_KEY")) return null;
+  const missing = [];
+  if (!resolveApiKey(env, "SILICONFLOW_API_KEY")) missing.push("SILICONFLOW_API_KEY");
+
   return {
-    id: "builtin:siliconflow-lite",
-    label: "Qwen/Qwen2.5-7B-Instruct",
-    modelId,
-    baseUrl,
-    apiKeyEnv: "SILICONFLOW_API_KEY",
-    tier: 1,
     role: "qwen",
+    label: QWEN_DEFAULT_MODEL,
+    missing,
+    target: missing.length
+      ? null
+      : {
+          id: "builtin:siliconflow-lite",
+          label: QWEN_DEFAULT_MODEL,
+          modelId,
+          baseUrl,
+          apiKeyEnv: "SILICONFLOW_API_KEY",
+          tier: 1,
+          role: "qwen",
+        },
   };
 }
 
 /**
- * @returns {{ primary: object|null, backup: object|null, order: string[], lang: "zh"|"en" }}
+ * 按菜单语言排出第一梯队主备。
+ * @returns {{ lang: "zh"|"en", primary: object, backup: object, candidates: object[], skipped: object[] }}
  */
-export function tier1Order(env, lang) {
+export function tier1Plan(env, lang) {
   const ui = normalizeUiLang(lang);
-  const doubao = getDoubaoLite(env);
-  const qwen = getQwenLite(env);
-  if (ui === "en") {
-    return {
-      lang: "en",
-      primary: qwen,
-      backup: doubao,
-      order: ["qwen", "doubao"],
-    };
-  }
-  return {
-    lang: "zh",
-    primary: doubao,
-    backup: qwen,
-    order: ["doubao", "qwen"],
-  };
-}
+  const doubao = describeDoubao(env);
+  const qwen = describeQwen(env);
+  const primary = ui === "en" ? qwen : doubao;
+  const backup = ui === "en" ? doubao : qwen;
 
-/** 按语言返回可用的第一梯队列表（主→备，已过滤未配置） */
-export function tier1Candidates(env, lang) {
-  const { primary, backup, lang: ui } = tier1Order(env, lang);
-  const list = [];
-  if (primary) list.push({ ...primary, preference: "primary" });
-  if (backup && (!primary || backup.id !== primary.id)) {
-    list.push({ ...backup, preference: "backup" });
-  }
-  return { lang: ui, candidates: list };
+  const candidates = [];
+  const skipped = [];
+  [
+    { desc: primary, preference: "primary" },
+    { desc: backup, preference: "backup" },
+  ].forEach(({ desc, preference }) => {
+    if (desc.target) {
+      candidates.push({ ...desc.target, preference });
+    } else {
+      skipped.push({
+        label: desc.label,
+        role: desc.role,
+        preference,
+        missing: desc.missing,
+      });
+    }
+  });
+
+  return { lang: ui, primary, backup, candidates, skipped };
 }
