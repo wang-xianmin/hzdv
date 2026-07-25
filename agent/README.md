@@ -48,8 +48,8 @@ agent/
 
 | 变量 | 用途 |
 |------|------|
-| `ARK_API_KEY` / `DOUBAO_LITE_MODEL` | 第一梯队 / 分类器（豆包） |
-| `SILICONFLOW_API_KEY` / `QWEN_BASE_URL` / `QWEN_LITE_MODEL` | 备份分类器（SiliconFlow） |
+| `ARK_API_KEY` / `DOUBAO_LITE_MODEL` | 第一梯队 Doubao（中文首选 / 英文备选） |
+| `SILICONFLOW_API_KEY` / `QWEN_BASE_URL` / `QWEN_LITE_MODEL` | 第一梯队 Qwen（英文首选 / 中文备选；默认 `Qwen/Qwen2.5-7B-Instruct`） |
 | `ALIYUN_MAAS_API_KEY` | 阿里 MaaS（二/三梯队多数模型） |
 | `DEEPSEEK_API_KEY` | DeepSeek 官方 |
 | `OCR_SERVICE_URL` / `OCR_API_KEY` | OCR 代理 |

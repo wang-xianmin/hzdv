@@ -30,7 +30,7 @@ function builtinTarget(env, name) {
   const n = String(name || "").trim();
   if (n === "doubao-lite" || n === "doubao") {
     return {
-      label: "Doubao-1.5-lite",
+      label: "Doubao-1.5-lite-32k",
       modelId: String(env.DOUBAO_LITE_MODEL || "").trim(),
       baseUrl: String(env.DOUBAO_BASE_URL || "https://ark.cn-beijing.volces.com/api/v3").trim(),
       apiKeyEnv: "ARK_API_KEY",
@@ -39,9 +39,11 @@ function builtinTarget(env, name) {
   }
   if (n === "siliconflow-lite" || n === "qwen-lite" || n === "qwen") {
     return {
-      label: "Qwen2.5-7B (SiliconFlow)",
-      modelId: String(env.QWEN_LITE_MODEL || "").trim(),
-      baseUrl: String(env.QWEN_BASE_URL || env.SILICONFLOW_BASE_URL || "").trim(),
+      label: "Qwen/Qwen2.5-7B-Instruct",
+      modelId: String(env.QWEN_LITE_MODEL || "Qwen/Qwen2.5-7B-Instruct").trim(),
+      baseUrl: String(
+        env.QWEN_BASE_URL || env.SILICONFLOW_BASE_URL || "https://api.siliconflow.cn/v1"
+      ).trim(),
       apiKeyEnv: "SILICONFLOW_API_KEY",
       tier: 1,
     };

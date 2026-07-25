@@ -22,8 +22,8 @@
     {
       id: "auto",
       label: "Auto",
-      descZh: "分类器自动选择梯队与模型",
-      descEn: "Router picks tier and model",
+      descZh: "中文：Doubao 首选 · Qwen 备选",
+      descEn: "EN: Qwen primary · Doubao backup",
       tier: 0,
     },
   ];
@@ -740,7 +740,12 @@
       method: "POST",
       headers: { "Content-Type": "application/json" },
       cache: "no-store",
-      body: JSON.stringify({ phone: phone, message: q, modelId: want }),
+      body: JSON.stringify({
+        phone: phone,
+        message: q,
+        modelId: want,
+        lang: currentLang(),
+      }),
     })
       .then(function (r) {
         return r.json().then(function (j) {

@@ -2,13 +2,12 @@
  * POST /api/llm-chat
  * 最小对话入口（调试用）：按所选模型或 Auto 解析后的模型调用 OpenAI 兼容接口。
  *
- * Body: { phone, message, modelId?: "auto" | <registry id> }
+ * Body: { phone, message, modelId?: "auto" | <registry id>, lang?: "zh"|"en" }
  * Returns: { success, reply, model: { id, label, modelId, tier, via }, latencyMs, error? }
  *
- * Auto 当前规则（分类器接入前）：
- *   1) 第二梯队第一个已启用且有 Key 的模型
- *   2) 否则第三梯队同上
- *   3) 否则内置 Doubao-lite / SiliconFlow-lite
+ * Auto：
+ *   第一梯队按界面语言选主备（中文 Doubao 首选 / 英文 Qwen 首选），主失败则试备；
+ *   若第一梯队都不可用，再落到第二/三梯队第一个有 Key 的启用模型。
  */
 
 import { assertOpsAccess, opsAuthErrorResponse, pickKvBinding, kvBindingHint } from "../lib/host.js";
@@ -18,6 +17,7 @@ import {
   extractAssistantText,
   resolveApiKey,
 } from "../lib/openai-compat.js";
+import { normalizeUiLang, tier1Candidates } from "../lib/tier1.js";
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -29,38 +29,7 @@ function jsonResponse(body, status = 200) {
   });
 }
 
-function builtinCandidates(env) {
-  const list = [];
-  const doubaoModel = String(env.DOUBAO_LITE_MODEL || "").trim();
-  const doubaoBase = String(
-    env.DOUBAO_BASE_URL || "https://ark.cn-beijing.volces.com/api/v3"
-  ).trim();
-  if (doubaoModel && doubaoBase && resolveApiKey(env, "ARK_API_KEY")) {
-    list.push({
-      id: "builtin:doubao-lite",
-      label: "Doubao-1.5-lite",
-      modelId: doubaoModel,
-      baseUrl: doubaoBase,
-      apiKeyEnv: "ARK_API_KEY",
-      tier: 1,
-    });
-  }
-  const qwenModel = String(env.QWEN_LITE_MODEL || "").trim();
-  const qwenBase = String(env.QWEN_BASE_URL || env.SILICONFLOW_BASE_URL || "").trim();
-  if (qwenModel && qwenBase && resolveApiKey(env, "SILICONFLOW_API_KEY")) {
-    list.push({
-      id: "builtin:siliconflow-lite",
-      label: "Qwen2.5-7B (SiliconFlow)",
-      modelId: qwenModel,
-      baseUrl: qwenBase,
-      apiKeyEnv: "SILICONFLOW_API_KEY",
-      tier: 1,
-    });
-  }
-  return list;
-}
-
-function pickAutoTarget(env, models) {
+function pickRegistryFallback(env, models) {
   const enabled = (models || []).filter((m) => m && m.enabled !== false);
   const byTier = (tier) =>
     enabled
@@ -75,12 +44,66 @@ function pickAutoTarget(env, models) {
       return { target: m, via: "auto→tier" + tier };
     }
   }
-
-  const builtins = builtinCandidates(env);
-  if (builtins.length) {
-    return { target: builtins[0], via: "auto→builtin" };
-  }
   return { target: null, via: "auto→none" };
+}
+
+function modelMeta(target, via, extra) {
+  return {
+    id: (target && target.id) || null,
+    label: (target && (target.label || target.modelId)) || "",
+    modelId: (target && target.modelId) || "",
+    tier: target && target.tier,
+    via,
+    apiKeyEnv: target && target.apiKeyEnv,
+    preference: target && target.preference,
+    ...(extra || {}),
+  };
+}
+
+async function callModel(env, target, message, lang) {
+  const apiKey = resolveApiKey(env, target.apiKeyEnv);
+  if (!apiKey) {
+    return {
+      ok: false,
+      status: 0,
+      data: null,
+      latencyMs: 0,
+      error: "环境变量未配置：" + (target.apiKeyEnv || "(空)"),
+      reply: "",
+    };
+  }
+  if (String(target.baseUrl || "").includes("{WorkspaceId}")) {
+    return {
+      ok: false,
+      status: 0,
+      data: null,
+      latencyMs: 0,
+      error: "baseUrl 仍含 {WorkspaceId}",
+      reply: "",
+    };
+  }
+
+  const sys =
+    lang === "en"
+      ? "You are the HZDV site assistant. Be concise and direct. Reply in English."
+      : "你是 HZDV 站点助手。回答简洁、直接。用中文回复。";
+
+  const result = await chatCompletions({
+    baseUrl: target.baseUrl,
+    apiKey,
+    model: target.modelId,
+    messages: [
+      { role: "system", content: sys },
+      { role: "user", content: message },
+    ],
+    temperature: 0.3,
+    max_tokens: 1024,
+    timeoutMs: 60000,
+  });
+  return {
+    ...result,
+    reply: extractAssistantText(result.data) || "",
+  };
 }
 
 export async function onRequest(context) {
@@ -107,6 +130,7 @@ export async function onRequest(context) {
     return jsonResponse({ success: false, error: "缺少 message" }, 400);
   }
 
+  const lang = normalizeUiLang(body.lang || body.locale || "zh");
   const wantId = String(body.modelId || body.model || "auto").trim() || "auto";
   const kv = pickKvBinding(env);
   if (!kv) {
@@ -114,104 +138,94 @@ export async function onRequest(context) {
   }
 
   const { models } = await loadLlmModels(kv);
-  let target = null;
-  let via = "manual";
 
-  if (wantId === "auto") {
-    const picked = pickAutoTarget(env, models);
-    target = picked.target;
-    via = picked.via;
-  } else {
+  // 手动指定模型库条目
+  if (wantId !== "auto") {
     const hit = (models || []).find((m) => m.id === wantId);
     if (!hit) {
       return jsonResponse({ success: false, error: "模型不存在：" + wantId }, 404);
     }
-    target = hit;
-    via = "manual";
-  }
-
-  if (!target) {
+    const result = await callModel(env, hit, message, lang);
     return jsonResponse(
       {
-        success: false,
-        error: "Auto 未找到可用模型（检查梯队启用状态与对应 API Key 环境变量）",
-        model: { id: "auto", label: "Auto", modelId: "", tier: 0, via },
+        success: !!result.ok,
+        reply: result.reply || "",
+        latencyMs: result.latencyMs,
+        upstreamStatus: result.status,
+        error: result.error || null,
+        model: modelMeta(hit, "manual", { lang }),
+        upstream: result.ok ? undefined : result.data,
       },
-      400
+      result.ok ? 200 : 502
     );
   }
 
-  if (String(target.baseUrl || "").includes("{WorkspaceId}")) {
-    return jsonResponse(
-      {
-        success: false,
-        error: "baseUrl 仍含 {WorkspaceId}",
-        model: {
-          id: target.id,
-          label: target.label,
-          modelId: target.modelId,
-          tier: target.tier,
-          via,
-        },
-      },
-      400
-    );
+  // Auto：第一梯队主→备，再 registry
+  const { candidates, lang: uiLang } = tier1Candidates(env, lang);
+  const attempts = [];
+
+  for (const cand of candidates) {
+    const via =
+      "auto→tier1/" +
+      (cand.preference || "primary") +
+      "/" +
+      (cand.role || cand.label);
+    const result = await callModel(env, cand, message, uiLang);
+    attempts.push({
+      label: cand.label,
+      modelId: cand.modelId,
+      preference: cand.preference,
+      ok: !!result.ok,
+      error: result.error || null,
+      latencyMs: result.latencyMs,
+    });
+    if (result.ok) {
+      return jsonResponse({
+        success: true,
+        reply: result.reply || "",
+        latencyMs: result.latencyMs,
+        upstreamStatus: result.status,
+        error: null,
+        model: modelMeta(cand, via, { lang: uiLang }),
+        attempts,
+      });
+    }
   }
 
-  const apiKey = resolveApiKey(env, target.apiKeyEnv);
-  if (!apiKey) {
+  const fallback = pickRegistryFallback(env, models);
+  if (fallback.target) {
+    const result = await callModel(env, fallback.target, message, uiLang);
+    attempts.push({
+      label: fallback.target.label,
+      modelId: fallback.target.modelId,
+      preference: "registry",
+      ok: !!result.ok,
+      error: result.error || null,
+      latencyMs: result.latencyMs,
+    });
     return jsonResponse(
       {
-        success: false,
-        error: "环境变量未配置：" + (target.apiKeyEnv || "(空)"),
-        model: {
-          id: target.id,
-          label: target.label,
-          modelId: target.modelId,
-          tier: target.tier,
-          via,
-        },
+        success: !!result.ok,
+        reply: result.reply || "",
+        latencyMs: result.latencyMs,
+        upstreamStatus: result.status,
+        error: result.error || null,
+        model: modelMeta(fallback.target, fallback.via, { lang: uiLang }),
+        attempts,
+        upstream: result.ok ? undefined : result.data,
       },
-      400
+      result.ok ? 200 : 502
     );
   }
-
-  const result = await chatCompletions({
-    baseUrl: target.baseUrl,
-    apiKey,
-    model: target.modelId,
-    messages: [
-      {
-        role: "system",
-        content: "你是 HZDV 站点助手。回答简洁、直接。若用户用中文则用中文回复。",
-      },
-      { role: "user", content: message },
-    ],
-    temperature: 0.3,
-    max_tokens: 1024,
-    timeoutMs: 60000,
-  });
-
-  const reply = extractAssistantText(result.data);
-  const modelMeta = {
-    id: target.id || null,
-    label: target.label || target.modelId,
-    modelId: target.modelId,
-    tier: target.tier,
-    via,
-    apiKeyEnv: target.apiKeyEnv,
-  };
 
   return jsonResponse(
     {
-      success: !!result.ok,
-      reply: reply || "",
-      latencyMs: result.latencyMs,
-      upstreamStatus: result.status,
-      error: result.error || null,
-      model: modelMeta,
-      upstream: result.ok ? undefined : result.data,
+      success: false,
+      error:
+        "Auto 未找到可用模型（中文首选 Doubao / 英文首选 Qwen；请检查 ARK_API_KEY、SILICONFLOW_API_KEY 与模型环境变量）",
+      model: { id: "auto", label: "Auto", modelId: "", tier: 0, via: "auto→none", lang: uiLang },
+      attempts,
     },
-    result.ok ? 200 : 502
+    400
   );
 }
