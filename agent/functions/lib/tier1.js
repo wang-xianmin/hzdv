@@ -83,6 +83,36 @@ export function describeQwen(env) {
 }
 
 /**
+ * 运维列表用：始终返回 Doubao / Qwen 两张卡片（含缺配置原因），不因缺 Key 而隐藏。
+ */
+export function tier1Catalog(env) {
+  return [describeDoubao(env), describeQwen(env)].map((desc) => {
+    const t = desc.target;
+    return {
+      id: t ? t.id : "builtin:" + desc.role,
+      label: desc.label,
+      modelId: t ? t.modelId : "",
+      baseUrl: t ? t.baseUrl : "",
+      apiKeyEnv: desc.role === "doubao" ? "ARK_API_KEY" : "SILICONFLOW_API_KEY",
+      tier: 1,
+      role: desc.role,
+      builtin: desc.role === "doubao" ? "doubao-lite" : "siliconflow-lite",
+      ready: !!t,
+      missing: desc.missing || [],
+      caps: { text: true, vision: false, video: false, ocr: false },
+      notes:
+        desc.role === "doubao"
+          ? "中文菜单首选 · 英文菜单备选"
+          : "英文菜单首选 · 中文菜单备选",
+      notesEn:
+        desc.role === "doubao"
+          ? "Primary for ZH menu · backup for EN"
+          : "Primary for EN menu · backup for ZH",
+    };
+  });
+}
+
+/**
  * 按菜单语言排出第一梯队主备。
  * @returns {{ lang: "zh"|"en", primary: object, backup: object, candidates: object[], skipped: object[] }}
  */

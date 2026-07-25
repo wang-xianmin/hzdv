@@ -1,6 +1,9 @@
 /**
- * AI 助手 · 模型库管理（第二/三梯队）
+ * AI 助手 · 模型库管理
  * 入口：顶栏「系统运维」→「AI 模型库」
+ *
+ * 第一梯队：Doubao / Qwen（环境变量内置，只读展示 + 试通）
+ * 第二/三梯队：KV 可编辑
  *
  * 开发调试阶段：任意已登录用户可打开/编辑（与 OPS_TEMP_OPEN_TO_ANY_LOGIN 一致）。
  * 正式收紧时改为仅超级用户。
@@ -12,6 +15,7 @@
   var listEl = null;
   var statusEl = null;
   var cache = [];
+  var tier1Cache = [];
 
   function t(zh, en) {
     if (global.currentLang === "en") return en;
@@ -50,8 +54,6 @@
       '<button type="button" class="ai-models-btn" id="aiModelsAdd2">+ 第二梯队</button>' +
       '<button type="button" class="ai-models-btn" id="aiModelsAdd3">+ 第三梯队</button>' +
       '<button type="button" class="ai-models-btn ai-models-btn--ghost" id="aiModelsReload">刷新</button>' +
-      '<button type="button" class="ai-models-btn ai-models-btn--ghost" id="aiModelsPingDoubao">试通 Doubao</button>' +
-      '<button type="button" class="ai-models-btn ai-models-btn--ghost" id="aiModelsPingSf">试通 SiliconFlow</button>' +
       '<button type="button" class="ai-models-btn ai-models-btn--ghost" id="aiModelsResetSeed">重置默认种子</button>' +
       "</div>" +
       '<div class="ai-models-list" id="aiModelsList"></div>' +
@@ -74,12 +76,6 @@
     });
     overlay.querySelector("#aiModelsReload").addEventListener("click", function () {
       loadAdmin(true);
-    });
-    overlay.querySelector("#aiModelsPingDoubao").addEventListener("click", function () {
-      pingBuiltin("doubao-lite");
-    });
-    overlay.querySelector("#aiModelsPingSf").addEventListener("click", function () {
-      pingBuiltin("siliconflow-lite");
     });
     overlay.querySelector("#aiModelsResetSeed").addEventListener("click", function () {
       if (
@@ -149,27 +145,122 @@
     return bits.join(" · ");
   }
 
+  function renderTier1() {
+    var section = document.createElement("section");
+    section.className = "ai-models-tier ai-models-tier--t1";
+    var title = document.createElement("h3");
+    title.textContent = t(
+      "第一梯队（前锋 · 菜单语言定主备）",
+      "Tier 1 (Front · menu language picks primary)"
+    );
+    section.appendChild(title);
+
+    var note = document.createElement("p");
+    note.className = "ai-models-empty";
+    note.textContent = t(
+      "由 Cloudflare 环境变量配置，不可在此改 Key；中文菜单 Doubao 首选，英文菜单 Qwen 首选。",
+      "Configured via Cloudflare env vars (keys not editable here). ZH menu → Doubao primary; EN → Qwen."
+    );
+    section.appendChild(note);
+
+    var list = tier1Cache && tier1Cache.length ? tier1Cache : [];
+    if (!list.length) {
+      var empty = document.createElement("p");
+      empty.className = "ai-models-empty";
+      empty.textContent = t("未返回第一梯队状态", "No tier-1 status returned");
+      section.appendChild(empty);
+      listEl.appendChild(section);
+      return;
+    }
+
+    list.forEach(function (m, idx) {
+      var card = document.createElement("article");
+      card.className =
+        "ai-models-card ai-models-card--builtin" + (m.ready ? "" : " is-missing");
+      var statusText = m.ready
+        ? t("已就绪", "Ready")
+        : t("缺配置：", "Missing: ") + ((m.missing || []).join(", ") || "?");
+      var roleNote = t(m.notes || "", m.notesEn || "");
+      card.innerHTML =
+        '<div class="ai-models-card-top">' +
+        '<span class="ai-models-order">T1.' +
+        (idx + 1) +
+        "</span>" +
+        '<span class="ai-models-input ai-models-input--label ai-models-readonly">' +
+        escapeHtml(m.label || "") +
+        "</span>" +
+        '<span class="ai-models-ready-badge">' +
+        escapeHtml(statusText) +
+        "</span></div>" +
+        '<p class="ai-models-builtin-note">' +
+        escapeHtml(roleNote) +
+        "</p>" +
+        '<label class="ai-models-field">Model ID' +
+        '<input class="ai-models-input" readonly value="' +
+        escapeAttr(m.modelId || "") +
+        '" /></label>' +
+        '<label class="ai-models-field">Base URL' +
+        '<input class="ai-models-input" readonly value="' +
+        escapeAttr(m.baseUrl || "") +
+        '" /></label>' +
+        '<label class="ai-models-field">' +
+        t("密钥环境变量", "API key env") +
+        '<input class="ai-models-input" readonly value="' +
+        escapeAttr(m.apiKeyEnv || "") +
+        '" /></label>' +
+        '<div class="ai-models-card-foot">' +
+        '<span class="ai-models-caps-preview">' +
+        t("文本 · 内置", "Text · builtin") +
+        "</span>" +
+        '<div class="ai-models-card-actions">' +
+        '<button type="button" class="ai-models-btn ai-models-btn--ghost" data-act="ping-builtin">' +
+        t("试通", "Ping") +
+        "</button></div></div>";
+
+      card.addEventListener("click", function (e) {
+        var btn = e.target.closest("[data-act]");
+        if (!btn) return;
+        if (btn.getAttribute("data-act") === "ping-builtin") {
+          pingBuiltin(m.builtin || (m.role === "doubao" ? "doubao-lite" : "siliconflow-lite"));
+        }
+      });
+      section.appendChild(card);
+    });
+
+    listEl.appendChild(section);
+  }
+
+  function escapeHtml(s) {
+    return String(s || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function escapeAttr(s) {
+    return escapeHtml(s).replace(/'/g, "&#39;");
+  }
+
   function render() {
     if (!listEl) return;
     var hint = overlay.querySelector("#aiModelsHint");
     if (hint) {
       hint.textContent = t(
-        "密钥填环境变量名（如 ALIYUN_MAAS_API_KEY / SILICONFLOW_API_KEY），不在此粘贴真实 Key。点「试通」验证连通；若 KV 还是旧 URL，先「重置默认种子」。",
-        "Env var names only (e.g. ALIYUN_MAAS_API_KEY). Use Ping to verify; Reset seed if KV still has old URLs."
+        "第一梯队看环境变量；二/三梯队密钥填环境变量名（如 ALIYUN_MAAS_API_KEY），不在此粘贴真实 Key。点「试通」验证连通。",
+        "Tier 1 uses env vars; Tier 2/3 use env var names only. Ping to verify connectivity."
       );
     }
     overlay.querySelector("#aiModelsTitle").textContent = t("模型库", "Models");
     overlay.querySelector("#aiModelsAdd2").textContent = t("+ 第二梯队", "+ Tier 2");
     overlay.querySelector("#aiModelsAdd3").textContent = t("+ 第三梯队", "+ Tier 3");
     overlay.querySelector("#aiModelsReload").textContent = t("刷新", "Reload");
-    var pingDb = overlay.querySelector("#aiModelsPingDoubao");
-    var pingSf = overlay.querySelector("#aiModelsPingSf");
     var resetBtn = overlay.querySelector("#aiModelsResetSeed");
-    if (pingDb) pingDb.textContent = t("试通 Doubao", "Ping Doubao");
-    if (pingSf) pingSf.textContent = t("试通 SiliconFlow", "Ping SiliconFlow");
     if (resetBtn) resetBtn.textContent = t("重置默认种子", "Reset seed");
 
     listEl.innerHTML = "";
+    renderTier1();
+
     [2, 3].forEach(function (tier) {
       var section = document.createElement("section");
       section.className = "ai-models-tier";
@@ -488,10 +579,18 @@
           return;
         }
         cache = x.data.models || [];
+        tier1Cache = x.data.tier1 || [];
+        var readyN = tier1Cache.filter(function (m) {
+          return m.ready;
+        }).length;
         setStatus(
-          t("共 ", "Total ") +
+          t("第一梯队 ", "Tier1 ") +
+            readyN +
+            "/" +
+            Math.max(tier1Cache.length, 2) +
+            t(" 就绪 · 二/三梯队 ", " ready · Tier2/3 ") +
             cache.length +
-            t(" 个模型", " models") +
+            t(" 个", "") +
             (x.data.seeded ? t("（已写入默认种子）", " (seeded)") : "")
         );
         render();

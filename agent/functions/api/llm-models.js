@@ -20,6 +20,7 @@ import {
   sortModels,
   toPickerItems,
 } from "../lib/llm-models-store.js";
+import { tier1Catalog } from "../lib/tier1.js";
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -62,11 +63,25 @@ export async function onRequest(context) {
       const { models, seeded, updatedAt } = await loadLlmModels(kv);
       if (admin) {
         await assertOpsAccess(env, phoneOf(request, null));
-        return jsonResponse({ success: true, models, seeded: !!seeded, updatedAt });
+        return jsonResponse({
+          success: true,
+          models,
+          tier1: tier1Catalog(env),
+          seeded: !!seeded,
+          updatedAt,
+        });
       }
       return jsonResponse({
         success: true,
         models: toPickerItems(models),
+        tier1: tier1Catalog(env).map((m) => ({
+          id: m.id,
+          label: m.label,
+          modelId: m.modelId,
+          tier: 1,
+          ready: m.ready,
+          caps: m.caps,
+        })),
         seeded: !!seeded,
         updatedAt,
       });

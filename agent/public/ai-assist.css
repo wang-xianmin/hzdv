@@ -737,6 +737,50 @@
   background: #f8fafc;
 }
 
+.ai-models-card--builtin {
+  background: #f1f5f9;
+  border-style: dashed;
+}
+
+.ai-models-card--builtin.is-missing {
+  border-color: rgba(185, 28, 28, 0.35);
+  background: #fff7f7;
+}
+
+.ai-models-readonly {
+  display: inline-flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-height: 34px;
+  font-weight: 600;
+  border: none;
+  background: transparent;
+  padding: 0 2px;
+}
+
+.ai-models-ready-badge {
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: #15803d;
+}
+
+.ai-models-card--builtin.is-missing .ai-models-ready-badge {
+  color: #b91c1c;
+}
+
+.ai-models-builtin-note {
+  margin: 0 0 8px;
+  font-size: 11px;
+  color: #64748b;
+  line-height: 1.35;
+}
+
+.ai-models-card--builtin input[readonly] {
+  background: #e8eef5;
+  color: #334155;
+}
+
 .ai-models-card-top {
   display: flex;
   align-items: center;
