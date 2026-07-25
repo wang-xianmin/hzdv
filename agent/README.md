@@ -13,9 +13,11 @@ agent/
   functions/
     api/
       llm-models.js       # /api/llm-models
+      llm-ping.js         # /api/llm-ping 试通
       ocr.js              # /api/ocr 代理
     lib/
       llm-models-store.js
+      openai-compat.js    # OpenAI 兼容 chat/completions
       host.js             # ★ 宿主适配（KV / 运维鉴权）
   README.md
 ```
@@ -23,6 +25,7 @@ agent/
 本仓库根目录仅保留薄入口，供 Cloudflare 识别路由：
 
 - `functions/api/llm-models.js` → re-export `agent/functions/api/llm-models.js`
+- `functions/api/llm-ping.js` → re-export `agent/functions/api/llm-ping.js`
 - `functions/api/ocr.js` → re-export `agent/functions/api/ocr.js`
 
 ## 接入本站
@@ -45,7 +48,9 @@ agent/
 | 变量 | 用途 |
 |------|------|
 | `ARK_API_KEY` / `DOUBAO_LITE_MODEL` | 第一梯队 / 分类器（豆包） |
-| `QWEN_API_KEY` / `QWEN_BASE_URL` / `QWEN_LITE_MODEL` | 备份分类器（SiliconFlow 等） |
+| `SILICONFLOW_API_KEY` / `QWEN_BASE_URL` / `QWEN_LITE_MODEL` | 备份分类器（SiliconFlow） |
+| `ALIYUN_MAAS_API_KEY` | 阿里 MaaS（二/三梯队多数模型） |
+| `DEEPSEEK_API_KEY` | DeepSeek 官方 |
 | `OCR_SERVICE_URL` / `OCR_API_KEY` | OCR 代理 |
 | 各模型 `apiKeyEnv` 指向的 Secret | 第二/三梯队 |
 
@@ -53,8 +58,24 @@ agent/
 
 ## 与 OCR 服务的关系
 
-Python + RapidOCR 仍在仓库 `services/ocr/`（Docker，VPS 跑一份）。  
-`agent` 只包含 **HTTP 代理** `/api/ocr`，多项目共用同一 `OCR_SERVICE_URL`。
+Python + RapidOCR + ONNX Runtime 跑在仓库 `services/ocr/`（Docker，VPS `ocr.hzdv.net:8089`）。
+
+当前链路（先看原文，再接 LLM）：
+
+1. 浏览器上传/粘贴图 → Pages `/api/ocr`（代理 + Key）
+2. VPS RapidOCR 返回纯文本
+3. Agent 对话气泡写出 **`【RapidOCR】识别结果：…`**，并预填输入框  
+   → 此时**尚未**送进任何 LLM；后续 chat 网关可把这段当 user 上下文再走梯队。
+
+`agent` 只含 OCR **HTTP 代理**；多项目可共用同一 `OCR_SERVICE_URL`。
+
+## 模型试通
+
+系统运维 → AI 模型库：
+
+- 顶栏「试通 Doubao / SiliconFlow」：第一梯队内置
+- 每张卡片「试通」：保存当前 baseUrl 后调 `/api/llm-ping`
+- 「重置默认种子」：覆盖 KV 为推荐配置（含阿里 `…/compatible-mode/v1`）
 
 ## 边界
 

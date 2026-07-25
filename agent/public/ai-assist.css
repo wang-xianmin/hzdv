@@ -786,6 +786,12 @@
   gap: 8px;
 }
 
+.ai-models-card-actions {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+
 .ai-models-caps-preview {
   font-size: 11px;
   color: #64748b;

@@ -20,21 +20,21 @@ export function defaultLlmModelsSeed() {
     {
       label: "qwen-max",
       modelId: "qwen-max",
-      baseUrl: "https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      baseUrl: "https://ws-6uzq275vpl27mgt5.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
       apiKeyEnv: "ALIYUN_MAAS_API_KEY",
       caps: { text: true, vision: false, video: false, ocr: false },
     },
     {
       label: "qwen3.7-plus",
       modelId: "qwen3.7-plus",
-      baseUrl: "https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      baseUrl: "https://ws-6uzq275vpl27mgt5.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
       apiKeyEnv: "ALIYUN_MAAS_API_KEY",
       caps: { text: true, vision: false, video: false, ocr: false },
     },
     {
       label: "glm-5",
       modelId: "glm-5",
-      baseUrl: "https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      baseUrl: "https://ws-6uzq275vpl27mgt5.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
       apiKeyEnv: "ALIYUN_MAAS_API_KEY",
       caps: { text: true, vision: false, video: false, ocr: false },
     },
@@ -49,7 +49,7 @@ export function defaultLlmModelsSeed() {
       label: "DeepSeek-V4-Flash (SiliconFlow)",
       modelId: "deepseek-ai/DeepSeek-V4-Flash",
       baseUrl: "https://api.siliconflow.cn/v1",
-      apiKeyEnv: "QWEN_API_KEY",
+      apiKeyEnv: "SILICONFLOW_API_KEY",
       caps: { text: true, vision: false, video: false, ocr: false },
     },
     {
@@ -63,7 +63,8 @@ export function defaultLlmModelsSeed() {
     {
       label: "Qwen-VL-Max",
       modelId: "Qwen-VL-Max",
-      baseUrl: "https://ws-6uzq275vpl27mgt5.cn-beijing.maas.aliyuncs.com/api/v1",
+      baseUrl:
+        "https://ws-6uzq275vpl27mgt5.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
       apiKeyEnv: "ALIYUN_MAAS_API_KEY",
       caps: { text: true, vision: true, video: false, ocr: false },
     },

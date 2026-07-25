@@ -50,6 +50,9 @@
       '<button type="button" class="ai-models-btn" id="aiModelsAdd2">+ 第二梯队</button>' +
       '<button type="button" class="ai-models-btn" id="aiModelsAdd3">+ 第三梯队</button>' +
       '<button type="button" class="ai-models-btn ai-models-btn--ghost" id="aiModelsReload">刷新</button>' +
+      '<button type="button" class="ai-models-btn ai-models-btn--ghost" id="aiModelsPingDoubao">试通 Doubao</button>' +
+      '<button type="button" class="ai-models-btn ai-models-btn--ghost" id="aiModelsPingSf">试通 SiliconFlow</button>' +
+      '<button type="button" class="ai-models-btn ai-models-btn--ghost" id="aiModelsResetSeed">重置默认种子</button>' +
       "</div>" +
       '<div class="ai-models-list" id="aiModelsList"></div>' +
       '<p class="ai-models-status" id="aiModelsStatus" aria-live="polite"></p>' +
@@ -71,6 +74,38 @@
     });
     overlay.querySelector("#aiModelsReload").addEventListener("click", function () {
       loadAdmin(true);
+    });
+    overlay.querySelector("#aiModelsPingDoubao").addEventListener("click", function () {
+      pingBuiltin("doubao-lite");
+    });
+    overlay.querySelector("#aiModelsPingSf").addEventListener("click", function () {
+      pingBuiltin("siliconflow-lite");
+    });
+    overlay.querySelector("#aiModelsResetSeed").addEventListener("click", function () {
+      if (
+        !confirm(
+          t(
+            "将用推荐默认配置覆盖当前模型库（含阿里 MaaS 新 baseUrl）。确定？",
+            "Overwrite model library with recommended defaults (incl. new Aliyun baseUrl)?"
+          )
+        )
+      ) {
+        return;
+      }
+      setStatus(t("重置中…", "Resetting…"));
+      api("POST", { action: "reset_seed" })
+        .then(function (x) {
+          if (!x.ok || !x.data || !x.data.success) {
+            setStatus((x.data && x.data.error) || "reset failed", true);
+            return;
+          }
+          cache = x.data.models || [];
+          render();
+          setStatus(t("已重置为默认种子，可逐一点「试通」", "Reset done — ping each model"));
+        })
+        .catch(function (err) {
+          setStatus(String((err && err.message) || err), true);
+        });
     });
     return overlay;
   }
@@ -119,14 +154,20 @@
     var hint = overlay.querySelector("#aiModelsHint");
     if (hint) {
       hint.textContent = t(
-        "密钥填环境变量名（如 QWEN_API_KEY），不在此粘贴真实 Key。同梯队用 ↑↓ 调优先顺序。",
-        "Put env var names for keys (e.g. QWEN_API_KEY), not raw secrets. Use ↑↓ for priority."
+        "密钥填环境变量名（如 ALIYUN_MAAS_API_KEY / SILICONFLOW_API_KEY），不在此粘贴真实 Key。点「试通」验证连通；若 KV 还是旧 URL，先「重置默认种子」。",
+        "Env var names only (e.g. ALIYUN_MAAS_API_KEY). Use Ping to verify; Reset seed if KV still has old URLs."
       );
     }
     overlay.querySelector("#aiModelsTitle").textContent = t("模型库", "Models");
     overlay.querySelector("#aiModelsAdd2").textContent = t("+ 第二梯队", "+ Tier 2");
     overlay.querySelector("#aiModelsAdd3").textContent = t("+ 第三梯队", "+ Tier 3");
     overlay.querySelector("#aiModelsReload").textContent = t("刷新", "Reload");
+    var pingDb = overlay.querySelector("#aiModelsPingDoubao");
+    var pingSf = overlay.querySelector("#aiModelsPingSf");
+    var resetBtn = overlay.querySelector("#aiModelsResetSeed");
+    if (pingDb) pingDb.textContent = t("试通 Doubao", "Ping Doubao");
+    if (pingSf) pingSf.textContent = t("试通 SiliconFlow", "Ping SiliconFlow");
+    if (resetBtn) resetBtn.textContent = t("重置默认种子", "Reset seed");
 
     listEl.innerHTML = "";
     [2, 3].forEach(function (tier) {
@@ -174,7 +215,7 @@
           '<label class="ai-models-field">Base URL<input class="ai-models-input" data-f="baseUrl" /></label>' +
           '<label class="ai-models-field">' +
           t("密钥环境变量", "API key env") +
-          '<input class="ai-models-input" data-f="apiKeyEnv" placeholder="QWEN_API_KEY" /></label>' +
+          '<input class="ai-models-input" data-f="apiKeyEnv" placeholder="SILICONFLOW_API_KEY" /></label>' +
           '<div class="ai-models-caps">' +
           '<label><input type="checkbox" data-c="vision" /> ' +
           t("视觉", "Vision") +
@@ -189,9 +230,13 @@
           "</div>" +
           '<div class="ai-models-card-foot">' +
           '<span class="ai-models-caps-preview"></span>' +
+          '<div class="ai-models-card-actions">' +
+          '<button type="button" class="ai-models-btn ai-models-btn--ghost" data-act="ping">' +
+          t("试通", "Ping") +
+          "</button>" +
           '<button type="button" class="ai-models-btn" data-act="save">' +
           t("保存", "Save") +
-          "</button></div>";
+          "</button></div></div>";
 
         card.querySelector('[data-f="label"]').value = m.label || "";
         card.querySelector('[data-f="modelId"]').value = m.modelId || "";
@@ -210,6 +255,7 @@
           if (act === "up" || act === "down") move(m.id, act);
           else if (act === "del") remove(m.id);
           else if (act === "save") saveCard(card, m.id);
+          else if (act === "ping") pingModel(m.id, card);
         });
 
         section.appendChild(card);
@@ -233,6 +279,102 @@
         ocr: card.querySelector('[data-c="ocr"]').checked,
       },
     };
+  }
+
+  function pingPayload(extra) {
+    return Object.assign({ phone: currentPhone() }, extra || {});
+  }
+
+  function pingModel(id, card) {
+    if (!currentPhone()) {
+      setStatus(t("请先登录后再试通", "Please log in first"), true);
+      return;
+    }
+    // 试通前先按卡片当前填写值保存，避免 KV 里还是旧 baseUrl
+    var patch = readCard(card);
+    patch.id = id;
+    var existing = cache.find(function (m) {
+      return m.id === id;
+    });
+    if (existing) {
+      patch.tier = existing.tier;
+      patch.order = existing.order;
+    }
+    setStatus(t("保存并试通中…", "Saving & pinging…"));
+    api("POST", { action: "update", id: id, model: patch })
+      .then(function (x) {
+        if (!x.ok || !x.data || !x.data.success) {
+          setStatus((x.data && x.data.error) || "save failed", true);
+          return null;
+        }
+        cache = x.data.models || cache;
+        return fetch("/api/llm-ping", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          cache: "no-store",
+          body: JSON.stringify(pingPayload({ id: id })),
+        }).then(function (r) {
+          return r.json().then(function (j) {
+            return { http: r.status, j: j };
+          });
+        });
+      })
+      .then(function (pack) {
+        if (!pack) return;
+        showPingResult(pack.j);
+        render();
+      })
+      .catch(function (err) {
+        setStatus(String((err && err.message) || err), true);
+      });
+  }
+
+  function pingBuiltin(name) {
+    if (!currentPhone()) {
+      setStatus(t("请先登录后再试通", "Please log in first"), true);
+      return;
+    }
+    setStatus(t("试通中…", "Pinging…") + " " + name);
+    fetch("/api/llm-ping", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify(pingPayload({ builtin: name })),
+    })
+      .then(function (r) {
+        return r.json().then(function (j) {
+          return { http: r.status, j: j };
+        });
+      })
+      .then(function (pack) {
+        showPingResult(pack.j);
+      })
+      .catch(function (err) {
+        setStatus(String((err && err.message) || err), true);
+      });
+  }
+
+  function showPingResult(j) {
+    if (!j) {
+      setStatus("empty response", true);
+      return;
+    }
+    var label = (j.target && (j.target.label || j.target.modelId)) || "";
+    if (j.success) {
+      setStatus(
+        "✓ " +
+          label +
+          "  " +
+          (j.latencyMs || 0) +
+          "ms  →  " +
+          String(j.reply || "").replace(/\s+/g, " ").slice(0, 80)
+      );
+    } else {
+      setStatus(
+        "✗ " + label + "  " + (j.error || "failed") + "  (" + (j.latencyMs || 0) + "ms)",
+        true
+      );
+    }
   }
 
   function saveCard(card, id) {

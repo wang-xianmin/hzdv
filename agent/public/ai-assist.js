@@ -413,7 +413,12 @@
             appendAssistant(t("未识别到文字。", "No text recognized."));
             return;
           }
-          appendAssistant(t("识别结果：\n", "OCR result:\n") + text);
+          appendAssistant(
+            t(
+              "【RapidOCR】识别结果：\n",
+              "[RapidOCR] result:\n"
+            ) + text
+          );
           if (inputEl && !String(inputEl.value || "").trim()) {
             inputEl.value =
               t("请根据这张图的文字回答：\n", "Based on this OCR text, answer:\n") +
