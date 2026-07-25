@@ -12,7 +12,7 @@ CF 项目 B ──┘         │
               OCR_SERVICE_URL + 可选 OCR_API_KEY
 ```
 
-Cloudflare Pages **不**内嵌 Python；通过 `functions/api/ocr.js` 代理到本服务。
+Cloudflare Pages **不**内嵌 Python；通过 `agent` 包的 `/api/ocr`（`functions/api/ocr.js` 入口）代理到本服务。
 
 ## 本地 / VPS 启动
 
