@@ -32,6 +32,16 @@ export async function onRequest(context) {
     has_ocr_api_key: !!env.OCR_API_KEY,
     has_encryption_key: !!env.ENCRYPTION_KEY,
     has_mail_from: !!env.MAIL_FROM,
+    has_ark_api_key: !!env.ARK_API_KEY,
+    has_doubao_seed_model: !!(env.DOUBAO_SEED_MODEL || env.DOUBAO_MODEL || env.DOUBAO_LITE_MODEL),
+    has_siliconflow_api_key: !!env.SILICONFLOW_API_KEY,
+    doubao_model_env: env.DOUBAO_SEED_MODEL
+      ? "DOUBAO_SEED_MODEL"
+      : env.DOUBAO_MODEL
+        ? "DOUBAO_MODEL"
+        : env.DOUBAO_LITE_MODEL
+          ? "DOUBAO_LITE_MODEL"
+          : null,
     env_keys,
     d1_binding_names: ["hzdvd1", "DV_D1", "AVATARS_DB", "D1", "DB", "MY_DB", "avatar_db"],
     r2_binding_names: ["R2", "AVATARS_R2", "MY_R2", "avatar_r2", "BUCKET"],
