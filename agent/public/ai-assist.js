@@ -151,22 +151,47 @@
     root.id = "aiAssistRoot";
     root.setAttribute("aria-hidden", "true");
     root.innerHTML =
-      '<button type="button" class="ai-assist__close" id="aiAssistClose" aria-label="关闭">' +
-      '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">' +
-      '<path d="M6 6l12 12M18 6L6 18"/>' +
-      "</svg></button>" +
       '<div class="ai-assist__stage" role="dialog" aria-label="AI助手对话">' +
+      '<div class="ai-assist__panel" id="aiAssistPanel">' +
+      '<div class="ai-assist__panel-head">' +
+      '<div class="ai-assist__brand">' +
+      '<span class="ai-assist__brand-mark" aria-hidden="true">' +
+      '<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">' +
+      '<rect x="1" y="1" width="6" height="6" rx="1.2"/>' +
+      '<rect x="9" y="1" width="6" height="6" rx="1.2"/>' +
+      '<rect x="1" y="9" width="6" height="6" rx="1.2"/>' +
+      '<rect x="9" y="9" width="6" height="6" rx="1.2"/>' +
+      "</svg></span>" +
+      '<div class="ai-assist__model" id="aiAssistModel">' +
+      '<button type="button" class="ai-assist__model-btn" id="aiAssistModelBtn" aria-haspopup="listbox" aria-expanded="false">' +
+      '<span class="ai-assist__brand-title" id="aiAssistPanelTitle">HZDV AI</span>' +
+      '<span class="ai-assist__model-dot" aria-hidden="true"></span>' +
+      '<span class="ai-assist__model-label" id="aiAssistModelLabel">Auto</span>' +
+      '<svg class="ai-assist__model-caret" viewBox="0 0 12 12" aria-hidden="true">' +
+      '<path d="M3 4.5L6 8l3-3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>' +
+      "</svg></button>" +
+      '<div class="ai-assist__model-menu" id="aiAssistModelMenu" role="listbox"></div>' +
+      "</div></div>" +
+      '<button type="button" class="ai-assist__minimize" id="aiAssistClose" aria-label="收起">' +
+      '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">' +
+      '<path d="M6 9l6 6 6-6"/>' +
+      "</svg></button>" +
+      "</div>" +
       '<div class="ai-assist__thread" id="aiAssistThread" aria-live="polite"></div>' +
+      "</div>" +
       '<div class="ai-assist__prompts" id="aiAssistPrompts" role="list"></div>' +
       '<form class="ai-assist__composer" id="aiAssistForm" autocomplete="off">' +
-      '<div class="ai-assist__composer-main">' +
+      '<input class="ai-assist__input" id="aiAssistInput" type="text" maxlength="2000" />' +
+      '<button type="button" class="ai-assist__icon-btn" id="aiAssistMic" aria-label="语音" title="语音">' +
+      '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' +
+      '<rect x="9" y="3" width="6" height="11" rx="3"/>' +
+      '<path d="M5 11a7 7 0 0 0 14 0"/>' +
+      '<path d="M12 18v3"/>' +
+      "</svg></button>" +
       '<div class="ai-assist__plus" id="aiAssistPlus">' +
-      '<button type="button" class="ai-assist__plus-btn" id="aiAssistPlusBtn" aria-haspopup="menu" aria-expanded="false" aria-label="添加">' +
-      '<svg class="ai-assist__plus-icon ai-assist__plus-icon--add" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">' +
-      '<path d="M12 5v14M5 12h14"/>' +
-      "</svg>" +
-      '<svg class="ai-assist__plus-icon ai-assist__plus-icon--close" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">' +
-      '<path d="M6 6l12 12M18 6L6 18"/>' +
+      '<button type="button" class="ai-assist__icon-btn ai-assist__attach-btn" id="aiAssistPlusBtn" aria-haspopup="menu" aria-expanded="false" aria-label="添加附件">' +
+      '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' +
+      '<path d="M21.4 11.6l-8.5 8.5a5 5 0 0 1-7.1-7.1l9.2-9.2a3.2 3.2 0 0 1 4.5 4.5l-9.2 9.1a1.4 1.4 0 1 1-2-2l8.1-8"/>' +
       "</svg></button>" +
       '<div class="ai-assist__plus-menu" id="aiAssistPlusMenu" role="menu" hidden>' +
       '<button type="button" class="ai-assist__plus-item" id="aiAssistUploadFile" role="menuitem">' +
@@ -194,28 +219,12 @@
       '<span class="ai-assist__plus-item-label" id="aiAssistUploadNotebookLabel">Notebooks</span>' +
       "</button>" +
       "</div></div></div></div>" +
-      '<input class="ai-assist__input" id="aiAssistInput" type="text" maxlength="2000" />' +
-      '<div class="ai-assist__model" id="aiAssistModel">' +
-      '<button type="button" class="ai-assist__model-btn" id="aiAssistModelBtn" aria-haspopup="listbox" aria-expanded="false">' +
-      '<span class="ai-assist__model-dot" aria-hidden="true"></span>' +
-      '<span class="ai-assist__model-label" id="aiAssistModelLabel">Auto</span>' +
-      '<svg class="ai-assist__model-caret" viewBox="0 0 12 12" aria-hidden="true">' +
-      '<path d="M3 4.5L6 8l3-3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>' +
-      "</svg></button>" +
-      '<div class="ai-assist__model-menu" id="aiAssistModelMenu" role="listbox"></div>' +
-      "</div>" +
-      '<button type="button" class="ai-assist__icon-btn" id="aiAssistMic" aria-label="语音" title="语音">' +
-      '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' +
-      '<rect x="9" y="3" width="6" height="11" rx="3"/>' +
-      '<path d="M5 11a7 7 0 0 0 14 0"/>' +
-      '<path d="M12 18v3"/>' +
-      "</svg></button>" +
       '<button type="submit" class="ai-assist__send" id="aiAssistSend" aria-label="发送">' +
       '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">' +
       '<path d="M12 19V5"/>' +
       '<path d="M6 11l6-6 6 6"/>' +
       "</svg></button>" +
-      "</div></form>" +
+      "</form>" +
       '<p class="ai-assist__legal" id="aiAssistLegal"></p>' +
       '<button type="button" class="ai-assist__agent" id="aiAssistAgent" aria-label="打开 AI 助手">' +
       '<span class="ai-assist__agent-avatar" aria-hidden="true">' +
@@ -257,7 +266,7 @@
     });
     root.querySelector("#aiAssistClose").addEventListener("click", function (e) {
       e.stopPropagation();
-      hideAll();
+      closeChat();
     });
     composerForm.addEventListener("submit", function (e) {
       e.preventDefault();
@@ -588,10 +597,14 @@
     inputEl.placeholder = t("随便问什么…", "Ask anything…");
     var titleEl = root.querySelector("#aiAssistAgentTitle");
     var hintEl = root.querySelector("#aiAssistAgentHint");
+    var panelTitle = root.querySelector("#aiAssistPanelTitle");
     if (titleEl) titleEl.textContent = t("AI助手", "AI Assistant");
     if (hintEl) {
       hintEl.textContent = t("点我开始对话", "Tap to start chatting");
     }
+    if (panelTitle) panelTitle.textContent = t("HZDV AI 助手", "HZDV AI Agent");
+    var closeBtn = root.querySelector("#aiAssistClose");
+    if (closeBtn) closeBtn.setAttribute("aria-label", t("收起", "Minimize"));
     var uploadLabel = root.querySelector("#aiAssistUploadFileLabel");
     var moreLabel = root.querySelector("#aiAssistMoreUploadLabel");
     var albumLabel = root.querySelector("#aiAssistUploadAlbumLabel");
@@ -601,10 +614,10 @@
     if (albumLabel) albumLabel.textContent = t("相册", "Photos");
     if (nbLabel) nbLabel.textContent = "Notebooks";
     var plusBtn = root.querySelector("#aiAssistPlusBtn");
-    if (plusBtn) plusBtn.setAttribute("aria-label", t("添加", "Add"));
+    if (plusBtn) plusBtn.setAttribute("aria-label", t("添加附件", "Attach"));
     root.querySelector("#aiAssistLegal").innerHTML = t(
       '与我们聊天即表示您同意我们的 <a href="#" id="aiAssistPrivacy">隐私政策</a>。',
-      'By chatting you agree to our <a href="#" id="aiAssistPrivacy">Privacy Policy</a>.'
+      'By chatting with us, you agree to our <a href="#" id="aiAssistPrivacy">Privacy Policy</a>.'
     );
     var privacy = root.querySelector("#aiAssistPrivacy");
     if (privacy) {
@@ -731,8 +744,19 @@
   function submitPrompt(text) {
     var q = String(text || "").trim();
     if (!q) return;
+    if (!opened) openChat();
     var phone = currentPhone();
     var want = selectedModelId;
+    if (!messages.length) {
+      appendMessage(
+        "assistant",
+        t(
+          "你好，我是 HZDV AI 助手。",
+          "Hi there, you’re speaking with HZDV AI Agent."
+        ),
+        { modelBadge: "" }
+      );
+    }
     appendMessage("user", q);
     inputEl.value = "";
     syncSendState();
