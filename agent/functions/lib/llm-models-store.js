@@ -18,8 +18,8 @@ function uid() {
 export function defaultLlmModelsSeed() {
   const t2 = [
     {
-      label: "qwen-max",
-      modelId: "qwen-max",
+      label: "qwen3.7-max",
+      modelId: "qwen3.7-max",
       baseUrl: "https://ws-6uzq275vpl27mgt5.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
       apiKeyEnv: "ALIYUN_MAAS_API_KEY",
       caps: { text: true, vision: false, video: false, ocr: false },
