@@ -48,7 +48,7 @@ agent/
 
 | 变量 | 用途 |
 |------|------|
-| `ARK_API_KEY` / `DOUBAO_LITE_MODEL` | 第一梯队 Doubao（中文首选 / 英文备选） |
+| `ARK_API_KEY` / `DOUBAO_SEED_MODEL` | 第一梯队 Doubao（中文首选 / 英文备选）。`DOUBAO_SEED_MODEL` 填方舟接入点 ID（`ep-…`）或型号名；可选 `DOUBAO_LABEL` 改显示名 |
 | `SILICONFLOW_API_KEY` / `QWEN_BASE_URL` / `QWEN_LITE_MODEL` | 第一梯队 Qwen（英文首选 / 中文备选；默认 `Qwen/Qwen2.5-7B-Instruct`） |
 | `ALIYUN_MAAS_API_KEY` | 阿里 MaaS（二/三梯队多数模型） |
 | `DEEPSEEK_API_KEY` | DeepSeek 官方 |

@@ -2,8 +2,8 @@
  * 第一梯队（分类器 / 前锋）选模
  *
  * 菜单语言决定主备顺序：
- *   中文 UI：Doubao-1.5-lite-32k 首选，Qwen2.5-7B 备选
- *   英文 UI：Qwen2.5-7B 首选，Doubao-1.5-lite-32k 备选
+ *   中文 UI：Doubao 首选，Qwen2.5-7B 备选
+ *   英文 UI：Qwen2.5-7B 首选，Doubao 备选
  *
  * 注意：主备顺序只看菜单语言；回复语言由提问语言决定（见 detectTextLang）。
  */
@@ -28,24 +28,37 @@ const DOUBAO_DEFAULT_BASE = "https://ark.cn-beijing.volces.com/api/v3";
 const QWEN_DEFAULT_BASE = "https://api.siliconflow.cn/v1";
 const QWEN_DEFAULT_MODEL = "Qwen/Qwen2.5-7B-Instruct";
 
+const DOUBAO_DEFAULT_LABEL = "Doubao-Seed-2.0-lite";
+
+/**
+ * 模型标识可填方舟接入点 ID（ep-…）或公开型号名。
+ * 变量名兼容历史：DOUBAO_SEED_MODEL → DOUBAO_MODEL → DOUBAO_LITE_MODEL
+ */
+function doubaoModelId(env) {
+  return String(
+    env.DOUBAO_SEED_MODEL || env.DOUBAO_MODEL || env.DOUBAO_LITE_MODEL || ""
+  ).trim();
+}
+
 /** @returns {{ role: string, label: string, target: object|null, missing: string[] }} */
 export function describeDoubao(env) {
-  const modelId = String(env.DOUBAO_LITE_MODEL || "").trim();
+  const modelId = doubaoModelId(env);
   const baseUrl = String(env.DOUBAO_BASE_URL || DOUBAO_DEFAULT_BASE).trim();
+  const label = String(env.DOUBAO_LABEL || DOUBAO_DEFAULT_LABEL).trim();
   const missing = [];
-  if (!modelId) missing.push("DOUBAO_LITE_MODEL");
+  if (!modelId) missing.push("DOUBAO_SEED_MODEL");
   if (!baseUrl) missing.push("DOUBAO_BASE_URL");
   if (!resolveApiKey(env, "ARK_API_KEY")) missing.push("ARK_API_KEY");
 
   return {
     role: "doubao",
-    label: "Doubao-1.5-lite-32k",
+    label,
     missing,
     target: missing.length
       ? null
       : {
           id: "builtin:doubao-lite",
-          label: "Doubao-1.5-lite-32k",
+          label,
           modelId,
           baseUrl,
           apiKeyEnv: "ARK_API_KEY",
