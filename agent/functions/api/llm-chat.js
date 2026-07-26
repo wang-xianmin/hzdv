@@ -5,8 +5,10 @@
  * Body: { phone, message, modelId?: "auto" | <registry id>, lang?: "zh"|"en" }
  * Returns: { success, reply, model: {...}, attempts, notes, latencyMs, error? }
  *
- * Auto：菜单语言决定第一梯队主备（中文 Doubao 首选 / 英文 Qwen 首选），
- * 主失败则试备，都不可用再落到第二/三梯队。
+ * Auto：先用 VPS 上的 Qwen2.5-1.5B 分类器给消息定级（见 lib/intent.js）：
+ *   tier1 → 内置主备（菜单语言决定顺序：中文 Doubao 首选 / 英文 Qwen 首选）
+ *   tier2/3 → 模型库对应梯队，失败再回落
+ * 分类器未配置或失败时按原有顺序（tier1 主备 → 模型库）。
  * 回复语言只看提问语言，与菜单语言无关。
  */
 
@@ -18,6 +20,7 @@ import {
   resolveApiKey,
 } from "../lib/openai-compat.js";
 import { detectTextLang, normalizeUiLang, tier1Plan } from "../lib/tier1.js";
+import { classifyIntent } from "../lib/intent.js";
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -29,22 +32,22 @@ function jsonResponse(body, status = 200) {
   });
 }
 
-function pickRegistryFallback(env, models) {
+/** 按梯队顺序取出模型库里可用的模型（有 Key、baseUrl 完整、已启用） */
+function registryCandidates(env, models, tierOrder) {
   const enabled = (models || []).filter((m) => m && m.enabled !== false);
-  const byTier = (tier) =>
-    enabled
+  const out = [];
+  for (const tier of tierOrder) {
+    const list = enabled
       .filter((m) => m.tier === tier)
       .sort((a, b) => (a.order || 0) - (b.order || 0));
-
-  for (const tier of [2, 3]) {
-    for (const m of byTier(tier)) {
+    for (const m of list) {
       if (!m.modelId || !m.baseUrl) continue;
       if (String(m.baseUrl).includes("{WorkspaceId}")) continue;
       if (!resolveApiKey(env, m.apiKeyEnv)) continue;
-      return { target: m, via: "auto→tier" + tier };
+      out.push({ target: m, via: "auto→tier" + tier });
     }
   }
-  return { target: null, via: "auto→none" };
+  return out;
 }
 
 function modelMeta(target, via, extra) {
@@ -207,46 +210,64 @@ export async function onRequest(context) {
   const attempts = [];
   const notes = plan.skipped.map((s) => skipNote(s, uiLang));
 
-  for (const cand of plan.candidates) {
-    const via = "auto→tier1/" + (cand.preference || "primary") + "/" + cand.role;
-    const result = await callModel(env, cand, message, replyLang);
+  // 意图分类：tier1 闲聊走内置主备，tier2/3 直奔对应梯队；分类失败按原顺序
+  const intent = await classifyIntent(env, message);
+  if (intent.tier) {
+    notes.unshift(
+      uiLang === "en"
+        ? "Intent: tier" + intent.tier + " (" + intent.latencyMs + "ms)"
+        : "意图分类：tier" + intent.tier + "（" + intent.latencyMs + "ms）"
+    );
+  } else if (String(env.INTENT_SERVICE_URL || "").trim()) {
+    notes.unshift(
+      uiLang === "en"
+        ? "Intent classifier unavailable (" + (intent.error || "error") + "), default order"
+        : "分类器不可用（" + (intent.error || "错误") + "），按默认顺序"
+    );
+  }
+
+  const tier1Cands = plan.candidates.map((cand) => ({
+    target: cand,
+    via: "auto→tier1/" + (cand.preference || "primary") + "/" + cand.role,
+  }));
+
+  let queue;
+  if (intent.tier === 2) {
+    queue = [...registryCandidates(env, models, [2, 3]), ...tier1Cands];
+  } else if (intent.tier === 3) {
+    queue = [...registryCandidates(env, models, [3, 2]), ...tier1Cands];
+  } else {
+    queue = [...tier1Cands, ...registryCandidates(env, models, [2, 3]).slice(0, 1)];
+  }
+
+  let lastFail = null;
+  for (const { target, via } of queue.slice(0, 4)) {
+    const result = await callModel(env, target, message, replyLang);
     const attempt = {
-      label: cand.label,
-      modelId: cand.modelId,
-      preference: cand.preference,
-      ok: !!result.ok,
+      label: target.label,
+      modelId: target.modelId,
+      preference: target.preference || via.replace("auto→", ""),
+      ok: !!(result.ok && String(result.reply || "").trim()),
       error: result.error || null,
       latencyMs: result.latencyMs,
     };
     attempts.push(attempt);
-    if (result.ok && String(result.reply || "").trim()) {
+    if (attempt.ok) {
       return jsonResponse(
-        packChatResult(result, cand, via, langInfo, { attempts, notes })
+        packChatResult(result, target, via, langInfo, { attempts, notes })
       );
     }
-    if (result.ok && !result.error) {
-      attempt.error = "上游返回空内容";
-      attempt.ok = false;
-    }
+    if (result.ok && !result.error) attempt.error = "上游返回空内容";
     notes.push(failNote(attempt, uiLang));
+    lastFail = { result, target, via };
   }
 
-  const fallback = pickRegistryFallback(env, models);
-  if (fallback.target) {
-    const result = await callModel(env, fallback.target, message, replyLang);
-    attempts.push({
-      label: fallback.target.label,
-      modelId: fallback.target.modelId,
-      preference: "registry",
-      ok: !!(result.ok && String(result.reply || "").trim()),
-      error: result.error || null,
-      latencyMs: result.latencyMs,
-    });
-    const bodyOut = packChatResult(result, fallback.target, fallback.via, langInfo, {
+  if (lastFail) {
+    const bodyOut = packChatResult(lastFail.result, lastFail.target, lastFail.via, langInfo, {
       attempts,
       notes,
     });
-    return jsonResponse(bodyOut, bodyOut.success ? 200 : 502);
+    return jsonResponse(bodyOut, 502);
   }
 
   return jsonResponse(

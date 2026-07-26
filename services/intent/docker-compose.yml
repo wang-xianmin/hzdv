@@ -1,0 +1,46 @@
+# 意图分类 LLM（llama.cpp + Qwen2.5-1.5B-Instruct Q4_K_M）
+# 用法：
+#   cd services/intent
+#   ./download-model.sh          # 首次：下载 GGUF 到 ./models
+#   docker compose up -d
+# 健康检查：
+#   curl http://127.0.0.1:8090/health
+#
+# 对外是 OpenAI 兼容接口（/v1/chat/completions），
+# 两个 CF 项目都可通过 INTENT_SERVICE_URL 共用。
+
+services:
+  intent:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    container_name: hzdv-intent
+    command:
+      - "-m"
+      - "/models/qwen2.5-1.5b-instruct-q4_k_m.gguf"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8090"
+      - "--ctx-size"
+      - "2048"
+      - "--threads"
+      - "2"
+      - "--parallel"
+      - "1"
+      - "--api-key"
+      - "${INTENT_API_KEY:?INTENT_API_KEY required}"
+      - "--no-webui"
+    ports:
+      - "${INTENT_PUBLISH_PORT:-8090}:8090"
+    volumes:
+      - ./models:/models:ro
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8090/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3

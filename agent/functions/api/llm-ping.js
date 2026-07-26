@@ -4,7 +4,7 @@
  *
  * Body:
  *   { phone, id }                    // 模型库里的 id
- *   { phone, builtin: "doubao-lite" | "doubao-seed" | "siliconflow-lite" }
+ *   { phone, builtin: "doubao-lite" | "doubao-seed" | "siliconflow-lite" | "intent" }
  */
 
 import { assertOpsAccess, opsAuthErrorResponse } from "../lib/host.js";
@@ -16,6 +16,7 @@ import {
   resolveApiKey,
 } from "../lib/openai-compat.js";
 import { describeDoubao, describeQwen } from "../lib/tier1.js";
+import { intentTarget } from "../lib/intent.js";
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -29,6 +30,17 @@ function jsonResponse(body, status = 200) {
 
 function builtinTarget(env, name) {
   const n = String(name || "").trim();
+  if (n === "intent" || n === "classifier") {
+    return (
+      intentTarget(env) || {
+        label: "Qwen2.5-1.5B 分类器",
+        modelId: "",
+        baseUrl: "",
+        apiKeyEnv: "INTENT_API_KEY",
+        tier: 0,
+      }
+    );
+  }
   const desc =
     n === "doubao-lite" || n === "doubao" || n === "doubao-seed"
       ? describeDoubao(env)
@@ -67,7 +79,7 @@ export async function onRequest(context) {
         {
           success: false,
           error:
-            "内置模型未配全。豆包需 ARK_API_KEY + DOUBAO_SEED_MODEL（填接入点 ep-… 或型号名）；硅基需 SILICONFLOW_API_KEY",
+            "内置模型未配全。豆包需 ARK_API_KEY + DOUBAO_SEED_MODEL（填接入点 ep-… 或型号名）；硅基需 SILICONFLOW_API_KEY；分类器需 INTENT_SERVICE_URL + INTENT_API_KEY",
         },
         400
       );
