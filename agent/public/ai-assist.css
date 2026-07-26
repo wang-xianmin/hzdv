@@ -107,6 +107,15 @@
   white-space: pre-wrap;
 }
 
+/* OCR 明细：等宽字体让坐标/置信度对齐好读 */
+.ai-assist__bubble--mono .ai-assist__bubble-text {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  max-height: 320px;
+  overflow: auto;
+}
+
 .ai-assist__bubble-note {
   margin-top: 6px;
   padding-top: 5px;

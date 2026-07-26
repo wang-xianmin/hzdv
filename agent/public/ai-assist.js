@@ -30,6 +30,32 @@
   var MODEL_OPTIONS = BUILTIN_OPTIONS.slice();
   var registryModels = [];
 
+  /** 最近一次 OCR 结果，随下一条消息带给 /api/llm-chat 后清空 */
+  var pendingOcr = null;
+
+  /** 排版硬校验原因码 → 文案 */
+  var LAYOUT_REASONS = {
+    multi_column: ["多栏排版", "multi-column"],
+    table_like: ["表格/表单结构", "table-like"],
+    low_confidence: ["识别置信度低", "low confidence"],
+    severe_skew: ["严重倾斜", "severely skewed"],
+    skewed: ["轻微倾斜", "slightly skewed"],
+    mixed_font_size: ["字号混杂", "mixed font sizes"],
+    dense_text: ["文本超密", "dense text"],
+    sparse_text: ["文字稀疏", "sparse text"],
+    no_text: ["未识别到文字", "no text found"],
+    no_box: ["无有效文本框", "no valid boxes"],
+  };
+
+  function layoutReasonText(codes, en) {
+    return (codes || [])
+      .map(function (c) {
+        var pair = LAYOUT_REASONS[c];
+        return pair ? (en ? pair[1] : pair[0]) : c;
+      })
+      .join(en ? ", " : "、");
+  }
+
 
   var root = null;
   var inputEl = null;
@@ -392,6 +418,120 @@
       appendAssistant(t("Notebooks 即将接入。", "Notebooks coming soon."));
     });
 
+    /** 明细报告：文字 + 每行置信度/坐标 + 硬校验结论，用来直观看 RapidOCR 的效果 */
+    function ocrReportText(data, en) {
+      var lines = Array.isArray(data.lines) ? data.lines : [];
+      var lay = data.layout || {};
+      var m = lay.metrics || {};
+      var img = data.image || {};
+      var out = [];
+      out.push(en ? "[RapidOCR + ONNX Runtime]" : "【RapidOCR + ONNX Runtime】");
+
+      var elapse = Array.isArray(data.elapse)
+        ? data.elapse
+            .map(function (x) {
+              return typeof x === "number" ? Math.round(x * 1000) + "ms" : String(x);
+            })
+            .join(" / ")
+        : "";
+      out.push(
+        (en ? "image " : "图片 ") +
+          (img.width || "?") +
+          "×" +
+          (img.height || "?") +
+          " · " +
+          (en ? "lines " : "行数 ") +
+          (data.line_count || 0) +
+          (m.mean_score != null
+            ? " · " + (en ? "avg conf " : "平均置信 ") + m.mean_score
+            : "") +
+          (elapse ? " · det/cls/rec " + elapse : "")
+      );
+
+      out.push(
+        (en ? "layout: " : "排版硬校验：") +
+          (lay.complex ? (en ? "COMPLEX" : "复杂") : en ? "simple" : "简单") +
+          " · " +
+          (en ? "suggested tier " : "建议梯队 ") +
+          (lay.suggested_tier || "?") +
+          ((lay.reasons || []).length
+            ? " · " + layoutReasonText(lay.reasons, en)
+            : "")
+      );
+      out.push(
+        (en ? "metrics: columns " : "指标：栏数 ") +
+          (m.columns != null ? m.columns : "?") +
+          (en ? ", side-by-side " : "，左右并排比 ") +
+          (m.side_by_side_ratio != null ? m.side_by_side_ratio : "?") +
+          (en ? ", skew " : "，倾斜 ") +
+          (m.mean_skew_deg != null ? m.mean_skew_deg + "°" : "?") +
+          (en ? ", height CV " : "，字高变异 ") +
+          (m.height_cv != null ? m.height_cv : "?") +
+          (en ? ", coverage " : "，文字覆盖 ") +
+          (m.text_coverage != null ? m.text_coverage : "?")
+      );
+
+      if (!lines.length) {
+        out.push(en ? "\nNo text recognized." : "\n未识别到文字。");
+        return out.join("\n");
+      }
+
+      out.push(en ? "\nLines (text · conf · box):" : "\n逐行结果（文字 · 置信 · 坐标）：");
+      lines.slice(0, 30).forEach(function (ln, i) {
+        var box = ln.box || [];
+        var xs = box.map(function (p) {
+          return Math.round(Number(p[0]) || 0);
+        });
+        var ys = box.map(function (p) {
+          return Math.round(Number(p[1]) || 0);
+        });
+        var rect = xs.length
+          ? "[" +
+            Math.min.apply(null, xs) +
+            "," +
+            Math.min.apply(null, ys) +
+            " → " +
+            Math.max.apply(null, xs) +
+            "," +
+            Math.max.apply(null, ys) +
+            "]"
+          : "";
+        out.push(
+          String(i + 1) +
+            ". " +
+            String(ln.text || "") +
+            "  ·  " +
+            (ln.score != null ? Number(ln.score).toFixed(3) : "?") +
+            "  ·  " +
+            rect
+        );
+      });
+      if (lines.length > 30) {
+        out.push(
+          en
+            ? "… " + (lines.length - 30) + " more lines"
+            : "… 另有 " + (lines.length - 30) + " 行"
+        );
+      }
+      return out.join("\n");
+    }
+
+    function ocrRoutingNote(data, en) {
+      var lay = data.layout || {};
+      if (!String(data.text || "").trim()) {
+        return en
+          ? "Nothing to route — try a clearer image"
+          : "无文字可路由，换张更清晰的图试试";
+      }
+      return en
+        ? "OCR text goes to the intent classifier; layout check floors routing at tier " +
+            (lay.suggested_tier || "?") +
+            ". Ask your question now."
+        : "OCR 文字将交给意图分类器，排版硬校验把梯队下限定在 tier" +
+            (lay.suggested_tier || "?") +
+            "。现在提问即可。";
+    }
+
     function runOcrFile(file) {
       if (!file) return;
       appendAssistant(
@@ -415,20 +555,26 @@
             return;
           }
           var text = String(data.text || "").trim();
+          var en = currentLang() === "en";
+          pendingOcr = {
+            text: text,
+            line_count: data.line_count || 0,
+            layout: data.layout || null,
+          };
+          appendAssistant(ocrReportText(data, en), {
+            modelBadge: "RapidOCR + ONNX Runtime",
+            modelNote: ocrRoutingNote(data, en),
+            mono: true,
+          });
           if (!text) {
-            appendAssistant(t("未识别到文字。", "No text recognized."));
+            pendingOcr = null;
             return;
           }
-          appendAssistant(
-            t(
-              "【RapidOCR】识别结果：\n",
-              "[RapidOCR] result:\n"
-            ) + text
-          );
           if (inputEl && !String(inputEl.value || "").trim()) {
-            inputEl.value =
-              t("请根据这张图的文字回答：\n", "Based on this OCR text, answer:\n") +
-              text;
+            inputEl.value = t(
+              "请根据这张图回答：",
+              "Answer based on this image:"
+            );
             syncSendState();
           }
         })
@@ -688,7 +834,8 @@
       var bubble = document.createElement("div");
       bubble.className =
         "ai-assist__bubble ai-assist__bubble--" +
-        (m.role === "user" ? "user" : "assistant");
+        (m.role === "user" ? "user" : "assistant") +
+        (m.mono ? " ai-assist__bubble--mono" : "");
       if (m.role === "assistant" && m.modelBadge) {
         var meta = document.createElement("div");
         meta.className = "ai-assist__bubble-model";
@@ -721,6 +868,7 @@
       if (extra.modelBadge) row.modelBadge = extra.modelBadge;
       if (extra.modelMeta) row.modelMeta = extra.modelMeta;
       if (extra.modelNote) row.modelNote = extra.modelNote;
+      if (extra.mono) row.mono = true;
     }
     messages.push(row);
     renderThread();
@@ -763,6 +911,9 @@
     });
     var thinkingIdx = messages.length - 1;
 
+    var ocrCtx = pendingOcr;
+    pendingOcr = null;
+
     fetch("/api/llm-chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -772,6 +923,7 @@
         message: q,
         modelId: want,
         lang: currentLang(),
+        ocr: ocrCtx || undefined,
       }),
     })
       .then(function (r) {

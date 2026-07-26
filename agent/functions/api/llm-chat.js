@@ -10,6 +10,9 @@
  *   tier1 → [1,2,3]，tier2 → [2,3,1]，tier3 → [3,2,1]
  * 分类器未配置或失败时从第一梯队开始。梯队内顺序即模型库里的排序，与菜单语言无关。
  * 回复语言只看提问语言。
+ *
+ * 带图片时：body.ocr 传入 /api/ocr 的结果（含 layout 排版硬校验），
+ * OCR 文字进分类与 system prompt，layout.suggested_tier 作为梯队下限（只抬不降）。
  */
 
 import { assertOpsAccess, opsAuthErrorResponse, pickKvBinding, kvBindingHint } from "../lib/host.js";
@@ -32,14 +35,24 @@ function jsonResponse(body, status = 200) {
   });
 }
 
-/** 按梯队顺序取出模型库里可用的模型（有 Key、baseUrl 完整、已启用） */
-function registryCandidates(env, models, tierOrder) {
+/**
+ * 按梯队顺序取出模型库里可用的模型（有 Key、baseUrl 完整、已启用）。
+ * preferVision：图片场景把带 vision 能力的模型排到同梯队前面。
+ */
+function registryCandidates(env, models, tierOrder, preferVision) {
   const enabled = (models || []).filter((m) => m && m.enabled !== false);
   const out = [];
   for (const tier of tierOrder) {
     const list = enabled
       .filter((m) => m.tier === tier)
-      .sort((a, b) => (a.order || 0) - (b.order || 0));
+      .sort((a, b) => {
+        if (preferVision) {
+          const av = a.caps && a.caps.vision ? 0 : 1;
+          const bv = b.caps && b.caps.vision ? 0 : 1;
+          if (av !== bv) return av - bv;
+        }
+        return (a.order || 0) - (b.order || 0);
+      });
     for (const m of list) {
       if (!m.modelId || !m.baseUrl) continue;
       if (String(m.baseUrl).includes("{WorkspaceId}")) continue;
@@ -48,6 +61,28 @@ function registryCandidates(env, models, tierOrder) {
     }
   }
   return out;
+}
+
+/**
+ * 归一化前端传来的 OCR 上下文（来自 /api/ocr 的 layout 硬校验结果）。
+ * @returns {{ present: boolean, text: string, floorTier: number, complex: boolean,
+ *             needsVision: boolean, reasons: string[], lineCount: number }}
+ */
+function normalizeOcrContext(raw) {
+  if (!raw || typeof raw !== "object") {
+    return { present: false, text: "", floorTier: 0, complex: false, needsVision: false, reasons: [], lineCount: 0 };
+  }
+  const layout = raw.layout && typeof raw.layout === "object" ? raw.layout : {};
+  const floor = Number(layout.suggested_tier || layout.suggestedTier || 0);
+  return {
+    present: true,
+    text: String(raw.text || "").slice(0, 6000),
+    floorTier: floor >= 1 && floor <= 3 ? floor : 0,
+    complex: !!layout.complex,
+    needsVision: !!(layout.needs_vision || layout.needsVision),
+    reasons: Array.isArray(layout.reasons) ? layout.reasons.slice(0, 8).map(String) : [],
+    lineCount: Number(raw.line_count || raw.lineCount || 0) || 0,
+  };
 }
 
 function modelMeta(target, via, extra) {
@@ -63,24 +98,48 @@ function modelMeta(target, via, extra) {
   };
 }
 
-function systemPrompt(replyLang) {
+function ocrPromptBlock(ocr, replyLang) {
+  if (!ocr || !ocr.present || !String(ocr.text || "").trim()) return "";
+  const warn = ocr.complex
+    ? replyLang === "en"
+      ? " The layout check flagged it as complex (" +
+        (ocr.reasons.join(", ") || "complex") +
+        "), so reading order may be scrambled — infer structure carefully and say so if ambiguous."
+      : "（排版硬校验判为复杂：" +
+        (ocr.reasons.join("、") || "复杂") +
+        "，阅读顺序可能错乱，请谨慎推断结构，拿不准就说明）"
+    : "";
+  return replyLang === "en"
+    ? "\n\nThe user attached an image. OCR (RapidOCR) extracted this text:\n---\n" +
+        ocr.text +
+        "\n---" +
+        warn
+    : "\n\n用户附了一张图片，OCR（RapidOCR）提取到以下文字：\n---\n" +
+        ocr.text +
+        "\n---" +
+        warn;
+}
+
+function systemPrompt(replyLang, ocr) {
   if (replyLang === "en") {
     return (
       "You are the HZDV site assistant. Be concise and direct. " +
       "Always answer in the same language the user wrote in. " +
       "The user wrote in English, so answer in English. " +
-      "Ignore the site menu language."
+      "Ignore the site menu language." +
+      ocrPromptBlock(ocr, "en")
     );
   }
   return (
     "你是 HZDV 站点助手。回答简洁、直接。" +
     "始终使用与用户提问相同的语言回答。" +
     "本次用户用中文提问，请用中文回答。" +
-    "不要参考站点菜单语言。"
+    "不要参考站点菜单语言。" +
+    ocrPromptBlock(ocr, "zh")
   );
 }
 
-async function callModel(env, target, message, replyLang) {
+async function callModel(env, target, message, replyLang, ocr) {
   const apiKey = resolveApiKey(env, target.apiKeyEnv);
   if (!apiKey) {
     return {
@@ -108,7 +167,7 @@ async function callModel(env, target, message, replyLang) {
     apiKey,
     model: target.modelId,
     messages: [
-      { role: "system", content: systemPrompt(replyLang) },
+      { role: "system", content: systemPrompt(replyLang, ocr) },
       { role: "user", content: message },
     ],
     temperature: 0.3,
@@ -182,6 +241,7 @@ export async function onRequest(context) {
   const replyLang = detectTextLang(message, uiLang);
   const langInfo = { uiLang, replyLang };
   const wantId = String(body.modelId || body.model || "auto").trim() || "auto";
+  const ocr = normalizeOcrContext(body.ocr);
 
   const kv = pickKvBinding(env);
   if (!kv) {
@@ -194,7 +254,7 @@ export async function onRequest(context) {
     if (!hit) {
       return jsonResponse({ success: false, error: "模型不存在：" + wantId }, 404);
     }
-    const result = await callModel(env, hit, message, replyLang);
+    const result = await callModel(env, hit, message, replyLang, ocr);
     const bodyOut = packChatResult(result, hit, "manual", langInfo, { notes: [] });
     return jsonResponse(bodyOut, bodyOut.success ? 200 : 502);
   }
@@ -204,15 +264,15 @@ export async function onRequest(context) {
 
   const tier1Cands = registryCandidates(env, models, [1]);
 
-  // 分类器与第一梯队第一名并行发请求：闲聊（占大头）时分类延迟被主力调用掩盖；
-  // 判成 tier2/3 时这次 lite 调用作废，成本可忽略
-  const primary = tier1Cands[0] || null;
+  // 有图时不并行预热：OCR 场景大概率被硬校验抬到二/三梯队，预热就是纯浪费
+  const primary = ocr.present ? null : tier1Cands[0] || null;
   const primaryPromise = primary
-    ? callModel(env, primary.target, message, replyLang)
+    ? callModel(env, primary.target, message, replyLang, ocr)
     : null;
 
-  // 意图分类：tier1 闲聊走第一梯队排序，tier2/3 直奔对应梯队；分类失败按 1→2→3
-  const intent = await classifyIntent(env, message);
+  // 意图分类：分类文本带上 OCR 结果，让分类器看到图里的内容而不只是提问那句话
+  const classifyText = ocr.present && ocr.text ? message + "\n" + ocr.text : message;
+  const intent = await classifyIntent(env, classifyText);
   if (intent.tier) {
     notes.unshift(
       uiLang === "en"
@@ -227,11 +287,35 @@ export async function onRequest(context) {
     );
   }
 
+  // 排版硬校验只做下限（不降级）：小模型常把带图请求误判成闲聊，
+  // 结构复杂时必须交给更强的模型，否则 OCR 纯文本的阅读顺序会被读错。
+  let routeTier = intent.tier || 0;
+  if (ocr.present && ocr.floorTier > routeTier) {
+    routeTier = ocr.floorTier;
+    notes.push(
+      uiLang === "en"
+        ? "Layout check raised routing to tier" +
+          routeTier +
+          (ocr.reasons.length ? " (" + ocr.reasons.join(", ") + ")" : "")
+        : "排版硬校验抬到 tier" +
+          routeTier +
+          (ocr.reasons.length ? "（" + ocr.reasons.join("、") + "）" : "")
+    );
+  }
+  if (ocr.present && ocr.needsVision) {
+    notes.push(
+      uiLang === "en"
+        ? "OCR quality poor — preferring vision-capable models"
+        : "OCR 质量差，优先选带视觉能力的模型"
+    );
+  }
+
+  const preferVision = ocr.present && ocr.needsVision;
   let queue;
-  if (intent.tier === 2) {
-    queue = registryCandidates(env, models, [2, 3, 1]);
-  } else if (intent.tier === 3) {
-    queue = registryCandidates(env, models, [3, 2, 1]);
+  if (routeTier === 2) {
+    queue = registryCandidates(env, models, [2, 3, 1], preferVision);
+  } else if (routeTier === 3) {
+    queue = registryCandidates(env, models, [3, 2, 1], preferVision);
   } else {
     queue = [...tier1Cands, ...registryCandidates(env, models, [2, 3]).slice(0, 1)];
   }
@@ -248,7 +332,7 @@ export async function onRequest(context) {
     const result =
       primaryPromise && primary && target.id === primary.target.id
         ? await primaryPromise
-        : await callModel(env, target, message, replyLang);
+        : await callModel(env, target, message, replyLang, ocr);
     const attempt = {
       label: target.label,
       modelId: target.modelId,
