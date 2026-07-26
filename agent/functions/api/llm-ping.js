@@ -91,7 +91,7 @@ export async function onRequest(context) {
     if (!kv) {
       return jsonResponse({ success: false, error: "KV not configured", hint: kvBindingHint() }, 503);
     }
-    const { models } = await loadLlmModels(kv);
+    const { models } = await loadLlmModels(kv, env);
     const hit = (models || []).find((m) => m.id === id);
     if (!hit) return jsonResponse({ success: false, error: "模型不存在" }, 404);
     target = hit;

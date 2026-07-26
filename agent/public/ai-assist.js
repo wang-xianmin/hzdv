@@ -22,8 +22,8 @@
     {
       id: "auto",
       label: "Auto",
-      descZh: "中文：Doubao 首选 · Qwen 备选",
-      descEn: "EN: Qwen primary · Doubao backup",
+      descZh: "按意图自动选梯队",
+      descEn: "Routes by intent",
       tier: 0,
     },
   ];
@@ -82,13 +82,17 @@
     });
     sorted.forEach(function (m) {
       var tierName =
-        m.tier === 3
+        m.tier === 1
           ? langEn
-            ? "Tier 3"
-            : "第三梯队"
-          : langEn
-            ? "Tier 2"
-            : "第二梯队";
+            ? "Tier 1"
+            : "第一梯队"
+          : m.tier === 3
+            ? langEn
+              ? "Tier 3"
+              : "第三梯队"
+            : langEn
+              ? "Tier 2"
+              : "第二梯队";
       opts.push({
         id: m.id,
         label: m.label || m.modelId,
@@ -671,14 +675,8 @@
     }
     var name = meta.label || meta.modelId || "";
     if (meta.via && String(meta.via).indexOf("auto") === 0) {
-      var uiTag = meta.uiLang === "en" ? "EN" : "中";
-      var role = "";
-      if (String(meta.via).indexOf("tier1/backup") >= 0) {
-        role = t("（备选）", " (backup)");
-      } else if (String(meta.via).indexOf("tier1/primary") >= 0) {
-        role = t("（首选）", " (primary)");
-      }
-      return "Auto[" + uiTag + "] → " + name + role;
+      var tierTag = meta.tier ? " · T" + meta.tier : "";
+      return "Auto → " + name + tierTag;
     }
     return name;
   }

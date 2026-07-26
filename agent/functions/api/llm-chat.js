@@ -5,11 +5,11 @@
  * Body: { phone, message, modelId?: "auto" | <registry id>, lang?: "zh"|"en" }
  * Returns: { success, reply, model: {...}, attempts, notes, latencyMs, error? }
  *
- * Auto：先用 VPS 上的 Qwen2.5-1.5B 分类器给消息定级（见 lib/intent.js）：
- *   tier1 → 内置主备（菜单语言决定顺序：中文 Doubao 首选 / 英文 Qwen 首选）
- *   tier2/3 → 模型库对应梯队，失败再回落
- * 分类器未配置或失败时按原有顺序（tier1 主备 → 模型库）。
- * 回复语言只看提问语言，与菜单语言无关。
+ * Auto：先用 VPS 上的 Qwen2.5-1.5B 分类器给消息定级（见 lib/intent.js），
+ * 再按模型库（KV）里对应梯队的排序依次尝试：
+ *   tier1 → [1,2,3]，tier2 → [2,3,1]，tier3 → [3,2,1]
+ * 分类器未配置或失败时从第一梯队开始。梯队内顺序即模型库里的排序，与菜单语言无关。
+ * 回复语言只看提问语言。
  */
 
 import { assertOpsAccess, opsAuthErrorResponse, pickKvBinding, kvBindingHint } from "../lib/host.js";
@@ -19,7 +19,7 @@ import {
   extractAssistantText,
   resolveApiKey,
 } from "../lib/openai-compat.js";
-import { detectTextLang, normalizeUiLang, tier1Plan } from "../lib/tier1.js";
+import { detectTextLang, normalizeUiLang } from "../lib/tier1.js";
 import { classifyIntent } from "../lib/intent.js";
 
 function jsonResponse(body, status = 200) {
@@ -147,13 +147,6 @@ function packChatResult(result, model, via, langInfo, extras) {
   };
 }
 
-function skipNote(item, uiLang) {
-  const miss = (item.missing || []).join(", ") || "配置不全";
-  return uiLang === "en"
-    ? item.label + " skipped (missing " + miss + ")"
-    : item.label + " 跳过（缺 " + miss + "）";
-}
-
 function failNote(attempt, uiLang) {
   const why = attempt.error || "failed";
   return uiLang === "en"
@@ -194,7 +187,7 @@ export async function onRequest(context) {
   if (!kv) {
     return jsonResponse({ success: false, error: "KV not configured", hint: kvBindingHint() }, 503);
   }
-  const { models } = await loadLlmModels(kv);
+  const { models } = await loadLlmModels(kv, env);
 
   if (wantId !== "auto") {
     const hit = (models || []).find((m) => m.id === wantId);
@@ -206,23 +199,19 @@ export async function onRequest(context) {
     return jsonResponse(bodyOut, bodyOut.success ? 200 : 502);
   }
 
-  const plan = tier1Plan(env, uiLang);
   const attempts = [];
-  const notes = plan.skipped.map((s) => skipNote(s, uiLang));
+  const notes = [];
 
-  const tier1Cands = plan.candidates.map((cand) => ({
-    target: cand,
-    via: "auto→tier1/" + (cand.preference || "primary") + "/" + cand.role,
-  }));
+  const tier1Cands = registryCandidates(env, models, [1]);
 
-  // 分类器与第一梯队主力并行发请求：闲聊（占大头）时分类延迟被主力调用掩盖；
+  // 分类器与第一梯队第一名并行发请求：闲聊（占大头）时分类延迟被主力调用掩盖；
   // 判成 tier2/3 时这次 lite 调用作废，成本可忽略
   const primary = tier1Cands[0] || null;
   const primaryPromise = primary
     ? callModel(env, primary.target, message, replyLang)
     : null;
 
-  // 意图分类：tier1 闲聊走内置主备，tier2/3 直奔对应梯队；分类失败按原顺序
+  // 意图分类：tier1 闲聊走第一梯队排序，tier2/3 直奔对应梯队；分类失败按 1→2→3
   const intent = await classifyIntent(env, message);
   if (intent.tier) {
     notes.unshift(
@@ -240,17 +229,24 @@ export async function onRequest(context) {
 
   let queue;
   if (intent.tier === 2) {
-    queue = [...registryCandidates(env, models, [2, 3]), ...tier1Cands];
+    queue = registryCandidates(env, models, [2, 3, 1]);
   } else if (intent.tier === 3) {
-    queue = [...registryCandidates(env, models, [3, 2]), ...tier1Cands];
+    queue = registryCandidates(env, models, [3, 2, 1]);
   } else {
     queue = [...tier1Cands, ...registryCandidates(env, models, [2, 3]).slice(0, 1)];
+  }
+  if (!queue.length) {
+    notes.push(
+      uiLang === "en"
+        ? "No usable model in the library (check enabled flags and API key env vars)"
+        : "模型库无可用模型（检查启用开关与密钥环境变量）"
+    );
   }
 
   let lastFail = null;
   for (const { target, via } of queue.slice(0, 4)) {
     const result =
-      primary && target === primary.target && primaryPromise
+      primaryPromise && primary && target.id === primary.target.id
         ? await primaryPromise
         : await callModel(env, target, message, replyLang);
     const attempt = {
@@ -285,8 +281,8 @@ export async function onRequest(context) {
       success: false,
       error:
         uiLang === "en"
-          ? "No usable model for Auto. Check ARK_API_KEY / SILICONFLOW_API_KEY and model env vars."
-          : "Auto 未找到可用模型（检查 ARK_API_KEY、SILICONFLOW_API_KEY 与模型环境变量）",
+          ? "No usable model for Auto. Enable models in the library and set their API key env vars."
+          : "Auto 未找到可用模型（在模型库启用模型，并确认密钥环境变量已配置）",
       model: { id: "auto", label: "Auto", modelId: "", tier: 0, via: "auto→none", ...langInfo },
       attempts,
       notes,

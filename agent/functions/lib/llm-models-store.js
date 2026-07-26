@@ -1,6 +1,6 @@
 /**
  * LLM 模型注册表（KV）
- * - tier: 2 | 3（1 梯队为内置路由/前锋，不进此表）
+ * - tier: 1 | 2 | 3（三个梯队全部在此表，可编辑排序）
  * - order: 同梯队内越小越优先
  * - caps: text / vision / video / ocr
  * - apiKeyEnv: Pages 环境变量名（不存真实密钥）
@@ -15,7 +15,37 @@ function uid() {
   return "m" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
 
-export function defaultLlmModelsSeed() {
+/**
+ * 第一梯队默认条目。优先取环境变量（兼容原内置配置），没有则用公开默认值。
+ * 迁移用：老库里没有 tier1 模型时自动补上这两条。
+ */
+export function tier1DefaultModels(env) {
+  const e = env || {};
+  const doubaoModelId = String(
+    e.DOUBAO_SEED_MODEL || e.DOUBAO_MODEL || e.DOUBAO_LITE_MODEL || "doubao-seed-2.0-lite"
+  ).trim();
+  return [
+    {
+      label: "Qwen/Qwen2.5-7B-Instruct",
+      modelId: String(e.QWEN_LITE_MODEL || "Qwen/Qwen2.5-7B-Instruct").trim(),
+      baseUrl: String(
+        e.QWEN_BASE_URL || e.SILICONFLOW_BASE_URL || "https://api.siliconflow.cn/v1"
+      ).trim(),
+      apiKeyEnv: "SILICONFLOW_API_KEY",
+      caps: { text: true, vision: false, video: false, ocr: false },
+    },
+    {
+      label: String(e.DOUBAO_LABEL || "Doubao-Seed-2.0-lite").trim(),
+      modelId: doubaoModelId,
+      baseUrl: String(e.DOUBAO_BASE_URL || "https://ark.cn-beijing.volces.com/api/v3").trim(),
+      apiKeyEnv: "ARK_API_KEY",
+      caps: { text: true, vision: false, video: false, ocr: false },
+    },
+  ].map((m, i) => normalizeModel({ ...m, tier: 1, order: i }));
+}
+
+export function defaultLlmModelsSeed(env) {
+  const t1 = tier1DefaultModels(env);
   const t2 = [
     {
       label: "qwen3.7-max",
@@ -90,7 +120,7 @@ export function defaultLlmModelsSeed() {
     },
   ].map((m, i) => normalizeModel({ ...m, tier: 3, order: i }));
 
-  return [...t2, ...t3];
+  return [...t1, ...t2, ...t3];
 }
 
 export function normalizeCaps(raw) {
@@ -104,7 +134,8 @@ export function normalizeCaps(raw) {
 }
 
 export function normalizeModel(raw) {
-  const tier = Number(raw && raw.tier) === 3 ? 3 : 2;
+  const rawTier = Number(raw && raw.tier);
+  const tier = rawTier === 1 ? 1 : rawTier === 3 ? 3 : 2;
   const order = Math.max(0, Math.floor(Number(raw && raw.order) || 0));
   return {
     id: String((raw && raw.id) || uid()),
@@ -130,7 +161,7 @@ export function sortModels(list) {
 
 export function reindexTierOrders(list) {
   const out = (list || []).map((m) => ({ ...m }));
-  [2, 3].forEach((tier) => {
+  [1, 2, 3].forEach((tier) => {
     const rows = out
       .filter((m) => m.tier === tier)
       .sort((a, b) => a.order - b.order || String(a.label).localeCompare(String(b.label), "zh"));
@@ -141,11 +172,11 @@ export function reindexTierOrders(list) {
   return sortModels(out);
 }
 
-export async function loadLlmModels(kv) {
-  if (!kv) return { models: defaultLlmModelsSeed(), seeded: true };
+export async function loadLlmModels(kv, env) {
+  if (!kv) return { models: defaultLlmModelsSeed(env), seeded: true };
   const raw = await kv.get(LLM_MODELS_KV_KEY);
   if (!raw) {
-    const models = defaultLlmModelsSeed();
+    const models = defaultLlmModelsSeed(env);
     await kv.put(LLM_MODELS_KV_KEY, JSON.stringify({ models, updatedAt: Date.now() }));
     return { models, seeded: true };
   }
@@ -155,9 +186,19 @@ export async function loadLlmModels(kv) {
   } catch (e) {
     parsed = null;
   }
-  const models = sortModels(
+  let models = sortModels(
     ((parsed && parsed.models) || []).map((m) => normalizeModel(m)).filter((m) => m.modelId)
   );
+  // 一次性迁移：老库没有第一梯队时，把原环境变量内置的 Doubao / Qwen 补成可编辑条目。
+  // t1m 标记保证只迁移一次——之后用户删光第一梯队也不会被强行补回。
+  if (env && !models.some((m) => m.tier === 1) && !(parsed && parsed.t1m)) {
+    models = reindexTierOrders([...models, ...tier1DefaultModels(env)]);
+    await kv.put(
+      LLM_MODELS_KV_KEY,
+      JSON.stringify({ models, updatedAt: Date.now(), t1m: true })
+    );
+    return { models, seeded: false, migrated: true, updatedAt: Date.now() };
+  }
   return { models, seeded: false, updatedAt: parsed && parsed.updatedAt };
 }
 
@@ -165,7 +206,7 @@ export async function saveLlmModels(kv, models) {
   const normalized = reindexTierOrders(
     (models || []).map((m) => normalizeModel(m)).filter((m) => m.modelId && m.baseUrl)
   );
-  const payload = { models: normalized, updatedAt: Date.now() };
+  const payload = { models: normalized, updatedAt: Date.now(), t1m: true };
   await kv.put(LLM_MODELS_KV_KEY, JSON.stringify(payload));
   return payload;
 }

@@ -1,5 +1,5 @@
 /**
- * LLM 模型库（第二/三梯队）
+ * LLM 模型库（第一/二/三梯队，全部可编辑）
  * GET  /api/llm-models              公开列表（供 agent 选择）
  * GET  /api/llm-models?admin=1&phone=  运维完整列表
  * PUT  /api/llm-models  JSON { phone, models: [...] }  全量保存
@@ -20,7 +20,6 @@ import {
   sortModels,
   toPickerItems,
 } from "../lib/llm-models-store.js";
-import { tier1Catalog } from "../lib/tier1.js";
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -60,28 +59,20 @@ export async function onRequest(context) {
     if (request.method === "GET") {
       const url = new URL(request.url);
       const admin = url.searchParams.get("admin") === "1";
-      const { models, seeded, updatedAt } = await loadLlmModels(kv);
+      const { models, seeded, migrated, updatedAt } = await loadLlmModels(kv, env);
       if (admin) {
         await assertOpsAccess(env, phoneOf(request, null));
         return jsonResponse({
           success: true,
           models,
-          tier1: tier1Catalog(env),
           seeded: !!seeded,
+          migrated: !!migrated,
           updatedAt,
         });
       }
       return jsonResponse({
         success: true,
         models: toPickerItems(models),
-        tier1: tier1Catalog(env).map((m) => ({
-          id: m.id,
-          label: m.label,
-          modelId: m.modelId,
-          tier: 1,
-          ready: m.ready,
-          caps: m.caps,
-        })),
         seeded: !!seeded,
         updatedAt,
       });
@@ -100,7 +91,7 @@ export async function onRequest(context) {
       if (!body) return jsonResponse({ success: false, error: "Invalid JSON" }, 400);
       await assertOpsAccess(env, phoneOf(request, body));
       const action = String(body.action || "").trim();
-      const loaded = await loadLlmModels(kv);
+      const loaded = await loadLlmModels(kv, env);
       let list = loaded.models.slice();
 
       if (action === "add" || action === "create") {
@@ -144,7 +135,7 @@ export async function onRequest(context) {
         });
         list = list.map((m) => (map[m.id] == null ? m : { ...m, order: map[m.id] }));
       } else if (action === "reset_seed") {
-        list = (await import("../lib/llm-models-store.js")).defaultLlmModelsSeed();
+        list = (await import("../lib/llm-models-store.js")).defaultLlmModelsSeed(env);
       } else {
         return jsonResponse({ success: false, error: "Unknown action" }, 400);
       }

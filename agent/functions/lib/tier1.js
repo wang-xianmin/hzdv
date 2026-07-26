@@ -1,11 +1,8 @@
 /**
- * 第一梯队（分类器 / 前锋）选模
+ * 语言工具 + 旧内置第一梯队描述（仅 /api/llm-ping 的 builtin 试通还在用）。
  *
- * 菜单语言决定主备顺序：
- *   中文 UI：Doubao 首选，Qwen2.5-7B 备选
- *   英文 UI：Qwen2.5-7B 首选，Doubao 备选
- *
- * 注意：主备顺序只看菜单语言；回复语言由提问语言决定（见 detectTextLang）。
+ * 第一梯队选模已迁入 KV 模型库（见 llm-models-store.js），
+ * 不再按菜单语言定主备；回复语言仍由提问语言决定（detectTextLang）。
  */
 
 import { resolveApiKey } from "./openai-compat.js";
@@ -95,64 +92,3 @@ export function describeQwen(env) {
   };
 }
 
-/**
- * 运维列表用：始终返回 Doubao / Qwen 两张卡片（含缺配置原因），不因缺 Key 而隐藏。
- */
-export function tier1Catalog(env) {
-  return [describeDoubao(env), describeQwen(env)].map((desc) => {
-    const t = desc.target;
-    return {
-      id: t ? t.id : "builtin:" + desc.role,
-      label: desc.label,
-      modelId: t ? t.modelId : "",
-      baseUrl: t ? t.baseUrl : "",
-      apiKeyEnv: desc.role === "doubao" ? "ARK_API_KEY" : "SILICONFLOW_API_KEY",
-      tier: 1,
-      role: desc.role,
-      builtin: desc.role === "doubao" ? "doubao-lite" : "siliconflow-lite",
-      ready: !!t,
-      missing: desc.missing || [],
-      caps: { text: true, vision: false, video: false, ocr: false },
-      notes:
-        desc.role === "doubao"
-          ? "中文菜单首选 · 英文菜单备选"
-          : "英文菜单首选 · 中文菜单备选",
-      notesEn:
-        desc.role === "doubao"
-          ? "Primary for ZH menu · backup for EN"
-          : "Primary for EN menu · backup for ZH",
-    };
-  });
-}
-
-/**
- * 按菜单语言排出第一梯队主备。
- * @returns {{ lang: "zh"|"en", primary: object, backup: object, candidates: object[], skipped: object[] }}
- */
-export function tier1Plan(env, lang) {
-  const ui = normalizeUiLang(lang);
-  const doubao = describeDoubao(env);
-  const qwen = describeQwen(env);
-  const primary = ui === "en" ? qwen : doubao;
-  const backup = ui === "en" ? doubao : qwen;
-
-  const candidates = [];
-  const skipped = [];
-  [
-    { desc: primary, preference: "primary" },
-    { desc: backup, preference: "backup" },
-  ].forEach(({ desc, preference }) => {
-    if (desc.target) {
-      candidates.push({ ...desc.target, preference });
-    } else {
-      skipped.push({
-        label: desc.label,
-        role: desc.role,
-        preference,
-        missing: desc.missing,
-      });
-    }
-  });
-
-  return { lang: ui, primary, backup, candidates, skipped };
-}
