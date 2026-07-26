@@ -210,6 +210,18 @@ export async function onRequest(context) {
   const attempts = [];
   const notes = plan.skipped.map((s) => skipNote(s, uiLang));
 
+  const tier1Cands = plan.candidates.map((cand) => ({
+    target: cand,
+    via: "auto→tier1/" + (cand.preference || "primary") + "/" + cand.role,
+  }));
+
+  // 分类器与第一梯队主力并行发请求：闲聊（占大头）时分类延迟被主力调用掩盖；
+  // 判成 tier2/3 时这次 lite 调用作废，成本可忽略
+  const primary = tier1Cands[0] || null;
+  const primaryPromise = primary
+    ? callModel(env, primary.target, message, replyLang)
+    : null;
+
   // 意图分类：tier1 闲聊走内置主备，tier2/3 直奔对应梯队；分类失败按原顺序
   const intent = await classifyIntent(env, message);
   if (intent.tier) {
@@ -226,11 +238,6 @@ export async function onRequest(context) {
     );
   }
 
-  const tier1Cands = plan.candidates.map((cand) => ({
-    target: cand,
-    via: "auto→tier1/" + (cand.preference || "primary") + "/" + cand.role,
-  }));
-
   let queue;
   if (intent.tier === 2) {
     queue = [...registryCandidates(env, models, [2, 3]), ...tier1Cands];
@@ -242,7 +249,10 @@ export async function onRequest(context) {
 
   let lastFail = null;
   for (const { target, via } of queue.slice(0, 4)) {
-    const result = await callModel(env, target, message, replyLang);
+    const result =
+      primary && target === primary.target && primaryPromise
+        ? await primaryPromise
+        : await callModel(env, target, message, replyLang);
     const attempt = {
       label: target.label,
       modelId: target.modelId,

@@ -73,8 +73,10 @@ export async function classifyIntent(env, message) {
       { role: "user", content: String(message || "").slice(0, 800) },
     ],
     temperature: 0,
-    max_tokens: 8,
+    max_tokens: 6,
     timeoutMs: 6000,
+    // llama.cpp 专属：复用 few-shot 前缀的 KV cache，只算新增 token
+    extraBody: { cache_prompt: true },
   });
   if (!result.ok) {
     return { tier: null, latencyMs: result.latencyMs, error: result.error || "分类器调用失败" };

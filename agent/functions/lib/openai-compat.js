@@ -78,6 +78,7 @@ export async function chatCompletions({
   temperature = 0.2,
   max_tokens = 256,
   timeoutMs = 45000,
+  extraBody = null,
 }) {
   const base = normalizeBaseUrl(baseUrl);
   if (!base) {
@@ -110,6 +111,7 @@ export async function chatCompletions({
         messages: messages || [{ role: "user", content: "ping" }],
         temperature,
         max_tokens,
+        ...(extraBody || {}),
       }),
       signal: ctrl ? ctrl.signal : undefined,
     });
