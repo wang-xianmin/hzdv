@@ -41,7 +41,7 @@ export function defaultLlmModelsSeed() {
     {
       label: "deepseek-v4-flash",
       modelId: "deepseek-v4-flash",
-      baseUrl: "https://api.deepseek.com",
+      baseUrl: "https://api.deepseek.com/v1",
       apiKeyEnv: "DEEPSEEK_API_KEY",
       caps: { text: true, vision: false, video: false, ocr: false },
     },

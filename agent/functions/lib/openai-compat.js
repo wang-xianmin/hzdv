@@ -15,6 +15,58 @@ export function normalizeBaseUrl(baseUrl) {
     .replace(/\/+$/, "");
 }
 
+function stringifyErr(v) {
+  if (v == null || v === "") return "";
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  try {
+    if (typeof v === "object") {
+      if (typeof v.message === "string" && v.message) return v.message;
+      if (typeof v.msg === "string" && v.msg) return v.msg;
+      if (typeof v.code === "string" && v.code) {
+        return v.code + (v.message ? ": " + v.message : "");
+      }
+      return JSON.stringify(v).slice(0, 400);
+    }
+  } catch (e) {}
+  return String(v);
+}
+
+/** 从上游 JSON 抽出可读错误（兼容 OpenAI / 阿里云百炼 / 方舟） */
+export function extractUpstreamError(data, httpStatus) {
+  if (!data || typeof data !== "object") {
+    return httpStatus ? "HTTP " + httpStatus : "";
+  }
+  const candidates = [
+    data.error && data.error.message,
+    data.error && typeof data.error === "string" ? data.error : null,
+    data.message,
+    data.msg,
+    data.error_msg,
+    data.code && data.message ? data.code + ": " + data.message : null,
+    data.code,
+  ];
+  for (const c of candidates) {
+    const s = stringifyErr(c);
+    if (s && s !== "{}" && s !== "[object Object]") return s;
+  }
+  if (data.raw) return String(data.raw).slice(0, 400);
+  if (httpStatus) return "HTTP " + httpStatus;
+  return "";
+}
+
+/**
+ * 阿里云等可能 HTTP 200 但 body 带 code/message 表示失败
+ */
+function looksLikeBusinessError(data) {
+  if (!data || typeof data !== "object") return false;
+  if (Array.isArray(data.choices) && data.choices.length) return false;
+  const code = data.code != null ? String(data.code) : "";
+  if (!code) return false;
+  if (code === "0" || code === "Success" || code === "success") return false;
+  return true;
+}
+
 /**
  * @returns {Promise<{ ok: boolean, status: number, data: any, latencyMs: number, error?: string }>}
  */
@@ -70,15 +122,21 @@ export async function chatCompletions({
       data = { raw: String(text).slice(0, 800) };
     }
     if (!res.ok) {
-      const errMsg =
-        (data && (data.error?.message || data.message || data.error)) ||
-        ("HTTP " + res.status);
       return {
         ok: false,
         status: res.status,
         data,
         latencyMs,
-        error: String(errMsg),
+        error: extractUpstreamError(data, res.status) || "HTTP " + res.status,
+      };
+    }
+    if (looksLikeBusinessError(data)) {
+      return {
+        ok: false,
+        status: res.status,
+        data,
+        latencyMs,
+        error: extractUpstreamError(data, res.status) || "上游业务错误",
       };
     }
     return { ok: true, status: res.status, data, latencyMs };
@@ -94,14 +152,27 @@ export async function chatCompletions({
 export function extractAssistantText(data) {
   try {
     const c = data && data.choices && data.choices[0] && data.choices[0].message;
-    if (!c) return "";
+    if (!c) {
+      // 少数兼容实现用 choices[0].text
+      const t0 = data && data.choices && data.choices[0] && data.choices[0].text;
+      return t0 != null ? String(t0) : "";
+    }
     if (typeof c.content === "string") return c.content;
     if (Array.isArray(c.content)) {
       return c.content
-        .map((p) => (typeof p === "string" ? p : p && p.text) || "")
+        .map((p) => {
+          if (typeof p === "string") return p;
+          if (!p) return "";
+          if (typeof p.text === "string") return p.text;
+          if (typeof p.content === "string") return p.content;
+          return "";
+        })
         .join("");
     }
-    return String(c.content || "");
+    if (c.content == null && typeof c.reasoning_content === "string") {
+      return c.reasoning_content;
+    }
+    return c.content != null ? String(c.content) : "";
   } catch (e) {
     return "";
   }

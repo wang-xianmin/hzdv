@@ -112,7 +112,36 @@ async function callModel(env, target, message, replyLang) {
     max_tokens: 1024,
     timeoutMs: 60000,
   });
-  return { ...result, reply: extractAssistantText(result.data) || "" };
+  const reply = extractAssistantText(result.data) || "";
+  if (result.ok && !String(reply).trim()) {
+    return {
+      ...result,
+      ok: false,
+      reply: "",
+      error:
+        "上游返回空内容（检查 Model ID「" +
+        (target.modelId || "") +
+        "」是否已在百炼/方舟开通，以及 ALIYUN_MAAS_API_KEY 是否有权访问该模型）",
+    };
+  }
+  return { ...result, reply };
+}
+
+function packChatResult(result, model, via, langInfo, extras) {
+  const ok = !!(result && result.ok && String(result.reply || "").trim());
+  return {
+    success: ok,
+    reply: (result && result.reply) || "",
+    latencyMs: result && result.latencyMs,
+    upstreamStatus: result && result.status,
+    error: ok
+      ? null
+      : (result && result.error) ||
+        (result && result.ok ? "上游返回空内容" : "调用失败"),
+    model: modelMeta(model, via, langInfo),
+    upstream: ok ? undefined : result && result.data,
+    ...(extras || {}),
+  };
 }
 
 function skipNote(item, uiLang) {
@@ -170,19 +199,8 @@ export async function onRequest(context) {
       return jsonResponse({ success: false, error: "模型不存在：" + wantId }, 404);
     }
     const result = await callModel(env, hit, message, replyLang);
-    return jsonResponse(
-      {
-        success: !!result.ok,
-        reply: result.reply || "",
-        latencyMs: result.latencyMs,
-        upstreamStatus: result.status,
-        error: result.error || null,
-        model: modelMeta(hit, "manual", langInfo),
-        notes: [],
-        upstream: result.ok ? undefined : result.data,
-      },
-      result.ok ? 200 : 502
-    );
+    const bodyOut = packChatResult(result, hit, "manual", langInfo, { notes: [] });
+    return jsonResponse(bodyOut, bodyOut.success ? 200 : 502);
   }
 
   const plan = tier1Plan(env, uiLang);
@@ -201,17 +219,14 @@ export async function onRequest(context) {
       latencyMs: result.latencyMs,
     };
     attempts.push(attempt);
-    if (result.ok) {
-      return jsonResponse({
-        success: true,
-        reply: result.reply || "",
-        latencyMs: result.latencyMs,
-        upstreamStatus: result.status,
-        error: null,
-        model: modelMeta(cand, via, langInfo),
-        attempts,
-        notes,
-      });
+    if (result.ok && String(result.reply || "").trim()) {
+      return jsonResponse(
+        packChatResult(result, cand, via, langInfo, { attempts, notes })
+      );
+    }
+    if (result.ok && !result.error) {
+      attempt.error = "上游返回空内容";
+      attempt.ok = false;
     }
     notes.push(failNote(attempt, uiLang));
   }
@@ -223,24 +238,15 @@ export async function onRequest(context) {
       label: fallback.target.label,
       modelId: fallback.target.modelId,
       preference: "registry",
-      ok: !!result.ok,
+      ok: !!(result.ok && String(result.reply || "").trim()),
       error: result.error || null,
       latencyMs: result.latencyMs,
     });
-    return jsonResponse(
-      {
-        success: !!result.ok,
-        reply: result.reply || "",
-        latencyMs: result.latencyMs,
-        upstreamStatus: result.status,
-        error: result.error || null,
-        model: modelMeta(fallback.target, fallback.via, langInfo),
-        attempts,
-        notes,
-        upstream: result.ok ? undefined : result.data,
-      },
-      result.ok ? 200 : 502
-    );
+    const bodyOut = packChatResult(result, fallback.target, fallback.via, langInfo, {
+      attempts,
+      notes,
+    });
+    return jsonResponse(bodyOut, bodyOut.success ? 200 : 502);
   }
 
   return jsonResponse(

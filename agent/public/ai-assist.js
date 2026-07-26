@@ -797,9 +797,25 @@
             modelMeta: j.model || null,
           };
         } else {
+          var errText = j.error || "";
+          if (!errText && j.upstreamStatus) {
+            errText = "HTTP " + j.upstreamStatus;
+          }
+          if (!errText && j.upstream) {
+            try {
+              errText = JSON.stringify(j.upstream).slice(0, 240);
+            } catch (e2) {
+              errText = "";
+            }
+          }
+          if (!errText) {
+            errText = pack.ok
+              ? t("上游返回空内容或无法解析", "Empty or unreadable upstream reply")
+              : t("请求失败（无详细错误）", "Request failed (no detail)");
+          }
           messages[thinkingIdx] = {
             role: "assistant",
-            text: t("调用失败：", "Failed: ") + (j.error || "unknown"),
+            text: t("调用失败：", "Failed: ") + errText,
             model: want,
             modelBadge: (badge || "LLM") + latency,
             modelNote: note,
