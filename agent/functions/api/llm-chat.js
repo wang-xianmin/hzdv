@@ -64,24 +64,37 @@ function registryCandidates(env, models, tierOrder, preferVision) {
 }
 
 /**
- * 归一化前端传来的 OCR 上下文（来自 /api/ocr 的 layout 硬校验结果）。
+ * 归一化前端传来的 OCR/PDF 上下文（来自 /api/ocr 的 layout 硬校验结果）。
  * @returns {{ present: boolean, text: string, floorTier: number, complex: boolean,
- *             needsVision: boolean, reasons: string[], lineCount: number }}
+ *             needsVision: boolean, reasons: string[], lineCount: number, source: string }}
  */
 function normalizeOcrContext(raw) {
   if (!raw || typeof raw !== "object") {
-    return { present: false, text: "", floorTier: 0, complex: false, needsVision: false, reasons: [], lineCount: 0 };
+    return {
+      present: false,
+      text: "",
+      floorTier: 0,
+      complex: false,
+      needsVision: false,
+      reasons: [],
+      lineCount: 0,
+      source: "",
+    };
   }
   const layout = raw.layout && typeof raw.layout === "object" ? raw.layout : {};
   const floor = Number(layout.suggested_tier || layout.suggestedTier || 0);
+  const source =
+    String(raw.source || "").trim() ||
+    (raw.page_count != null || raw.pageCount != null ? "pdf" : "image");
   return {
     present: true,
-    text: String(raw.text || "").slice(0, 6000),
+    text: String(raw.text || "").slice(0, source === "pdf" ? 12000 : 6000),
     floorTier: floor >= 1 && floor <= 3 ? floor : 0,
     complex: !!layout.complex,
     needsVision: !!(layout.needs_vision || layout.needsVision),
     reasons: Array.isArray(layout.reasons) ? layout.reasons.slice(0, 8).map(String) : [],
     lineCount: Number(raw.line_count || raw.lineCount || 0) || 0,
+    source,
   };
 }
 
@@ -100,6 +113,7 @@ function modelMeta(target, via, extra) {
 
 function ocrPromptBlock(ocr, replyLang) {
   if (!ocr || !ocr.present || !String(ocr.text || "").trim()) return "";
+  const isPdf = ocr.source === "pdf";
   const warn = ocr.complex
     ? replyLang === "en"
       ? " The layout check flagged it as complex (" +
@@ -109,15 +123,24 @@ function ocrPromptBlock(ocr, replyLang) {
         (ocr.reasons.join("、") || "复杂") +
         "，阅读顺序可能错乱，请谨慎推断结构，拿不准就说明）"
     : "";
-  return replyLang === "en"
-    ? "\n\nThe user attached an image. OCR (RapidOCR) extracted this text:\n---\n" +
-        ocr.text +
-        "\n---" +
-        warn
-    : "\n\n用户附了一张图片，OCR（RapidOCR）提取到以下文字：\n---\n" +
-        ocr.text +
-        "\n---" +
-        warn;
+  if (replyLang === "en") {
+    return (
+      (isPdf
+        ? "\n\nThe user attached a PDF. Extracted text:\n---\n"
+        : "\n\nThe user attached an image. OCR (RapidOCR) extracted this text:\n---\n") +
+      ocr.text +
+      "\n---" +
+      warn
+    );
+  }
+  return (
+    (isPdf
+      ? "\n\n用户附了一份 PDF，已提取到以下文字：\n---\n"
+      : "\n\n用户附了一张图片，OCR（RapidOCR）提取到以下文字：\n---\n") +
+    ocr.text +
+    "\n---" +
+    warn
+  );
 }
 
 function systemPrompt(replyLang, ocr) {

@@ -180,20 +180,27 @@
       }
     });
     attachStrip.appendChild(chip);
+    var isPdf = a.kind === "pdf";
     if (a.ocrStatus === "running") {
       var tip = document.createElement("span");
       tip.className = "ai-assist__attach-tip";
-      tip.textContent = t("OCR 识别中…", "OCR running…");
+      tip.textContent = isPdf
+        ? t("PDF 提取中…", "Extracting PDF…")
+        : t("OCR 识别中…", "OCR running…");
       attachStrip.appendChild(tip);
     } else if (a.ocrStatus === "done") {
       var tip2 = document.createElement("span");
       tip2.className = "ai-assist__attach-tip";
-      tip2.textContent = t("OCR 完成，可提问", "OCR ready — ask away");
+      tip2.textContent = isPdf
+        ? t("PDF 已提取，可提问", "PDF ready — ask away")
+        : t("OCR 完成，可提问", "OCR ready — ask away");
       attachStrip.appendChild(tip2);
     } else if (a.ocrStatus === "fail") {
       var tip3 = document.createElement("span");
       tip3.className = "ai-assist__attach-tip is-error";
-      tip3.textContent = t("OCR 失败", "OCR failed");
+      tip3.textContent = isPdf
+        ? t("PDF 提取失败", "PDF extract failed")
+        : t("OCR 失败", "OCR failed");
       attachStrip.appendChild(tip3);
     }
   }
@@ -213,42 +220,64 @@
       ext: kind === "pdf" ? "PDF" : fileExt(file.name),
       file: file,
       previewUrl: previewUrl,
-      ocrStatus: kind === "image" ? "running" : "",
+      ocrStatus: kind === "image" || kind === "pdf" ? "running" : "",
     };
     renderAttachment();
     syncSendState();
-    if (kind === "image") runOcrFile(file);
+    if (kind === "image" || kind === "pdf") runOcrFile(file);
   }
 
-  /** 明细报告：文字 + 每行置信度/坐标 + 硬校验结论，用来直观看 RapidOCR 的效果 */
+  /** 明细报告：图片走 RapidOCR；PDF 走 pypdf 文本提取 */
   function ocrReportText(data, en) {
+    var isPdf = data.source === "pdf" || (data.page_count != null && !data.image);
     var lines = Array.isArray(data.lines) ? data.lines : [];
     var lay = data.layout || {};
     var m = lay.metrics || {};
     var img = data.image || {};
     var out = [];
-    out.push(en ? "[RapidOCR + ONNX Runtime]" : "【RapidOCR + ONNX Runtime】");
-
-    var elapse = Array.isArray(data.elapse)
-      ? data.elapse
-          .map(function (x) {
-            return typeof x === "number" ? Math.round(x * 1000) + "ms" : String(x);
-          })
-          .join(" / ")
-      : "";
     out.push(
-      (en ? "image " : "图片 ") +
-        (img.width || "?") +
-        "×" +
-        (img.height || "?") +
-        " · " +
-        (en ? "lines " : "行数 ") +
-        (data.line_count || 0) +
-        (m.mean_score != null
-          ? " · " + (en ? "avg conf " : "平均置信 ") + m.mean_score
-          : "") +
-        (elapse ? " · det/cls/rec " + elapse : "")
+      isPdf
+        ? en
+          ? "[PDF text extract · pypdf]"
+          : "【PDF 文本提取 · pypdf】"
+        : en
+          ? "[RapidOCR + ONNX Runtime]"
+          : "【RapidOCR + ONNX Runtime】"
     );
+
+    if (isPdf) {
+      out.push(
+        (en ? "pages " : "页数 ") +
+          (data.page_count != null ? data.page_count : "?") +
+          " · " +
+          (en ? "chars " : "字符 ") +
+          (m.char_count != null ? m.char_count : String(data.text || "").length) +
+          " · " +
+          (en ? "lines " : "行数 ") +
+          (data.line_count || 0)
+      );
+    } else {
+      var elapse = Array.isArray(data.elapse)
+        ? data.elapse
+            .map(function (x) {
+              return typeof x === "number" ? Math.round(x * 1000) + "ms" : String(x);
+            })
+            .join(" / ")
+        : "";
+      out.push(
+        (en ? "image " : "图片 ") +
+          (img.width || "?") +
+          "×" +
+          (img.height || "?") +
+          " · " +
+          (en ? "lines " : "行数 ") +
+          (data.line_count || 0) +
+          (m.mean_score != null
+            ? " · " + (en ? "avg conf " : "平均置信 ") + m.mean_score
+            : "") +
+          (elapse ? " · det/cls/rec " + elapse : "")
+      );
+    }
 
     out.push(
       (en ? "layout: " : "排版硬校验：") +
@@ -260,21 +289,41 @@
           ? " · " + layoutReasonText(lay.reasons, en)
           : "")
     );
-    out.push(
-      (en ? "metrics: columns " : "指标：栏数 ") +
-        (m.columns != null ? m.columns : "?") +
-        (en ? ", side-by-side " : "，左右并排比 ") +
-        (m.side_by_side_ratio != null ? m.side_by_side_ratio : "?") +
-        (en ? ", skew " : "，倾斜 ") +
-        (m.mean_skew_deg != null ? m.mean_skew_deg + "°" : "?") +
-        (en ? ", height CV " : "，字高变异 ") +
-        (m.height_cv != null ? m.height_cv : "?") +
-        (en ? ", coverage " : "，文字覆盖 ") +
-        (m.text_coverage != null ? m.text_coverage : "?")
-    );
 
-    if (!lines.length) {
-      out.push(en ? "\nNo text recognized." : "\n未识别到文字。");
+    if (!isPdf) {
+      out.push(
+        (en ? "metrics: columns " : "指标：栏数 ") +
+          (m.columns != null ? m.columns : "?") +
+          (en ? ", side-by-side " : "，左右并排比 ") +
+          (m.side_by_side_ratio != null ? m.side_by_side_ratio : "?") +
+          (en ? ", skew " : "，倾斜 ") +
+          (m.mean_skew_deg != null ? m.mean_skew_deg + "°" : "?") +
+          (en ? ", height CV " : "，字高变异 ") +
+          (m.height_cv != null ? m.height_cv : "?") +
+          (en ? ", coverage " : "，文字覆盖 ") +
+          (m.text_coverage != null ? m.text_coverage : "?")
+      );
+    }
+
+    if (!String(data.text || "").trim()) {
+      out.push(
+        isPdf
+          ? en
+            ? "\nNo extractable text (likely a scanned PDF)."
+            : "\n未提取到文字（多半是扫描件 PDF）。"
+          : en
+            ? "\nNo text recognized."
+            : "\n未识别到文字。"
+      );
+      return out.join("\n");
+    }
+
+    if (isPdf) {
+      out.push(en ? "\nExtracted text (preview):" : "\n提取文本（预览）：");
+      out.push(String(data.text).slice(0, 2500));
+      if (String(data.text).length > 2500) {
+        out.push(en ? "\n… truncated" : "\n… 已截断");
+      }
       return out.join("\n");
     }
 
@@ -320,16 +369,23 @@
 
   function ocrRoutingNote(data, en) {
     var lay = data.layout || {};
+    var isPdf = data.source === "pdf";
     if (!String(data.text || "").trim()) {
-      return en
-        ? "Nothing to route — try a clearer image"
-        : "无文字可路由，换张更清晰的图试试";
+      return isPdf
+        ? en
+          ? "No text extracted — scanned PDF may need a vision model"
+          : "未提取到文字——扫描件 PDF 可能需要识图模型"
+        : en
+          ? "Nothing to route — try a clearer image"
+          : "无文字可路由，换张更清晰的图试试";
     }
     return en
-      ? "OCR text goes to the intent classifier; layout check floors routing at tier " +
+      ? (isPdf ? "PDF text" : "OCR text") +
+          " goes to the intent classifier; layout check floors routing at tier " +
           (lay.suggested_tier || "?") +
           ". Ask your question now."
-      : "OCR 文字将交给意图分类器，排版硬校验把梯队下限定在 tier" +
+      : (isPdf ? "PDF 文本" : "OCR 文字") +
+          "将交给意图分类器，排版硬校验把梯队下限定在 tier" +
           (lay.suggested_tier || "?") +
           "。现在提问即可。";
   }
@@ -378,12 +434,15 @@
           text: text,
           line_count: data.line_count || 0,
           layout: data.layout || null,
+          source: data.source || (data.page_count != null ? "pdf" : "image"),
+          page_count: data.page_count || null,
         };
         if (!text) pendingOcr = null;
         pendingAttachment.ocrStatus = "done";
         renderAttachment();
+        var isPdf = (data.source || pendingAttachment.kind) === "pdf";
         appendAssistant(ocrReportText(data, en), {
-          modelBadge: "RapidOCR + ONNX Runtime",
+          modelBadge: isPdf ? "PDF · pypdf" : "RapidOCR + ONNX Runtime",
           modelNote: ocrRoutingNote(data, en),
           mono: true,
         });
@@ -1082,7 +1141,13 @@
 
     var ocrCtx = pendingOcr;
     pendingOcr = null;
-    // 发送后清掉输入框缩略图；OCR 上下文已拷到本次请求
+    var attachWas =
+      pendingAttachment && pendingAttachment.kind
+        ? pendingAttachment.kind
+        : "";
+    var attachStillRunning =
+      pendingAttachment && pendingAttachment.ocrStatus === "running";
+    // 发送后清掉输入框缩略图；OCR/PDF 上下文已拷到本次请求
     clearAttachment({ keepOcr: true });
     pendingOcr = null;
     syncSendState();
@@ -1093,6 +1158,24 @@
         { modelBadge: formatModelBadge(null, want) }
       );
       return;
+    }
+
+    if (attachStillRunning) {
+      appendAssistant(
+        t(
+          "附件还在提取中，请等缩略图旁提示「可提问」后再发送。",
+          "Attachment is still extracting — wait until the chip says ready, then send."
+        )
+      );
+      return;
+    }
+    if (attachWas && !ocrCtx) {
+      appendAssistant(
+        t(
+          "附件未提取到文字（扫描件 PDF 常见）。可换可复制文字的 PDF，或等识图模型接入。",
+          "No text extracted from the attachment (common for scanned PDFs). Try a text PDF, or wait for vision models."
+        )
+      );
     }
 
     appendAssistant(t("思考中…", "Thinking…"), {

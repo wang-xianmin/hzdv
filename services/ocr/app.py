@@ -224,11 +224,105 @@ def analyze_layout(
     }
 
 
+def is_pdf_bytes(data: bytes, filename: str | None = None, content_type: str | None = None) -> bool:
+    if data[:5] == b"%PDF-":
+        return True
+    name = (filename or "").lower()
+    if name.endswith(".pdf"):
+        return True
+    ct = (content_type or "").lower()
+    return "application/pdf" in ct
+
+
+def run_pdf_bytes(data: bytes) -> dict[str, Any]:
+    """提取 PDF 文本（pypdf）。扫描件几乎无文字时标记 needs_vision，后续可走识图梯队。"""
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty PDF")
+    if len(data) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="PDF too large (max 20MB)")
+
+    try:
+        from pypdf import PdfReader
+    except ImportError as e:
+        raise HTTPException(status_code=500, detail=f"pypdf not installed: {e}") from e
+
+    try:
+        reader = PdfReader(io.BytesIO(data))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid PDF: {e}") from e
+
+    pages_out: list[dict[str, Any]] = []
+    lines: list[dict[str, Any]] = []
+    texts: list[str] = []
+    for i, page in enumerate(reader.pages):
+        try:
+            raw = page.extract_text() or ""
+        except Exception:
+            raw = ""
+        page_text = raw.strip()
+        pages_out.append({"page": i + 1, "text": page_text, "chars": len(page_text)})
+        if page_text:
+            texts.append(f"--- page {i + 1} ---\n{page_text}")
+            for ln in page_text.splitlines():
+                s = ln.strip()
+                if s:
+                    lines.append({"text": s, "score": 1.0, "box": None, "page": i + 1})
+
+    full_text = "\n\n".join(texts).strip()
+    page_count = len(reader.pages)
+    # 不含页眉标记的纯正文长度，用来判断是不是扫描件
+    body_chars = sum(len((p.get("text") or "").strip()) for p in pages_out)
+    char_count = len(full_text)
+    # 硬校验（PDF 版）：页数多 / 几乎无字 → 抬梯队或建议识图
+    reasons: list[str] = []
+    if body_chars < 20:
+        reasons.append("sparse_text")
+    if page_count >= 8:
+        reasons.append("dense_text")
+    is_complex = page_count >= 12 or (page_count >= 5 and body_chars > 8000)
+    if is_complex:
+        suggested_tier = 3
+    elif body_chars < 20:
+        suggested_tier = 2
+    elif page_count >= 3 or body_chars > 1500:
+        suggested_tier = 2
+    else:
+        suggested_tier = 1
+    needs_vision = body_chars < 20  # 多半是扫描件
+
+    return {
+        "success": True,
+        "source": "pdf",
+        "text": full_text,
+        "lines": lines[:200],
+        "line_count": len(lines),
+        "pages": pages_out,
+        "page_count": page_count,
+        "elapse": None,
+        "image": None,
+        "layout": {
+            "complex": is_complex,
+            "suggested_tier": suggested_tier,
+            "needs_vision": needs_vision,
+            "reasons": reasons,
+            "metrics": {
+                "page_count": page_count,
+                "char_count": body_chars,
+                "line_count": len(lines),
+            },
+        },
+    }
+
+
 def run_ocr_bytes(data: bytes) -> dict[str, Any]:
     if not data:
         raise HTTPException(status_code=400, detail="Empty image")
     if len(data) > 12 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Image too large (max 12MB)")
+
+    # 误把 PDF 丢进 OCR 时自动改走文本提取
+    if is_pdf_bytes(data):
+        return run_pdf_bytes(data)
 
     engine = get_engine()
     # RapidOCR 接受 ndarray / 路径；用 PIL→numpy 更稳
@@ -259,8 +353,9 @@ def run_ocr_bytes(data: bytes) -> dict[str, Any]:
 
     full_text = "\n".join(texts).strip()
     img_h, img_w = int(arr.shape[0]), int(arr.shape[1])
-    return {
+    out = {
         "success": True,
+        "source": "image",
         "text": full_text,
         "lines": lines,
         "line_count": len(lines),
@@ -268,6 +363,7 @@ def run_ocr_bytes(data: bytes) -> dict[str, Any]:
         "image": {"width": img_w, "height": img_h},
         "layout": analyze_layout(lines, img_w, img_h),
     }
+    return out
 
 
 class Base64Body(BaseModel):
@@ -277,7 +373,7 @@ class Base64Body(BaseModel):
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    return {"success": True, "service": "hzdv-ocr", "ready": True}
+    return {"success": True, "service": "hzdv-ocr", "ready": True, "pdf": True}
 
 
 @app.post("/ocr")
@@ -287,9 +383,14 @@ async def ocr_upload(
 ) -> dict[str, Any]:
     assert_api_key(x_api_key)
     data = await file.read()
-    out = run_ocr_bytes(data)
-    out["filename"] = file.filename or ""
-    out["content_type"] = file.content_type or ""
+    filename = file.filename or ""
+    content_type = file.content_type or ""
+    if is_pdf_bytes(data, filename, content_type):
+        out = run_pdf_bytes(data)
+    else:
+        out = run_ocr_bytes(data)
+    out["filename"] = filename
+    out["content_type"] = content_type
     return out
 
 
@@ -306,6 +407,9 @@ async def ocr_base64(
         data = base64.b64decode(raw, validate=False)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid base64: {e}") from e
-    out = run_ocr_bytes(data)
+    if is_pdf_bytes(data, body.filename):
+        out = run_pdf_bytes(data)
+    else:
+        out = run_ocr_bytes(data)
     out["filename"] = body.filename or ""
     return out
