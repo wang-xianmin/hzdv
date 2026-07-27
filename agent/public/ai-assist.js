@@ -192,8 +192,8 @@
       var tip2 = document.createElement("span");
       tip2.className = "ai-assist__attach-tip";
       tip2.textContent = isPdf
-        ? t("PDF 已提取，可提问", "PDF ready — ask away")
-        : t("OCR 完成，可提问", "OCR ready — ask away");
+        ? t("PDF 已提取（仅预览）", "PDF extracted (preview)")
+        : t("OCR 已完成（仅预览）", "OCR done (preview)");
       attachStrip.appendChild(tip2);
     } else if (a.ocrStatus === "fail") {
       var tip3 = document.createElement("span");
@@ -328,7 +328,7 @@
     }
 
     out.push(en ? "\nLines (text · conf · box):" : "\n逐行结果（文字 · 置信 · 坐标）：");
-    lines.slice(0, 30).forEach(function (ln, i) {
+    lines.slice(0, 80).forEach(function (ln, i) {
       var box = ln.box || [];
       var xs = box.map(function (p) {
         return Math.round(Number(p[0]) || 0);
@@ -357,11 +357,11 @@
           rect
       );
     });
-    if (lines.length > 30) {
+    if (lines.length > 80) {
       out.push(
         en
-          ? "… " + (lines.length - 30) + " more lines"
-          : "… 另有 " + (lines.length - 30) + " 行"
+          ? "… " + (lines.length - 80) + " more lines"
+          : "… 另有 " + (lines.length - 80) + " 行"
       );
     }
     return out.join("\n");
@@ -373,21 +373,21 @@
     if (!String(data.text || "").trim()) {
       return isPdf
         ? en
-          ? "No text extracted — scanned PDF may need a vision model"
-          : "未提取到文字——扫描件 PDF 可能需要识图模型"
+          ? "No extractable text (likely scanned). Not sent to any LLM yet."
+          : "未提取到文字（多半是扫描件）。暂不送任何 LLM。"
         : en
-          ? "Nothing to route — try a clearer image"
-          : "无文字可路由，换张更清晰的图试试";
+          ? "No text recognized. Not sent to any LLM yet."
+          : "未识别到文字。暂不送任何 LLM。";
     }
     return en
-      ? (isPdf ? "PDF text" : "OCR text") +
-          " goes to the intent classifier; layout check floors routing at tier " +
+      ? "Preview only — RapidOCR/PDF extract + layout check. Not sent to LLM yet." +
+          " Suggested floor: tier" +
           (lay.suggested_tier || "?") +
-          ". Ask your question now."
-      : (isPdf ? "PDF 文本" : "OCR 文字") +
-          "将交给意图分类器，排版硬校验把梯队下限定在 tier" +
+          ((lay.reasons || []).length ? " (" + (lay.reasons || []).join(", ") + ")" : "")
+      : "仅预览——RapidOCR/PDF 提取 + 排版硬校验，暂不送 LLM。" +
+          " 建议下限：tier" +
           (lay.suggested_tier || "?") +
-          "。现在提问即可。";
+          ((lay.reasons || []).length ? "（" + (lay.reasons || []).join("、") + "）" : "");
   }
 
   function runOcrFile(file) {
@@ -1138,16 +1138,7 @@
     }
     appendMessage("user", q);
     inputEl.value = "";
-
-    var ocrCtx = pendingOcr;
-    pendingOcr = null;
-    var attachWas =
-      pendingAttachment && pendingAttachment.kind
-        ? pendingAttachment.kind
-        : "";
-    var attachStillRunning =
-      pendingAttachment && pendingAttachment.ocrStatus === "running";
-    // 发送后清掉输入框缩略图；OCR/PDF 上下文已拷到本次请求
+    // 当前阶段：附件提取结果只做预览，不送给 LLM
     clearAttachment({ keepOcr: true });
     pendingOcr = null;
     syncSendState();
@@ -1160,31 +1151,10 @@
       return;
     }
 
-    if (attachStillRunning) {
-      appendAssistant(
-        t(
-          "附件还在提取中，请等缩略图旁提示「可提问」后再发送。",
-          "Attachment is still extracting — wait until the chip says ready, then send."
-        )
-      );
-      return;
-    }
-    if (attachWas && !ocrCtx) {
-      appendAssistant(
-        t(
-          "附件未提取到文字（扫描件 PDF 常见）。可换可复制文字的 PDF，或等识图模型接入。",
-          "No text extracted from the attachment (common for scanned PDFs). Try a text PDF, or wait for vision models."
-        )
-      );
-    }
-
     appendAssistant(t("思考中…", "Thinking…"), {
       modelBadge: want === "auto" ? "Auto …" : formatModelBadge(null, want),
     });
     var thinkingIdx = messages.length - 1;
-
-    var ocrCtx = pendingOcr;
-    pendingOcr = null;
 
     fetch("/api/llm-chat", {
       method: "POST",
@@ -1195,7 +1165,6 @@
         message: q,
         modelId: want,
         lang: currentLang(),
-        ocr: ocrCtx || undefined,
       }),
     })
       .then(function (r) {
