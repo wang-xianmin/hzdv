@@ -362,66 +362,89 @@ def _point_in_bbox(x: float, y: float, bbox: tuple[float, float, float, float], 
 
 
 def _extract_page_visual_order(page: Any) -> tuple[str, list[dict[str, Any]], int]:
-    """按页面视觉位置（上→下）合并表格与正文，避免 pypdf 内容流乱序。"""
-    segments: list[tuple[float, float, str, str, Any]] = []
-    # (top, x0, kind, text, bbox)
-    table_bboxes: list[tuple[float, float, float, float]] = []
+    """按页面视觉位置（上→下）合并表格与正文。
+
+    正文用 pdfplumber 按垂直条带 crop 后 extract_text，避免中英混排
+    因基线差被拆成两行、再按 y 排序把中文挤到英文后面。
+    """
+    page_width = float(page.width)
+    page_height = float(page.height)
 
     found = _find_page_tables(page)
-
+    table_items: list[tuple[float, float, float, float, str]] = []
+    # (top, x0, bottom, x1, body)
     for t in found:
         try:
             rows = t.extract()
             bbox = tuple(float(x) for x in t.bbox)
+            body = _table_to_text(rows or [])
         except Exception:
             continue
-        body = _table_to_text(rows or [])
         if not body:
             continue
-        table_bboxes.append(bbox)  # type: ignore[arg-type]
-        segments.append((bbox[1], bbox[0], "table", "[表格]\n" + body, bbox))
+        x0, top, x1, bottom = bbox
+        table_items.append((top, x0, bottom, x1, body))
+    table_items.sort(key=lambda it: (it[0], it[1]))
 
-    try:
-        words = page.extract_words(use_text_flow=False) or []
-    except Exception:
-        words = []
-
-    # 落在表格框内的字丢掉，避免和表格提取重复
-    outside: list[dict[str, Any]] = []
-    for w in words:
-        cx = (float(w["x0"]) + float(w["x1"])) / 2.0
-        cy = (float(w["top"]) + float(w["bottom"])) / 2.0
-        if any(_point_in_bbox(cx, cy, bb) for bb in table_bboxes):
-            continue
-        outside.append(w)
-
-    # 按 y 聚类成行，再按 x 拼字
-    buckets: dict[int, list[dict[str, Any]]] = {}
-    for w in outside:
-        key = int(round(float(w["top"]) / 2.5) * 2)  # ~2–3pt 容差
-        buckets.setdefault(key, []).append(w)
-
-    for key in sorted(buckets.keys()):
-        ws = sorted(buckets[key], key=lambda x: float(x["x0"]))
-        line = " ".join(str(w.get("text") or "") for w in ws).strip()
-        if not line:
-            continue
-        top = float(ws[0]["top"])
-        x0 = float(ws[0]["x0"])
-        bbox = (
-            float(ws[0]["x0"]),
-            float(ws[0]["top"]),
-            float(ws[-1]["x1"]),
-            float(max(float(w["bottom"]) for w in ws)),
-        )
-        segments.append((top, x0, "text", line, bbox))
-
-    segments.sort(key=lambda s: (s[0], s[1]))
-
-    # 若表格/词都没拿到，回退 pdfplumber 的整页抽取
-    if not segments:
+    def _crop_text(y0: float, y1: float) -> str:
+        """抽取 [y0, y1) 垂直条带内的正文（不含表格）。"""
+        if y1 - y0 < 2:
+            return ""
+        # 略微内缩，减少贴边裁切丢字
+        top = max(0.0, y0)
+        bottom = min(page_height, y1)
+        if bottom - top < 2:
+            return ""
         try:
-            raw = (page.extract_text() or "").strip()
+            cropped = page.crop((0.0, top, page_width, bottom))
+            # 过滤落在任一表格框内的字符，防止条带与表格垂直重叠时重复
+            bboxes = [(it[1], it[0], it[3], it[2]) for it in table_items]  # x0,top,x1,bottom
+
+            def keep(obj: dict[str, Any]) -> bool:
+                if obj.get("object_type") != "char":
+                    return True
+                cx = (float(obj["x0"]) + float(obj["x1"])) / 2.0
+                cy = (float(obj["top"]) + float(obj["bottom"])) / 2.0
+                return not any(_point_in_bbox(cx, cy, bb, pad=2.0) for bb in bboxes)
+
+            filtered = cropped.filter(keep)
+            raw = filtered.extract_text(x_tolerance=3, y_tolerance=5) or ""
+            return raw.strip()
+        except Exception:
+            try:
+                return (page.crop((0.0, top, page_width, bottom)).extract_text() or "").strip()
+            except Exception:
+                return ""
+
+    bands: list[tuple[float, str, str]] = []
+    # (top, kind, text)
+    cursor = 0.0
+    for top, x0, bottom, x1, body in table_items:
+        gap = _crop_text(cursor, top)
+        if gap:
+            bands.append((cursor, "text", gap))
+        bands.append((top, "table", "[表格]\n" + body))
+        cursor = max(cursor, bottom)
+    tail = _crop_text(cursor, page_height)
+    if tail:
+        bands.append((cursor, "text", tail))
+
+    # 没有任何表格时：整页 extract_text（阅读顺序通常最好）
+    if not table_items:
+        try:
+            raw = (page.extract_text(x_tolerance=3, y_tolerance=5) or "").strip()
+        except Exception:
+            raw = ""
+        page_lines = [
+            {"text": ln.strip(), "score": 1.0, "box": None, "kind": "text"}
+            for ln in raw.splitlines()
+            if ln.strip()
+        ]
+        return raw, page_lines, 0
+
+    if not bands:
+        try:
+            raw = (page.extract_text(x_tolerance=3, y_tolerance=5) or "").strip()
         except Exception:
             raw = ""
         page_lines = [
@@ -434,24 +457,14 @@ def _extract_page_visual_order(page: Any) -> tuple[str, list[dict[str, Any]], in
     parts: list[str] = []
     page_lines: list[dict[str, Any]] = []
     table_count = 0
-    for _top, _x0, kind, text, bbox in segments:
+    for _top, kind, text in bands:
         parts.append(text)
-        table_count += 1 if kind == "table" else 0
-        box = None
-        if bbox:
-            box = [
-                [bbox[0], bbox[1]],
-                [bbox[2], bbox[1]],
-                [bbox[2], bbox[3]],
-                [bbox[0], bbox[3]],
-            ]
-        # 表格按行拆开预览
+        if kind == "table":
+            table_count += 1
         for ln in text.splitlines():
             s = ln.strip()
             if s:
-                page_lines.append(
-                    {"text": s, "score": 1.0, "box": box if kind == "table" else box, "kind": kind}
-                )
+                page_lines.append({"text": s, "score": 1.0, "box": None, "kind": kind})
 
     return "\n".join(parts).strip(), page_lines, table_count
 
