@@ -234,70 +234,243 @@ def is_pdf_bytes(data: bytes, filename: str | None = None, content_type: str | N
     return "application/pdf" in ct
 
 
+def _table_to_text(rows: list[list[Any]]) -> str:
+    """把表格行列格式化成可读文本（保留表头）。"""
+    if not rows:
+        return ""
+    cleaned: list[list[str]] = []
+    for row in rows:
+        cells = [("" if c is None else str(c).replace("\n", " ").strip()) for c in (row or [])]
+        if any(cells):
+            cleaned.append(cells)
+    if not cleaned:
+        return ""
+    ncols = max(len(r) for r in cleaned)
+    for r in cleaned:
+        while len(r) < ncols:
+            r.append("")
+    # 用制表符对齐，LLM/预览都好读
+    return "\n".join("\t".join(r) for r in cleaned)
+
+
+def _point_in_bbox(x: float, y: float, bbox: tuple[float, float, float, float], pad: float = 1.0) -> bool:
+    x0, y0, x1, y1 = bbox
+    return (x0 - pad) <= x <= (x1 + pad) and (y0 - pad) <= y <= (y1 + pad)
+
+
+def _extract_page_visual_order(page: Any) -> tuple[str, list[dict[str, Any]], int]:
+    """按页面视觉位置（上→下）合并表格与正文，避免 pypdf 内容流乱序。"""
+    segments: list[tuple[float, float, str, str, Any]] = []
+    # (top, x0, kind, text, bbox)
+    table_bboxes: list[tuple[float, float, float, float]] = []
+
+    try:
+        found = page.find_tables() or []
+    except Exception:
+        found = []
+
+    for t in found:
+        try:
+            rows = t.extract()
+            bbox = tuple(float(x) for x in t.bbox)
+        except Exception:
+            continue
+        body = _table_to_text(rows or [])
+        if not body:
+            continue
+        table_bboxes.append(bbox)  # type: ignore[arg-type]
+        segments.append((bbox[1], bbox[0], "table", "[表格]\n" + body, bbox))
+
+    try:
+        words = page.extract_words(use_text_flow=False) or []
+    except Exception:
+        words = []
+
+    # 落在表格框内的字丢掉，避免和表格提取重复
+    outside: list[dict[str, Any]] = []
+    for w in words:
+        cx = (float(w["x0"]) + float(w["x1"])) / 2.0
+        cy = (float(w["top"]) + float(w["bottom"])) / 2.0
+        if any(_point_in_bbox(cx, cy, bb) for bb in table_bboxes):
+            continue
+        outside.append(w)
+
+    # 按 y 聚类成行，再按 x 拼字
+    buckets: dict[int, list[dict[str, Any]]] = {}
+    for w in outside:
+        key = int(round(float(w["top"]) / 2.5) * 2)  # ~2–3pt 容差
+        buckets.setdefault(key, []).append(w)
+
+    for key in sorted(buckets.keys()):
+        ws = sorted(buckets[key], key=lambda x: float(x["x0"]))
+        line = " ".join(str(w.get("text") or "") for w in ws).strip()
+        if not line:
+            continue
+        top = float(ws[0]["top"])
+        x0 = float(ws[0]["x0"])
+        bbox = (
+            float(ws[0]["x0"]),
+            float(ws[0]["top"]),
+            float(ws[-1]["x1"]),
+            float(max(float(w["bottom"]) for w in ws)),
+        )
+        segments.append((top, x0, "text", line, bbox))
+
+    segments.sort(key=lambda s: (s[0], s[1]))
+
+    # 若表格/词都没拿到，回退 pdfplumber 的整页抽取
+    if not segments:
+        try:
+            raw = (page.extract_text() or "").strip()
+        except Exception:
+            raw = ""
+        page_lines = [
+            {"text": ln.strip(), "score": 1.0, "box": None, "kind": "text"}
+            for ln in raw.splitlines()
+            if ln.strip()
+        ]
+        return raw, page_lines, 0
+
+    parts: list[str] = []
+    page_lines: list[dict[str, Any]] = []
+    table_count = 0
+    for _top, _x0, kind, text, bbox in segments:
+        parts.append(text)
+        table_count += 1 if kind == "table" else 0
+        box = None
+        if bbox:
+            box = [
+                [bbox[0], bbox[1]],
+                [bbox[2], bbox[1]],
+                [bbox[2], bbox[3]],
+                [bbox[0], bbox[3]],
+            ]
+        # 表格按行拆开预览
+        for ln in text.splitlines():
+            s = ln.strip()
+            if s:
+                page_lines.append(
+                    {"text": s, "score": 1.0, "box": box if kind == "table" else box, "kind": kind}
+                )
+
+    return "\n".join(parts).strip(), page_lines, table_count
+
+
 def run_pdf_bytes(data: bytes) -> dict[str, Any]:
-    """提取 PDF 文本（pypdf）。扫描件几乎无文字时标记 needs_vision，后续可走识图梯队。"""
+    """提取 PDF 文本：按视觉阅读顺序（上→下），表格单独抽出后插回原位。
+
+    优先 pdfplumber（带坐标）；失败再回退 pypdf。
+    扫描件几乎无文字时标记 needs_vision。
+    """
     if not data:
         raise HTTPException(status_code=400, detail="Empty PDF")
     if len(data) > 20 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="PDF too large (max 20MB)")
 
-    try:
-        from pypdf import PdfReader
-    except ImportError as e:
-        raise HTTPException(status_code=500, detail=f"pypdf not installed: {e}") from e
-
-    try:
-        reader = PdfReader(io.BytesIO(data))
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid PDF: {e}") from e
-
     pages_out: list[dict[str, Any]] = []
     lines: list[dict[str, Any]] = []
     texts: list[str] = []
-    for i, page in enumerate(reader.pages):
+    table_total = 0
+    engine = "pdfplumber"
+
+    try:
+        import pdfplumber
+    except ImportError:
+        pdfplumber = None  # type: ignore
+        engine = "pypdf"
+
+    if pdfplumber is not None:
         try:
-            raw = page.extract_text() or ""
-        except Exception:
-            raw = ""
-        page_text = raw.strip()
-        pages_out.append({"page": i + 1, "text": page_text, "chars": len(page_text)})
-        if page_text:
-            texts.append(f"--- page {i + 1} ---\n{page_text}")
-            for ln in page_text.splitlines():
-                s = ln.strip()
-                if s:
-                    lines.append({"text": s, "score": 1.0, "box": None, "page": i + 1})
+            with pdfplumber.open(io.BytesIO(data)) as pdf:
+                for i, page in enumerate(pdf.pages):
+                    page_text, page_lines, n_tables = _extract_page_visual_order(page)
+                    table_total += n_tables
+                    pages_out.append(
+                        {
+                            "page": i + 1,
+                            "text": page_text,
+                            "chars": len(page_text),
+                            "tables": n_tables,
+                        }
+                    )
+                    if page_text:
+                        texts.append(f"--- page {i + 1} ---\n{page_text}")
+                    for ln in page_lines:
+                        lines.append({**ln, "page": i + 1})
+                page_count = len(pdf.pages)
+        except Exception as e:
+            # pdfplumber 失败则回退
+            engine = "pypdf"
+            pages_out, lines, texts, page_count, table_total = [], [], [], 0, 0
+            _pdfplumber_err = str(e)
+        else:
+            _pdfplumber_err = ""
+    else:
+        _pdfplumber_err = "pdfplumber not installed"
+
+    if engine == "pypdf" or not pages_out:
+        try:
+            from pypdf import PdfReader
+        except ImportError as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"PDF extractor unavailable ({_pdfplumber_err}); pypdf missing: {e}",
+            ) from e
+        try:
+            reader = PdfReader(io.BytesIO(data))
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid PDF: {e}") from e
+        pages_out, lines, texts = [], [], []
+        for i, page in enumerate(reader.pages):
+            try:
+                raw = page.extract_text() or ""
+            except Exception:
+                raw = ""
+            page_text = raw.strip()
+            pages_out.append({"page": i + 1, "text": page_text, "chars": len(page_text)})
+            if page_text:
+                texts.append(f"--- page {i + 1} ---\n{page_text}")
+                for ln in page_text.splitlines():
+                    s = ln.strip()
+                    if s:
+                        lines.append(
+                            {"text": s, "score": 1.0, "box": None, "page": i + 1, "kind": "text"}
+                        )
+        page_count = len(reader.pages)
+        engine = "pypdf"
+        table_total = 0
 
     full_text = "\n\n".join(texts).strip()
-    page_count = len(reader.pages)
-    # 不含页眉标记的纯正文长度，用来判断是不是扫描件
     body_chars = sum(len((p.get("text") or "").strip()) for p in pages_out)
-    char_count = len(full_text)
-    # 硬校验（PDF 版）：页数多 / 几乎无字 → 抬梯队或建议识图
     reasons: list[str] = []
     if body_chars < 20:
         reasons.append("sparse_text")
     if page_count >= 8:
         reasons.append("dense_text")
-    is_complex = page_count >= 12 or (page_count >= 5 and body_chars > 8000)
+    if table_total >= 1:
+        # 有表格：建议至少第二梯队（纯文本也能读，但结构敏感）
+        reasons.append("table_like")
+    is_complex = page_count >= 12 or (page_count >= 5 and body_chars > 8000) or table_total >= 3
     if is_complex:
         suggested_tier = 3
     elif body_chars < 20:
         suggested_tier = 2
-    elif page_count >= 3 or body_chars > 1500:
+    elif page_count >= 3 or body_chars > 1500 or table_total >= 1:
         suggested_tier = 2
     else:
         suggested_tier = 1
-    needs_vision = body_chars < 20  # 多半是扫描件
+    needs_vision = body_chars < 20
 
     return {
         "success": True,
         "source": "pdf",
+        "engine": engine,
         "text": full_text,
-        "lines": lines[:200],
+        "lines": lines[:300],
         "line_count": len(lines),
         "pages": pages_out,
         "page_count": page_count,
+        "table_count": table_total,
         "elapse": None,
         "image": None,
         "layout": {
@@ -309,6 +482,7 @@ def run_pdf_bytes(data: bytes) -> dict[str, Any]:
                 "page_count": page_count,
                 "char_count": body_chars,
                 "line_count": len(lines),
+                "table_count": table_total,
             },
         },
     }

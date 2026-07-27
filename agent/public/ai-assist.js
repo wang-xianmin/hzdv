@@ -254,7 +254,11 @@
           (m.char_count != null ? m.char_count : String(data.text || "").length) +
           " · " +
           (en ? "lines " : "行数 ") +
-          (data.line_count || 0)
+          (data.line_count || 0) +
+          (data.table_count != null
+            ? " · " + (en ? "tables " : "表格 ") + data.table_count
+            : "") +
+          (data.engine ? " · engine " + data.engine : "")
       );
     } else {
       var elapse = Array.isArray(data.elapse)
@@ -441,8 +445,11 @@
         pendingAttachment.ocrStatus = "done";
         renderAttachment();
         var isPdf = (data.source || pendingAttachment.kind) === "pdf";
+        var engine = data.engine ? String(data.engine) : isPdf ? "pdfplumber" : "";
         appendAssistant(ocrReportText(data, en), {
-          modelBadge: isPdf ? "PDF · pypdf" : "RapidOCR + ONNX Runtime",
+          modelBadge: isPdf
+            ? "PDF · " + (engine || "pdfplumber")
+            : "RapidOCR + ONNX Runtime",
           modelNote: ocrRoutingNote(data, en),
           mono: true,
         });
