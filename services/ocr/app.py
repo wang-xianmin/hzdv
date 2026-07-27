@@ -11,6 +11,7 @@ import base64
 import io
 import math
 import os
+import re
 import statistics
 from typing import Any
 
@@ -253,6 +254,108 @@ def _table_to_text(rows: list[list[Any]]) -> str:
     return "\n".join("\t".join(r) for r in cleaned)
 
 
+_LIST_ROW_RE = re.compile(
+    r"^("
+    r"\d+[\.\)、]\s*"  # 1.  2)  3、
+    r"|[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮]"
+    r"|[○●•·◦▪️►▶︎]\s*"
+    r"|第\d+[、.\)]\s*"
+    r")"
+)
+
+
+def _is_real_table(rows: list[list[Any]] | None) -> bool:
+    """过滤假表格：灰底列表、单列段落、大量空单元格等。
+
+    真表格（如「图名称 / 原始尺寸 / …」）通常 ≥2 列、多行有实质内容。
+    """
+    if not rows or len(rows) < 2:
+        return False
+
+    cleaned: list[list[str]] = []
+    for row in rows:
+        cells = [("" if c is None else str(c).replace("\n", " ").strip()) for c in (row or [])]
+        if any(cells):
+            cleaned.append(cells)
+    if len(cleaned) < 2:
+        return False
+
+    ncols = max(len(r) for r in cleaned)
+    if ncols < 2:
+        return False
+    for r in cleaned:
+        while len(r) < ncols:
+            r.append("")
+
+    # 至少两列在多数行里有内容
+    strong_cols = 0
+    for col in range(ncols):
+        filled = sum(1 for r in cleaned if r[col])
+        if filled >= max(2, (len(cleaned) + 1) // 2):
+            strong_cols += 1
+    if strong_cols < 2:
+        return False
+
+    total_cells = ncols * len(cleaned)
+    empty_cells = sum(1 for r in cleaned for c in r if not c)
+    if total_cells and empty_cells / total_cells > 0.65:
+        return False
+
+    # 多数行只有 1 个非空格，且像「1. xxx / ① xxx」→ 列表，不是表
+    list_like = 0
+    sparse = 0
+    for r in cleaned:
+        nonempty = [c for c in r if c]
+        if len(nonempty) <= 1:
+            sparse += 1
+            t = nonempty[0] if nonempty else ""
+            if _LIST_ROW_RE.match(t):
+                list_like += 1
+    if sparse >= len(cleaned) * 0.6 and list_like >= max(1, len(cleaned) // 3):
+        return False
+    if sparse >= len(cleaned) * 0.75:
+        return False
+
+    # 整表拼起来像编号列表（pdfplumber 有时把一段列表塞进 1～2 列）
+    joined = " ".join(c for r in cleaned for c in r if c)
+    if ncols <= 2 and len(_LIST_ROW_RE.findall(joined)) >= 2 and strong_cols < 3:
+        # 有 ≥2 个列表标记，且没有稳定的第三列 → 当列表
+        return False
+
+    return True
+
+
+def _find_page_tables(page: Any) -> list[Any]:
+    """优先用线框策略找表；找不到再退回默认策略，但一律过 _is_real_table。"""
+    candidates: list[Any] = []
+    line_settings = {
+        "vertical_strategy": "lines",
+        "horizontal_strategy": "lines",
+        "intersection_tolerance": 8,
+        "snap_tolerance": 4,
+    }
+    try:
+        candidates = list(page.find_tables(table_settings=line_settings) or [])
+    except Exception:
+        candidates = []
+
+    if not candidates:
+        try:
+            candidates = list(page.find_tables() or [])
+        except Exception:
+            candidates = []
+
+    kept: list[Any] = []
+    for t in candidates:
+        try:
+            rows = t.extract()
+        except Exception:
+            continue
+        if _is_real_table(rows):
+            kept.append(t)
+    return kept
+
+
 def _point_in_bbox(x: float, y: float, bbox: tuple[float, float, float, float], pad: float = 1.0) -> bool:
     x0, y0, x1, y1 = bbox
     return (x0 - pad) <= x <= (x1 + pad) and (y0 - pad) <= y <= (y1 + pad)
@@ -264,10 +367,7 @@ def _extract_page_visual_order(page: Any) -> tuple[str, list[dict[str, Any]], in
     # (top, x0, kind, text, bbox)
     table_bboxes: list[tuple[float, float, float, float]] = []
 
-    try:
-        found = page.find_tables() or []
-    except Exception:
-        found = []
+    found = _find_page_tables(page)
 
     for t in found:
         try:
