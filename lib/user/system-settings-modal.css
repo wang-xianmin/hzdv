@@ -17,7 +17,7 @@
 }
 
 .settings-modal-sheet {
-  width: min(520px, calc(100vw - 32px));
+  width: min(580px, calc(100vw - 32px));
   background: #fff;
   border-radius: 20px;
   box-shadow: 0 8px 40px rgba(0, 0, 0, 0.18);
@@ -71,6 +71,23 @@
   color: #c62828;
 }
 
+#settingsGrid .ag-cell.settings-cell-category {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+#settingsGrid .settings-group-toggle {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+#settingsGrid .ag-row.settings-row-group {
+  background: #f3f5f8;
+  font-weight: 600;
+}
+#settingsGrid .ag-row.settings-row-group .ag-cell {
+  cursor: pointer;
+}
 #settingsGrid .ag-cell {
   display: flex;
   align-items: center;

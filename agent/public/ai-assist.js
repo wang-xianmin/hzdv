@@ -211,8 +211,8 @@
       var tip2 = document.createElement("span");
       tip2.className = "ai-assist__attach-tip";
       tip2.textContent = isPdf
-        ? t("PDF 已提取（仅预览）", "PDF extracted (preview)")
-        : t("OCR 已完成（仅预览）", "OCR done (preview)");
+        ? t("PDF 已提取，下一条将送 LLM", "PDF extracted — next message → LLM")
+        : t("OCR 已完成，下一条将送 LLM", "OCR done — next message → LLM");
       attachStrip.appendChild(tip2);
     } else if (a.ocrStatus === "fail") {
       var tip3 = document.createElement("span");
@@ -355,7 +355,14 @@
       return out.join("\n");
     }
 
-    out.push(en ? "\nLines (text · conf · box):" : "\n逐行结果（文字 · 置信 · 坐标）：");
+    var llmText = String(data.text_llm || data.text || "").trim();
+    out.push(en ? "\nText for LLM:" : "\n送模文本：");
+    out.push(llmText.slice(0, OCR_PREVIEW_CHARS));
+    if (llmText.length > OCR_PREVIEW_CHARS) {
+      out.push(en ? "\n… truncated" : "\n… 已截断");
+    }
+
+    out.push(en ? "\nLines (debug · conf · box):" : "\n逐行明细（调试 · 置信 · 坐标）：");
     lines.slice(0, OCR_PREVIEW_LINES).forEach(function (ln, i) {
       var box = ln.box || [];
       var xs = box.map(function (p) {

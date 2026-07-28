@@ -226,6 +226,62 @@ def analyze_layout(
     }
 
 
+def _ocr_line_sort_key(ln: dict[str, Any]) -> tuple[float, float]:
+    """阅读顺序：先上后下，同行偏左优先。"""
+    box = ln.get("box")
+    if not box:
+        return (1e9, 1e9)
+    x0, _x1, y0, y1 = _box_bounds(box)
+    return ((y0 + y1) * 0.5, x0)
+
+
+def image_lines_to_llm_text(lines: list[dict[str, Any]]) -> str:
+    """简单图 → 给 LLM 的纯文本：按阅读顺序，不含置信度/坐标。
+
+    1) 按 y 聚成视觉行（同行内按 x 拼接）
+    2) 行与行之间换行
+    """
+    usable = [ln for ln in (lines or []) if str(ln.get("text") or "").strip()]
+    if not usable:
+        return ""
+
+    items: list[dict[str, Any]] = []
+    heights: list[float] = []
+    for ln in usable:
+        box = ln.get("box")
+        text = str(ln.get("text") or "").strip()
+        if not box:
+            items.append({"text": text, "yc": 1e9, "x0": 1e9, "h": 20.0})
+            continue
+        x0, _x1, y0, y1 = _box_bounds(box)
+        h = max(1.0, y1 - y0)
+        heights.append(h)
+        items.append({"text": text, "yc": (y0 + y1) * 0.5, "x0": x0, "h": h})
+
+    med_h = statistics.median(heights) if heights else 20.0
+    row_tol = med_h * 0.55
+    items.sort(key=lambda it: (it["yc"], it["x0"]))
+
+    rows: list[list[dict[str, Any]]] = []
+    for it in items:
+        if rows and abs(it["yc"] - rows[-1][0]["yc"]) <= row_tol:
+            rows[-1].append(it)
+        else:
+            rows.append([it])
+
+    out_lines: list[str] = []
+    for row in rows:
+        row.sort(key=lambda it: it["x0"])
+        parts = [it["text"] for it in row]
+        sample = "".join(parts)
+        cjk = sum(1 for ch in sample if "\u4e00" <= ch <= "\u9fff")
+        joiner = "" if cjk >= max(1, len(sample) // 4) else " "
+        line = joiner.join(parts).strip()
+        if line:
+            out_lines.append(line)
+    return "\n".join(out_lines).strip()
+
+
 def is_pdf_bytes(data: bytes, filename: str | None = None, content_type: str | None = None) -> bool:
     if data[:5] == b"%PDF-":
         return True
@@ -1462,12 +1518,10 @@ def run_ocr_bytes(data: bytes) -> dict[str, Any]:
 
     result, elapse = engine(arr)
     lines: list[dict[str, Any]] = []
-    texts: list[str] = []
     if result:
         for item in result:
             # item: [box, text, score]
             box, text, score = item[0], item[1], item[2]
-            texts.append(str(text))
             lines.append(
                 {
                     "text": str(text),
@@ -1476,12 +1530,16 @@ def run_ocr_bytes(data: bytes) -> dict[str, Any]:
                 }
             )
 
-    full_text = "\n".join(texts).strip()
+    # 预览用：保持引擎原始行序；送模用：阅读顺序整理后的纯文本
+    full_text = "\n".join(str(ln["text"]) for ln in lines).strip()
+    text_llm = image_lines_to_llm_text(lines) or full_text
     img_h, img_w = int(arr.shape[0]), int(arr.shape[1])
     out = {
         "success": True,
         "source": "image",
+        "engine": "rapidocr",
         "text": full_text,
+        "text_llm": text_llm,
         "lines": lines,
         "line_count": len(lines),
         "elapse": elapse,
