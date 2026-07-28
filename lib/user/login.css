@@ -196,7 +196,7 @@
 
 .lreg-root .register-dialog {
     position: relative;
-    width: min(600px, 94vw);
+    width: min(550px, 94vw);
     margin: 0 auto;
     border-radius: 16px;
     background: #fff;
@@ -553,7 +553,7 @@
 
 .lreg-root .register-kv-preview {
     display: none;
-    width: min(600px, 94vw);
+    width: min(550px, 94vw);
     margin: 0 auto 12px;
     padding: 12px 14px;
     box-sizing: border-box;

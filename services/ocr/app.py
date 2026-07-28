@@ -235,11 +235,35 @@ def _ocr_line_sort_key(ln: dict[str, Any]) -> tuple[float, float]:
     return ((y0 + y1) * 0.5, x0)
 
 
+def _cluster_1d_centers(values: list[float], gap: float) -> list[float]:
+    """一维聚类，返回各簇中心（升序）。"""
+    if not values:
+        return []
+    vs = sorted(float(v) for v in values)
+    clusters: list[list[float]] = [[vs[0]]]
+    for v in vs[1:]:
+        if v - clusters[-1][-1] <= gap:
+            clusters[-1].append(v)
+        else:
+            clusters.append([v])
+    return [statistics.fmean(c) for c in clusters]
+
+
+def _join_cell_fragments(parts: list[str]) -> str:
+    sample = "".join(parts)
+    if not sample:
+        return ""
+    cjk = sum(1 for ch in sample if "\u4e00" <= ch <= "\u9fff")
+    joiner = "" if cjk >= max(1, len(sample) // 4) else " "
+    return joiner.join(parts).strip()
+
+
 def image_lines_to_llm_text(lines: list[dict[str, Any]]) -> str:
     """简单图 → 给 LLM 的纯文本：按阅读顺序，不含置信度/坐标。
 
-    1) 按 y 聚成视觉行（同行内按 x 拼接）
-    2) 行与行之间换行
+    - 按 y 聚成视觉行
+    - 同行内若 x 间距大（多列），用 | 或 Markdown 表区分列
+    - 间距小的碎片才拼成同一格（避免中文把「文件名+提交说明」粘死）
     """
     usable = [ln for ln in (lines or []) if str(ln.get("text") or "").strip()]
     if not usable:
@@ -247,21 +271,31 @@ def image_lines_to_llm_text(lines: list[dict[str, Any]]) -> str:
 
     items: list[dict[str, Any]] = []
     heights: list[float] = []
+    widths: list[float] = []
     for ln in usable:
         box = ln.get("box")
         text = str(ln.get("text") or "").strip()
         if not box:
-            items.append({"text": text, "yc": 1e9, "x0": 1e9, "h": 20.0})
+            items.append(
+                {"text": text, "yc": 1e9, "x0": 1e9, "x1": 1e9, "h": 20.0, "w": 20.0}
+            )
             continue
-        x0, _x1, y0, y1 = _box_bounds(box)
+        x0, x1, y0, y1 = _box_bounds(box)
         h = max(1.0, y1 - y0)
+        w = max(1.0, x1 - x0)
         heights.append(h)
-        items.append({"text": text, "yc": (y0 + y1) * 0.5, "x0": x0, "h": h})
+        widths.append(w)
+        items.append(
+            {"text": text, "yc": (y0 + y1) * 0.5, "x0": x0, "x1": x1, "h": h, "w": w}
+        )
 
     med_h = statistics.median(heights) if heights else 20.0
+    med_w = statistics.median(widths) if widths else 40.0
     row_tol = med_h * 0.55
-    items.sort(key=lambda it: (it["yc"], it["x0"]))
+    # 列间隙：明显大于字宽才算换列（GitHub 文件列表名↔提交说明间距很大）
+    col_gap = max(med_w * 1.2, med_h * 2.5, 28.0)
 
+    items.sort(key=lambda it: (it["yc"], it["x0"]))
     rows: list[list[dict[str, Any]]] = []
     for it in items:
         if rows and abs(it["yc"] - rows[-1][0]["yc"]) <= row_tol:
@@ -269,16 +303,65 @@ def image_lines_to_llm_text(lines: list[dict[str, Any]]) -> str:
         else:
             rows.append([it])
 
+    # 用各行单元格的 x0 聚类，判断是否稳定多列表格
+    x0s = [it["x0"] for row in rows for it in row if it["x0"] < 1e8]
+    col_centers = _cluster_1d_centers(x0s, gap=col_gap * 0.85) if x0s else []
+    multi_col = len(col_centers) >= 2 and sum(1 for r in rows if len(r) >= 2) >= 2
+
+    def nearest_col(x0: float) -> int:
+        best_i, best_d = 0, abs(x0 - col_centers[0])
+        for i, c in enumerate(col_centers):
+            d = abs(x0 - c)
+            if d < best_d:
+                best_i, best_d = i, d
+        return best_i
+
+    if multi_col:
+        n_col = len(col_centers)
+        grid: list[list[str]] = []
+        for row in rows:
+            row.sort(key=lambda it: it["x0"])
+            cells: list[list[str]] = [[] for _ in range(n_col)]
+            for it in row:
+                cells[nearest_col(it["x0"])].append(it["text"])
+            grid.append([_join_cell_fragments(c) for c in cells])
+
+        # 去掉全空列
+        keep = [i for i in range(n_col) if any(r[i] for r in grid)]
+        if len(keep) >= 2:
+            grid = [[r[i] for i in keep] for r in grid]
+            headers = [f"列{i + 1}" for i in range(len(keep))]
+            # 若首行像表头且格数齐，可直接当内容行（GitHub 顶栏也当一行）
+            md = ["| " + " | ".join(headers) + " |", "| " + " | ".join("---" for _ in headers) + " |"]
+            for r in grid:
+                if any(r):
+                    md.append("| " + " | ".join(c or " " for c in r) + " |")
+            flat = ["[表格·扁平·供LLM]"]
+            for ri, r in enumerate(grid):
+                if not any(r):
+                    continue
+                flat.append(f"记录{ri + 1}：")
+                for ci, c in enumerate(r):
+                    if c:
+                        flat.append(f"  - {headers[ci]}: {c}")
+            return "\n".join(md) + "\n\n" + "\n".join(flat)
+
+    # 非稳定表格：同行按 x 间距决定「拼格」还是「分列」
     out_lines: list[str] = []
     for row in rows:
         row.sort(key=lambda it: it["x0"])
-        parts = [it["text"] for it in row]
-        sample = "".join(parts)
-        cjk = sum(1 for ch in sample if "\u4e00" <= ch <= "\u9fff")
-        joiner = "" if cjk >= max(1, len(sample) // 4) else " "
-        line = joiner.join(parts).strip()
-        if line:
-            out_lines.append(line)
+        cells: list[list[str]] = [[row[0]["text"]]]
+        for prev, cur in zip(row, row[1:]):
+            gap = cur["x0"] - prev["x1"]
+            if gap >= col_gap:
+                cells.append([cur["text"]])
+            else:
+                cells[-1].append(cur["text"])
+        parts = [_join_cell_fragments(c) for c in cells if c]
+        if len(parts) >= 2:
+            out_lines.append(" | ".join(parts))
+        elif parts:
+            out_lines.append(parts[0])
     return "\n".join(out_lines).strip()
 
 

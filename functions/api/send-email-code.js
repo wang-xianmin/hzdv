@@ -12,12 +12,61 @@
  */
 
 import { pickKvBinding } from "../lib/kv-binding.js";
+import {
+  listKvUserStorageKeys,
+  readKvUserByStorageKey,
+} from "../lib/kv-secure.js";
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { "Content-Type": "application/json; charset=utf-8" },
   });
+}
+
+function normalizeEmail(v) {
+  const raw = String(v || "").trim().toLowerCase();
+  if (!raw || raw.indexOf("@") < 0) return raw;
+  const at = raw.lastIndexOf("@");
+  let local = raw.slice(0, at);
+  let domain = raw.slice(at + 1);
+  if (domain === "googlemail.com") domain = "gmail.com";
+  if (domain === "gmail.com") {
+    const plus = local.indexOf("+");
+    if (plus >= 0) local = local.slice(0, plus);
+    local = local.replace(/\./g, "");
+  }
+  return local + "@" + domain;
+}
+
+async function resolveIdentityByEmail(kv, env, email) {
+  const want = normalizeEmail(email);
+  if (!want) return null;
+  let keys = [];
+  try {
+    keys = await listKvUserStorageKeys(kv);
+  } catch (e) {
+    console.error("[send-email-code] list users failed:", e);
+    return null;
+  }
+  for (const sk of keys) {
+    try {
+      const row = await readKvUserByStorageKey(kv, env, sk);
+      if (!row || !row.value) continue;
+      if (normalizeEmail(row.value.email) !== want) continue;
+      const logical = String(row.logicalKey || "");
+      const phone = logical.indexOf("phone:") === 0 ? logical.slice(6) : "";
+      if (!phone) continue;
+      return {
+        phone,
+        username: String(row.value.name || "").trim(),
+        email: String(row.value.email || email).trim(),
+      };
+    } catch (e) {
+      continue;
+    }
+  }
+  return null;
 }
 
 function randomToken() {
@@ -124,8 +173,8 @@ export async function onRequest(context) {
 
   if (wantMagic) {
     const sessionId = String(body.sessionId || "").trim();
-    const phone = String(body.phone || "").trim();
-    const username = String(body.username || "").trim();
+    let phone = String(body.phone || "").trim();
+    let username = String(body.username || "").trim();
     if (!sessionId) {
       return jsonResponse({ error: "Missing sessionId" }, 400);
     }
@@ -133,6 +182,18 @@ export async function onRequest(context) {
     const kv = pickKvBinding(env);
     if (!kv) {
       return jsonResponse({ success: false, error: "Server KV not configured" }, 503);
+    }
+
+    if (!phone) {
+      const found = await resolveIdentityByEmail(kv, env, email);
+      if (!found) {
+        return jsonResponse(
+          { success: false, error: "该邮箱未注册，请先注册或改用密码登录" },
+          404
+        );
+      }
+      phone = found.phone;
+      if (!username) username = found.username;
     }
 
     const reqUrl = new URL(request.url);
@@ -196,6 +257,9 @@ export async function onRequest(context) {
       success: true,
       mode: "magic_link",
       message: "登录确认邮件已发送，请查收邮箱并点击按钮",
+      phone,
+      username,
+      email,
     });
   }
 
