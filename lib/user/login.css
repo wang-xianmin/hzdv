@@ -296,7 +296,7 @@
 .lreg-root .register-col-form {
     flex: 1;
     min-width: 200px;
-    padding: 16px 20px 20px;
+    padding: 14px 20px 16px;
     box-sizing: border-box;
 }
 
@@ -310,33 +310,34 @@
 .lreg-root .register-qr-wrap {
     background: #fff;
     border-radius: 8px;
-    padding: 12px;
+    padding: 6px;
     display: flex;
     align-items: center;
     justify-content: center;
-    min-height: 168px;
+    min-height: 112px;
     border: 1px solid #f0f0f0;
 }
 
 .lreg-root .register-qr-wrap img {
     display: block;
+    width: 100px;
+    height: 100px;
     max-width: 100%;
-    height: auto;
 }
 
 .lreg-root .register-qr-hint {
     color: #999;
-    font-size: 12px;
-    margin: 12px 8px 0;
-    line-height: 1.5;
+    font-size: 11px;
+    margin: 6px 4px 0;
+    line-height: 1.4;
 }
 
 .lreg-root .register-qr-countdown {
     color: #666;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
-    margin: 8px 8px 0;
-    line-height: 1.5;
+    margin: 4px 4px 0;
+    line-height: 1.4;
     font-variant-numeric: tabular-nums;
 }
 
@@ -418,6 +419,7 @@
 
 .lreg-root .register-tab-panel {
     display: none;
+    min-height: 268px;
 }
 
 .lreg-root .register-tab-panel.active {
