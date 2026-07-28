@@ -1,7 +1,9 @@
 /**
- * GET /api/email-login-confirm?token=...
- * 用户点击邮件按钮后进入此页：校验 token，核对 KV 中手机号与邮箱是否一致，
- * 一致则标记扫码会话已确认，电脑端轮询后完成登录；不一致则提示「手机号错！」。
+ * /api/email-login-confirm?token=...
+ *
+ * GET：仅展示确认页（不消费 token），避免邮件客户端预取链接导致「链接已失效」
+ *      并误触发电脑端登录。
+ * POST：用户点击「确认登录」后消费 token，核对 KV 手机号/邮箱，标记会话已确认。
  */
 
 import { pickKvBinding, kvBindingHint } from "../lib/kv-binding.js";
@@ -22,6 +24,9 @@ function htmlPage(title, bodyHtml, status = 200) {
     p{margin:0;line-height:1.6;color:#b8bdc8;font-size:0.95rem;}
     .ok{color:#3dd68c;}
     .err{color:#ff7b72;}
+    .btn{display:inline-block;margin-top:22px;border:0;border-radius:999px;padding:12px 28px;
+      background:#ff5a1f;color:#fff;font-size:15px;font-weight:700;cursor:pointer;text-decoration:none;}
+    .btn:disabled{opacity:.6;cursor:default;}
   </style>
 </head>
 <body><div class="card">${bodyHtml}</div></body>
@@ -49,6 +54,14 @@ function normalizeEmail(v) {
 
 function normalizePhoneDigits(phone) {
   return String(phone || "").replace(/\D/g, "");
+}
+
+function escapeHtml(s) {
+  return String(s || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 async function phoneEmailMatchInKv(kv, env, phone, email) {
@@ -104,6 +117,19 @@ async function writeSessionPhoneMismatch(kv, sessionId, link) {
   await kv.put(sessionId, JSON.stringify(sessionData), { expirationTtl: 600 });
 }
 
+async function readLinkPayload(kv, token) {
+  const raw = await kv.get("elink:" + token);
+  if (!raw) return { ok: false, missing: true };
+  let link;
+  try {
+    link = JSON.parse(raw);
+  } catch (e) {
+    link = null;
+  }
+  if (!link || !link.sessionId) return { ok: false, invalid: true };
+  return { ok: true, link };
+}
+
 export async function onRequest(context) {
   const { request, env } = context;
   if (request.method !== "GET" && request.method !== "POST") {
@@ -111,7 +137,22 @@ export async function onRequest(context) {
   }
 
   const url = new URL(request.url);
-  const token = String(url.searchParams.get("token") || "").trim();
+  let token = String(url.searchParams.get("token") || "").trim();
+  if (!token && request.method === "POST") {
+    try {
+      const ct = String(request.headers.get("content-type") || "");
+      if (ct.indexOf("application/x-www-form-urlencoded") >= 0) {
+        const form = await request.formData();
+        token = String(form.get("token") || "").trim();
+      } else if (ct.indexOf("application/json") >= 0) {
+        const body = await request.json();
+        token = String((body && body.token) || "").trim();
+      }
+    } catch (e) {
+      token = "";
+    }
+  }
+
   if (!token) {
     return htmlPage(
       "链接无效",
@@ -129,22 +170,15 @@ export async function onRequest(context) {
     );
   }
 
-  const raw = await kv.get("elink:" + token);
-  if (!raw) {
+  const loaded = await readLinkPayload(kv, token);
+  if (loaded.missing) {
     return htmlPage(
       "链接已失效",
-      "<h1 class='err'>链接已失效</h1><p>请回到电脑端重新扫码，并查收新的确认邮件。</p>",
+      "<h1 class='err'>链接已失效</h1><p>请回到电脑端重新扫码，并查收新的确认邮件。<br/>若刚才已点过确认，请直接查看电脑端是否已登录。</p>",
       410
     );
   }
-
-  let link;
-  try {
-    link = JSON.parse(raw);
-  } catch (e) {
-    link = null;
-  }
-  if (!link || !link.sessionId) {
+  if (!loaded.ok) {
     return htmlPage(
       "链接无效",
       "<h1 class='err'>链接无效</h1><p>请回到电脑端重新扫码登录。</p>",
@@ -152,7 +186,24 @@ export async function onRequest(context) {
     );
   }
 
-  // 一次性链接：无论成功失败都消费，避免重复点击绕过
+  // GET：只展示确认按钮，绝不消费 token（防邮件安全扫描预取）
+  if (request.method === "GET") {
+    const safeToken = escapeHtml(token);
+    return htmlPage(
+      "确认登录",
+      `<h1>确认登录 HZDV</h1>
+       <p>这是最后一步。请点击下方按钮，电脑端才会完成扫码登录。</p>
+       <form method="POST" action="/api/email-login-confirm">
+         <input type="hidden" name="token" value="${safeToken}" />
+         <button class="btn" type="submit">确认登录</button>
+       </form>
+       <p style="margin-top:16px;font-size:12px;color:#888;">若非本人操作，请关闭本页并忽略邮件。</p>`
+    );
+  }
+
+  const link = loaded.link;
+
+  // POST：消费 token 并确认
   await kv.delete("elink:" + token);
 
   const matched = await phoneEmailMatchInKv(kv, env, link.phone, link.email);
@@ -169,6 +220,7 @@ export async function onRequest(context) {
     scanned: true,
     emailLoginConfirmed: true,
     emailLoginPhoneMismatch: false,
+    confirmMethod: "post",
     email: link.email || "",
     phone: normalizePhoneDigits(link.phone) || link.phone || "",
     username: link.username || "",

@@ -45,11 +45,23 @@
       line-height: 1.55;
       color: var(--muted);
     }
-    #turnstileMount {
-      margin: 18px auto 0;
-      display: flex;
-      justify-content: center;
-      min-height: 65px;
+    #confirmBtn {
+      margin-top: 22px;
+      border: 0;
+      border-radius: 999px;
+      padding: 12px 28px;
+      background: #ff5a1f;
+      color: #fff;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    #confirmBtn:disabled {
+      opacity: 0.55;
+      cursor: default;
+    }
+    #confirmBtn[hidden] {
+      display: none;
     }
     .status {
       margin-top: 18px;
@@ -66,14 +78,13 @@
       color: #999;
     }
   </style>
-  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
 </head>
 <body>
   <div class="card">
     <h1>扫码登录确认</h1>
-    <p id="desc">请先完成人机验证；通过后才会通知电脑端发送确认邮件。</p>
-    <div id="turnstileMount" aria-label="人机验证"></div>
-    <p class="status" id="status">加载验证组件…</p>
+    <p id="desc">请点击下方按钮，通知电脑端继续登录。</p>
+    <button type="button" id="confirmBtn">确认登录</button>
+    <p class="status" id="status"></p>
     <p class="hint" id="hint"></p>
   </div>
   <script>
@@ -87,9 +98,8 @@
       var statusEl = document.getElementById("status");
       var descEl = document.getElementById("desc");
       var hintEl = document.getElementById("hint");
-      var mountEl = document.getElementById("turnstileMount");
+      var confirmBtn = document.getElementById("confirmBtn");
       var posting = false;
-      var widgetId = null;
 
       function setStatus(text, kind) {
         statusEl.textContent = text || "";
@@ -100,24 +110,29 @@
       if (!sessionId) {
         descEl.textContent = "链接无效：缺少 sessionId。";
         setStatus("请返回电脑端重新扫码", "err");
+        if (confirmBtn) confirmBtn.hidden = true;
         return;
       }
 
       hintEl.textContent = "会话：" + sessionId.slice(0, 8) + "…";
 
-      function postScanned(turnstileToken) {
+      function postConfirm() {
         if (posting) return;
         posting = true;
-        setStatus("验证通过，正在回传扫码结果…", "");
+        if (confirmBtn) {
+          confirmBtn.disabled = true;
+          confirmBtn.textContent = "提交中…";
+        }
+        setStatus("正在通知电脑端…", "");
         fetch("/api/scan-login", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           cache: "no-store",
           body: JSON.stringify({
             sessionId: sessionId,
-            turnstileToken: turnstileToken || "",
             data: {
               scanned: true,
+              mobileConfirmed: true,
               scannedAt: Date.now(),
               ua: navigator.userAgent || "",
             },
@@ -136,83 +151,39 @@
           })
           .then(function (x) {
             if (x.ok && x.j && x.j.success === true) {
-              if (mountEl) mountEl.style.display = "none";
-              descEl.textContent = "扫码已成功回传到电脑端。";
-              setStatus("请查收邮箱，并点击邮件里的「确认登录」", "ok");
+              if (confirmBtn) confirmBtn.hidden = true;
+              descEl.textContent = "已通知电脑端。";
+              setStatus("请回到电脑完成人机验证，并查收邮箱确认登录", "ok");
               return;
             }
             posting = false;
             var msg =
               (x.j && (x.j.msg || x.j.error)) ||
               ("HTTP " + x.status);
-            descEl.textContent = "扫码结果未能写入服务器，请重试人机验证。";
+            descEl.textContent = "未能通知电脑端，请重试。";
             setStatus(msg, "err");
-            if (x.status === 503) {
-              hintEl.textContent = "服务器未配置完整，请联系管理员。";
+            if (confirmBtn) {
+              confirmBtn.disabled = false;
+              confirmBtn.textContent = "确认登录";
             }
-            if (widgetId !== null && window.turnstile) {
-              try {
-                window.turnstile.reset(widgetId);
-              } catch (e) {}
+            if (x.status === 503) {
+              hintEl.textContent = "服务器 KV 未配置，请联系管理员。";
             }
           })
           .catch(function (err) {
             posting = false;
-            descEl.textContent = "网络异常，未能回传扫码结果。";
+            descEl.textContent = "网络异常，未能通知电脑端。";
             setStatus(String((err && err.message) || err || "网络错误"), "err");
-            if (widgetId !== null && window.turnstile) {
-              try {
-                window.turnstile.reset(widgetId);
-              } catch (e) {}
+            if (confirmBtn) {
+              confirmBtn.disabled = false;
+              confirmBtn.textContent = "确认登录";
             }
           });
       }
 
-      function renderTurnstile(siteKey) {
-        function tryRender() {
-          if (!window.turnstile) {
-            setTimeout(tryRender, 80);
-            return;
-          }
-          setStatus("请勾选「确认您是真人」", "");
-          widgetId = window.turnstile.render(mountEl, {
-            sitekey: siteKey,
-            callback: function (token) {
-              postScanned(token);
-            },
-            "error-callback": function () {
-              setStatus("人机验证组件出错，请刷新重试", "err");
-            },
-            "expired-callback": function () {
-              posting = false;
-              setStatus("验证已过期，请重新勾选", "err");
-            },
-          });
-        }
-        tryRender();
+      if (confirmBtn) {
+        confirmBtn.addEventListener("click", postConfirm);
       }
-
-      fetch("/api/turnstile-config", { method: "GET", cache: "no-store" })
-        .then(function (r) {
-          return r.json().then(function (j) {
-            return { ok: r.ok, j: j };
-          });
-        })
-        .then(function (x) {
-          if (!x.ok || !x.j || !x.j.success || !x.j.siteKey) {
-            descEl.textContent = "无法加载人机验证配置。";
-            setStatus(
-              (x.j && x.j.error) || "TURNSTILE_SITE_KEY 未配置",
-              "err"
-            );
-            return;
-          }
-          renderTurnstile(x.j.siteKey);
-        })
-        .catch(function (err) {
-          descEl.textContent = "无法加载人机验证配置。";
-          setStatus(String((err && err.message) || err || "网络错误"), "err");
-        });
     })();
   </script>
 </body>

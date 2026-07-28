@@ -115,12 +115,12 @@ function buildMagicHtml({ confirmUrl, username }) {
         <tr><td>
           <p style="margin:0 0 12px;font-size:20px;font-weight:700;color:#111;">HZDV 登录确认</p>
           <p style="margin:0 0 24px;font-size:15px;line-height:1.6;color:#444;">
-            你好，${name}。我们收到了你的登录请求。点击下面按钮即可在电脑端完成登录（链接约 10 分钟内有效）。
+            你好，${name}。我们收到了你的登录请求。请打开下面链接，在打开的页面里再次点击「确认登录」（链接约 10 分钟内有效）。
           </p>
           <p style="margin:0 0 28px;text-align:center;">
             <a href="${confirmUrl}"
                style="display:inline-block;background:#ff5a1f;color:#fff;text-decoration:none;font-weight:700;font-size:15px;padding:12px 28px;border-radius:999px;">
-              确认登录
+              打开确认页
             </a>
           </p>
           <p style="margin:0;font-size:12px;line-height:1.5;color:#888;">
@@ -232,7 +232,7 @@ export async function onRequest(context) {
     await kv.put(sessionId, JSON.stringify(sessionData), { expirationTtl: 600 });
 
     const confirmUrl = `${origin}/api/email-login-confirm?token=${encodeURIComponent(token)}`;
-    const textBody = `你好，${username || "用户"}。请打开以下链接确认登录（约 10 分钟内有效）：\n${confirmUrl}\n\n如非本人操作请忽略。`;
+    const textBody = `你好，${username || "用户"}。请打开以下链接，在页面中再次点击「确认登录」（约 10 分钟内有效）：\n${confirmUrl}\n\n如非本人操作请忽略。`;
     const htmlBody = buildMagicHtml({ confirmUrl, username });
 
     const { ok, status, data } = await sendViaResend({
