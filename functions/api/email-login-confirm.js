@@ -1,9 +1,11 @@
 /**
  * GET /api/email-login-confirm?token=...
- * 用户点击邮件按钮后进入此页：校验 token，标记扫码会话已确认，电脑端轮询后完成登录。
+ * 用户点击邮件按钮后进入此页：校验 token，核对 KV 中手机号与邮箱是否一致，
+ * 一致则标记扫码会话已确认，电脑端轮询后完成登录；不一致则提示「手机号错！」。
  */
 
 import { pickKvBinding, kvBindingHint } from "../lib/kv-binding.js";
+import { assertPhoneKey, readKvUser } from "../lib/kv-secure.js";
 
 function htmlPage(title, bodyHtml, status = 200) {
   const html = `<!DOCTYPE html>
@@ -28,6 +30,78 @@ function htmlPage(title, bodyHtml, status = 200) {
     status,
     headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
   });
+}
+
+function normalizeEmail(v) {
+  const raw = String(v || "").trim().toLowerCase();
+  if (!raw || raw.indexOf("@") < 0) return raw;
+  const at = raw.lastIndexOf("@");
+  let local = raw.slice(0, at);
+  let domain = raw.slice(at + 1);
+  if (domain === "googlemail.com") domain = "gmail.com";
+  if (domain === "gmail.com") {
+    const plus = local.indexOf("+");
+    if (plus >= 0) local = local.slice(0, plus);
+    local = local.replace(/\./g, "");
+  }
+  return local + "@" + domain;
+}
+
+function normalizePhoneDigits(phone) {
+  return String(phone || "").replace(/\D/g, "");
+}
+
+async function phoneEmailMatchInKv(kv, env, phone, email) {
+  const digits = normalizePhoneDigits(phone);
+  const wantEmail = normalizeEmail(email);
+  if (!digits || !wantEmail) return false;
+  const key = "phone:" + digits;
+  try {
+    assertPhoneKey(key);
+  } catch (e) {
+    return false;
+  }
+  let row = null;
+  try {
+    row = await readKvUser(kv, env, key);
+  } catch (e) {
+    console.error("[email-login-confirm] readKvUser failed:", e);
+    return false;
+  }
+  if (!row || !row.value) return false;
+  const stored = normalizeEmail(row.value.email);
+  return !!stored && stored === wantEmail;
+}
+
+async function writeSessionPhoneMismatch(kv, sessionId, link) {
+  const phoneMismatchAt = Date.now();
+  let sessionData = {
+    scanned: true,
+    emailLoginPending: false,
+    emailLoginConfirmed: false,
+    emailLoginPhoneMismatch: true,
+    phoneMismatchAt,
+    email: (link && link.email) || "",
+    phone: (link && link.phone) || "",
+    username: (link && link.username) || "",
+  };
+  try {
+    const prev = await kv.get(sessionId);
+    if (prev) {
+      const j = JSON.parse(prev);
+      if (j && typeof j === "object") {
+        sessionData = {
+          ...j,
+          ...sessionData,
+          emailLoginConfirmed: false,
+          emailLoginPending: false,
+          emailLoginPhoneMismatch: true,
+          phoneMismatchAt,
+        };
+      }
+    }
+  } catch (e) {}
+  await kv.put(sessionId, JSON.stringify(sessionData), { expirationTtl: 600 });
 }
 
 export async function onRequest(context) {
@@ -78,11 +152,25 @@ export async function onRequest(context) {
     );
   }
 
+  // 一次性链接：无论成功失败都消费，避免重复点击绕过
+  await kv.delete("elink:" + token);
+
+  const matched = await phoneEmailMatchInKv(kv, env, link.phone, link.email);
+  if (!matched) {
+    await writeSessionPhoneMismatch(kv, link.sessionId, link);
+    return htmlPage(
+      "手机号错",
+      "<h1 class='err'>手机号错！</h1><p>请回到电脑端核对手机号与邮箱后重新扫码。</p>",
+      403
+    );
+  }
+
   let sessionData = {
     scanned: true,
     emailLoginConfirmed: true,
+    emailLoginPhoneMismatch: false,
     email: link.email || "",
-    phone: link.phone || "",
+    phone: normalizePhoneDigits(link.phone) || link.phone || "",
     username: link.username || "",
     confirmedAt: Date.now(),
   };
@@ -91,14 +179,17 @@ export async function onRequest(context) {
     if (prev) {
       const j = JSON.parse(prev);
       if (j && typeof j === "object") {
-        sessionData = { ...j, ...sessionData, emailLoginPending: false };
+        sessionData = {
+          ...j,
+          ...sessionData,
+          emailLoginPending: false,
+          emailLoginPhoneMismatch: false,
+        };
       }
     }
   } catch (e) {}
 
   await kv.put(link.sessionId, JSON.stringify(sessionData), { expirationTtl: 600 });
-  // 一次性链接
-  await kv.delete("elink:" + token);
 
   return htmlPage(
     "登录已确认",

@@ -45,6 +45,12 @@
       line-height: 1.55;
       color: var(--muted);
     }
+    #turnstileMount {
+      margin: 18px auto 0;
+      display: flex;
+      justify-content: center;
+      min-height: 65px;
+    }
     .status {
       margin-top: 18px;
       font-size: 15px;
@@ -60,12 +66,14 @@
       color: #999;
     }
   </style>
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
 </head>
 <body>
   <div class="card">
     <h1>扫码登录确认</h1>
-    <p id="desc">正在把扫码结果回传到电脑端…</p>
-    <p class="status" id="status">处理中…</p>
+    <p id="desc">请先完成人机验证；通过后才会通知电脑端发送确认邮件。</p>
+    <div id="turnstileMount" aria-label="人机验证"></div>
+    <p class="status" id="status">加载验证组件…</p>
     <p class="hint" id="hint"></p>
   </div>
   <script>
@@ -79,6 +87,9 @@
       var statusEl = document.getElementById("status");
       var descEl = document.getElementById("desc");
       var hintEl = document.getElementById("hint");
+      var mountEl = document.getElementById("turnstileMount");
+      var posting = false;
+      var widgetId = null;
 
       function setStatus(text, kind) {
         statusEl.textContent = text || "";
@@ -94,47 +105,112 @@
 
       hintEl.textContent = "会话：" + sessionId.slice(0, 8) + "…";
 
-      fetch("/api/scan-login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        cache: "no-store",
-        body: JSON.stringify({
-          sessionId: sessionId,
-          data: {
-            scanned: true,
-            scannedAt: Date.now(),
-            ua: navigator.userAgent || "",
-          },
-        }),
-      })
-        .then(function (r) {
-          return r.text().then(function (text) {
-            var j = null;
-            if (text) {
+      function postScanned(turnstileToken) {
+        if (posting) return;
+        posting = true;
+        setStatus("验证通过，正在回传扫码结果…", "");
+        fetch("/api/scan-login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          cache: "no-store",
+          body: JSON.stringify({
+            sessionId: sessionId,
+            turnstileToken: turnstileToken || "",
+            data: {
+              scanned: true,
+              scannedAt: Date.now(),
+              ua: navigator.userAgent || "",
+            },
+          }),
+        })
+          .then(function (r) {
+            return r.text().then(function (text) {
+              var j = null;
+              if (text) {
+                try {
+                  j = JSON.parse(text);
+                } catch (e) {}
+              }
+              return { ok: r.ok, status: r.status, j: j, text: text };
+            });
+          })
+          .then(function (x) {
+            if (x.ok && x.j && x.j.success === true) {
+              if (mountEl) mountEl.style.display = "none";
+              descEl.textContent = "扫码已成功回传到电脑端。";
+              setStatus("请查收邮箱，并点击邮件里的「确认登录」", "ok");
+              return;
+            }
+            posting = false;
+            var msg =
+              (x.j && (x.j.msg || x.j.error)) ||
+              ("HTTP " + x.status);
+            descEl.textContent = "扫码结果未能写入服务器，请重试人机验证。";
+            setStatus(msg, "err");
+            if (x.status === 503) {
+              hintEl.textContent = "服务器未配置完整，请联系管理员。";
+            }
+            if (widgetId !== null && window.turnstile) {
               try {
-                j = JSON.parse(text);
+                window.turnstile.reset(widgetId);
               } catch (e) {}
             }
-            return { ok: r.ok, status: r.status, j: j, text: text };
+          })
+          .catch(function (err) {
+            posting = false;
+            descEl.textContent = "网络异常，未能回传扫码结果。";
+            setStatus(String((err && err.message) || err || "网络错误"), "err");
+            if (widgetId !== null && window.turnstile) {
+              try {
+                window.turnstile.reset(widgetId);
+              } catch (e) {}
+            }
+          });
+      }
+
+      function renderTurnstile(siteKey) {
+        function tryRender() {
+          if (!window.turnstile) {
+            setTimeout(tryRender, 80);
+            return;
+          }
+          setStatus("请勾选「确认您是真人」", "");
+          widgetId = window.turnstile.render(mountEl, {
+            sitekey: siteKey,
+            callback: function (token) {
+              postScanned(token);
+            },
+            "error-callback": function () {
+              setStatus("人机验证组件出错，请刷新重试", "err");
+            },
+            "expired-callback": function () {
+              posting = false;
+              setStatus("验证已过期，请重新勾选", "err");
+            },
+          });
+        }
+        tryRender();
+      }
+
+      fetch("/api/turnstile-config", { method: "GET", cache: "no-store" })
+        .then(function (r) {
+          return r.json().then(function (j) {
+            return { ok: r.ok, j: j };
           });
         })
         .then(function (x) {
-          if (x.ok && x.j && x.j.success === true) {
-            descEl.textContent = "扫码已成功回传到电脑端。";
-            setStatus("请回到电脑查收邮箱，并点击邮件里的「确认登录」", "ok");
+          if (!x.ok || !x.j || !x.j.success || !x.j.siteKey) {
+            descEl.textContent = "无法加载人机验证配置。";
+            setStatus(
+              (x.j && x.j.error) || "TURNSTILE_SITE_KEY 未配置",
+              "err"
+            );
             return;
           }
-          var msg =
-            (x.j && (x.j.msg || x.j.error)) ||
-            ("HTTP " + x.status);
-          descEl.textContent = "扫码结果未能写入服务器。";
-          setStatus(msg, "err");
-          if (x.status === 503) {
-            hintEl.textContent = "服务器 KV 未配置，请联系管理员。";
-          }
+          renderTurnstile(x.j.siteKey);
         })
         .catch(function (err) {
-          descEl.textContent = "网络异常，未能回传扫码结果。";
+          descEl.textContent = "无法加载人机验证配置。";
           setStatus(String((err && err.message) || err || "网络错误"), "err");
         });
     })();

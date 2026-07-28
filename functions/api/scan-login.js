@@ -2,7 +2,7 @@ import { kvBindingHint, pickKvBinding } from "../lib/kv-binding.js";
 
 /**
  * 扫码登录 API：GET /api/scan-login?sessionId=xxx
- * 将 sessionId 与表单数据存入 KV，POST 时 TTL 300 秒。
+ * POST：手机端回写扫码结果；写入前须校验 Turnstile（TURNSTILE_SECRET_KEY）。
  * Pages 里绑定的变量名必须与代码一致（常用 my_kv）；也兼容旧名 MY_KV。
  */
 function jsonResponse(body, status = 200, extraHeaders = {}) {
@@ -24,6 +24,46 @@ function getQuerySessionId(url) {
     p.get("key") ||
     p.get("Key")
   );
+}
+
+async function verifyTurnstileWithEnv(env, token) {
+  if (!token) {
+    return { ok: false, error: "Missing turnstileToken", httpStatus: 400 };
+  }
+  const secret = String(env.TURNSTILE_SECRET_KEY || "").trim();
+  if (!secret) {
+    return {
+      ok: false,
+      error: "TURNSTILE_SECRET_KEY not configured",
+      httpStatus: 503,
+    };
+  }
+  const form = new URLSearchParams();
+  form.set("secret", secret);
+  form.set("response", String(token));
+  let result;
+  try {
+    const r = await fetch(
+      "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+      {
+        method: "POST",
+        body: form,
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      }
+    );
+    result = await r.json();
+  } catch (e) {
+    return { ok: false, error: "siteverify failed", detail: String(e), httpStatus: 502 };
+  }
+  if (!result || !result.success) {
+    return {
+      ok: false,
+      error: "Turnstile verification failed",
+      result,
+      httpStatus: 403,
+    };
+  }
+  return { ok: true };
 }
 
 export async function onRequest(context) {
@@ -50,23 +90,6 @@ export async function onRequest(context) {
       }
       const value = await kv.get(sessionId);
 
-
-      // --- 临时调试逻辑：手机扫码时如果 KV 没数据，自动帮它写一条 ---
-      // 判断是否是手机端（简单通过 UA 判断或直接未命中就写）
-      // 注意：这个调试逻辑可能会干扰正常的 POST 流程，建议在测试完成后禁用
-      // if (!value && request.headers.get("user-agent") && request.headers.get("user-agent").match(/Mobile|Android|iPhone|iPad|iPod/i)) {
-      //   const debugData = { 
-      //       email: "debug@test.com", 
-      //       phone: "13800138000", 
-      //       isRegistered: false // 你可以改这里测试不同分支
-      //   };
-      //   await kv.put(sessionId, JSON.stringify(debugData), { expirationTtl: 300 });
-      //   return jsonResponse({ exists: true, data: debugData, msg: "调试：已自动写入模拟数据" });
-      //    }
-    // --- 调试逻辑结束 ---
-
-
-
       let data = null;
       if (value) {
         try {
@@ -82,7 +105,6 @@ export async function onRequest(context) {
         },
         200,
         {
-          // 轮询接口必须禁用缓存，否则前端可能反复拿到旧结果
           "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
           Pragma: "no-cache",
           Expires: "0",
@@ -100,7 +122,37 @@ export async function onRequest(context) {
             400
           );
         }
-        await kv.put(sid, JSON.stringify(body.data), {
+
+        const skipRaw = String(env.SCAN_LOGIN_SKIP_TURNSTILE || "").toLowerCase();
+        const skipTurnstile = ["1", "true", "yes"].includes(skipRaw);
+        if (!skipTurnstile) {
+          const tok =
+            body.turnstileToken ||
+            body.turnstile_token ||
+            (body.data && (body.data.turnstileToken || body.data.turnstile_token));
+          const vr = await verifyTurnstileWithEnv(env, tok);
+          if (!vr.ok) {
+            return jsonResponse(
+              {
+                success: false,
+                msg: vr.error || "Turnstile verification failed",
+                detail: vr.detail || null,
+              },
+              vr.httpStatus || 403
+            );
+          }
+        }
+
+        const data =
+          body.data && typeof body.data === "object"
+            ? {
+                ...body.data,
+                turnstileVerified: true,
+                scanned: body.data.scanned !== false,
+              }
+            : body.data;
+
+        await kv.put(sid, JSON.stringify(data), {
           expirationTtl: 300,
         });
         return jsonResponse({ success: true });

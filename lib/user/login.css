@@ -310,18 +310,18 @@
 .lreg-root .register-qr-wrap {
     background: #fff;
     border-radius: 8px;
-    padding: 6px;
+    padding: 10px;
     display: flex;
     align-items: center;
     justify-content: center;
-    min-height: 112px;
+    min-height: 160px;
     border: 1px solid #f0f0f0;
 }
 
 .lreg-root .register-qr-wrap img {
     display: block;
-    width: 100px;
-    height: 100px;
+    width: 140px;
+    height: 140px;
     max-width: 100%;
 }
 
@@ -419,7 +419,7 @@
 
 .lreg-root .register-tab-panel {
     display: none;
-    min-height: 268px;
+    min-height: 300px;
 }
 
 .lreg-root .register-tab-panel.active {
@@ -462,6 +462,26 @@
     border: 1px solid #eee;
     box-sizing: border-box;
     overflow: hidden;
+}
+
+/* 扫码登录：缩小输入框字号与间距，二维码保持 140px */
+.lreg-root #registerTabCode .register-input-line--stack.register-input-line--compact {
+    margin-bottom: 4px;
+}
+
+.lreg-root #registerTabCode .register-input-line--stack.register-input-line--compact:last-of-type {
+    margin-bottom: 0;
+}
+
+.lreg-root #registerTabCode .register-input-line--compact .register-field-input {
+    font-size: 12px;
+    padding: 6px 10px;
+    line-height: 1.25;
+}
+
+.lreg-root #registerTabCode .register-code-qr-section {
+    margin-top: 6px;
+    margin-bottom: 8px;
 }
 
 .lreg-root .register-input-line:focus-within {
