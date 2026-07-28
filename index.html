@@ -11,7 +11,8 @@
   <link rel="stylesheet" href="lib/user/login-extra.css?v=20260722r" />
   <link rel="stylesheet" href="lib/user/hero-background.css?v=20260723a" />
   <link rel="stylesheet" href="lib/user/hero-background-admin.css?v=20260722p" />
-  <link rel="stylesheet" href="agent/public/ai-assist.css?v=20260727f" />
+  <link rel="stylesheet" href="lib/user/system-settings-modal.css?v=20260728a" />
+  <link rel="stylesheet" href="agent/public/ai-assist.css?v=20260727g" />
   <style>
     :root {
       --nav-bg: #3d6a96;
@@ -463,6 +464,14 @@
                 data-i18n="ops_ai_models"
               >AI 模型库</button>
             </li>
+            <li role="none">
+              <button
+                type="button"
+                role="menuitem"
+                id="topNavSystemSettings"
+                data-i18n="ops_system_settings"
+              >系统参数设置</button>
+            </li>
           </ul>
         </div>
 
@@ -573,6 +582,7 @@
         ops_user_list: "用户列表",
         ops_hero_background: "网站背景",
         ops_ai_models: "AI 模型库",
+        ops_system_settings: "系统参数设置",
       },
       en: {
         logo: "LOGO",
@@ -589,6 +599,7 @@
         ops_user_list: "User List",
         ops_hero_background: "Site Background",
         ops_ai_models: "AI Models",
+        ops_system_settings: "System Settings",
       },
     };
 
@@ -789,8 +800,8 @@
   </script>
   <script src="lib/user/config.js"></script>
   <script src="lib/user/hero-background.js?v=20260722q"></script>
-  <script src="agent/public/ai-assist-models.js?v=20260727f"></script>
-  <script src="agent/public/ai-assist.js?v=20260727f"></script>
+  <script src="agent/public/ai-assist-models.js?v=20260727g"></script>
+  <script src="agent/public/ai-assist.js?v=20260728d"></script>
   <script src="lib/user/app-stubs.js"></script>
   <script src="lib/vendor/ag-grid/ag-grid-community.min.js"></script>
   <script src="lib/user/login-shell.js?v=20260724d"></script>
@@ -798,6 +809,7 @@
   <script src="lib/user/user-list-grid.js?v=20260722r"></script>
   <script src="lib/user/user-list-modal.js"></script>
   <script src="lib/user/hero-background-admin-modal.js?v=20260722p"></script>
-  <script src="lib/user/login.js?v=20260724a"></script>
+  <script src="lib/user/system-settings-modal.js?v=20260728a"></script>
+  <script src="lib/user/login.js?v=20260728a"></script>
 </body>
 </html>

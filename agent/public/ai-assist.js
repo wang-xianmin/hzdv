@@ -30,6 +30,25 @@
   var MODEL_OPTIONS = BUILTIN_OPTIONS.slice();
   var registryModels = [];
 
+  /** 可调：聊天区 OCR/PDF 预览最多展示多少字符（只影响预览，不影响全量提取） */
+  var OCR_PREVIEW_CHARS = 4500;
+  /** 可调：预览里最多列多少行明细（图片 OCR） */
+  var OCR_PREVIEW_LINES = 80;
+
+  function syncOcrPreviewLimitsFromSystemSettings() {
+    var s =
+      (typeof window.getHzdvSystemSettings === "function" && window.getHzdvSystemSettings()) ||
+      window.__HZDV_SYSTEM_SETTINGS ||
+      null;
+    if (!s) return;
+    var n = parseInt(s.ocrPreviewChars, 10);
+    if (!isNaN(n) && n >= 500) OCR_PREVIEW_CHARS = n;
+  }
+  window.onHzdvSystemSettingsChange = function () {
+    syncOcrPreviewLimitsFromSystemSettings();
+  };
+  syncOcrPreviewLimitsFromSystemSettings();
+
   /** 最近一次 OCR 结果，随下一条消息带给 /api/llm-chat 后清空 */
   var pendingOcr = null;
   /** 输入框附件：{ kind, name, file, previewUrl, ext } */
@@ -324,15 +343,20 @@
 
     if (isPdf) {
       out.push(en ? "\nExtracted text (preview):" : "\n提取文本（预览）：");
-      out.push(String(data.text).slice(0, 2500));
-      if (String(data.text).length > 2500) {
+      out.push(
+        en
+          ? "(Tables: merged cells expanded; multi-line cells joined. Flat LLM form under [表格·扁平·供LLM].)"
+          : "（表格已展开合并单元格、拼接格内多行；扁平版见 [表格·扁平·供LLM]）"
+      );
+      out.push(String(data.text).slice(0, OCR_PREVIEW_CHARS));
+      if (String(data.text).length > OCR_PREVIEW_CHARS) {
         out.push(en ? "\n… truncated" : "\n… 已截断");
       }
       return out.join("\n");
     }
 
     out.push(en ? "\nLines (text · conf · box):" : "\n逐行结果（文字 · 置信 · 坐标）：");
-    lines.slice(0, 80).forEach(function (ln, i) {
+    lines.slice(0, OCR_PREVIEW_LINES).forEach(function (ln, i) {
       var box = ln.box || [];
       var xs = box.map(function (p) {
         return Math.round(Number(p[0]) || 0);
@@ -361,11 +385,11 @@
           rect
       );
     });
-    if (lines.length > 80) {
+    if (lines.length > OCR_PREVIEW_LINES) {
       out.push(
         en
-          ? "… " + (lines.length - 80) + " more lines"
-          : "… 另有 " + (lines.length - 80) + " 行"
+          ? "… " + (lines.length - OCR_PREVIEW_LINES) + " more lines"
+          : "… 另有 " + (lines.length - OCR_PREVIEW_LINES) + " 行"
       );
     }
     return out.join("\n");
@@ -374,24 +398,43 @@
   function ocrRoutingNote(data, en) {
     var lay = data.layout || {};
     var isPdf = data.source === "pdf";
-    if (!String(data.text || "").trim()) {
+    var visionPages = (lay.vision_pages || []).slice();
+    if (!visionPages.length && Array.isArray(data.pages)) {
+      data.pages.forEach(function (p) {
+        if (p && p.image_base64) visionPages.push(p.page);
+      });
+    }
+    var hasText = !!String(data.text_llm || data.text || "").trim();
+    var hasVision = visionPages.length > 0;
+    if (!hasText && !hasVision) {
       return isPdf
         ? en
-          ? "No extractable text (likely scanned). Not sent to any LLM yet."
-          : "未提取到文字（多半是扫描件）。暂不送任何 LLM。"
+          ? "No extractable text and no page render. Not ready for LLM."
+          : "未提取到文字且未能渲图。尚不能送 LLM。"
         : en
-          ? "No text recognized. Not sent to any LLM yet."
-          : "未识别到文字。暂不送任何 LLM。";
+          ? "No text recognized. Not ready for LLM."
+          : "未识别到文字。尚不能送 LLM。";
+    }
+    var floor =
+      " tier" +
+      (lay.suggested_tier || "?") +
+      ((lay.reasons || []).length ? " (" + (lay.reasons || []).join(", ") + ")" : "");
+    var floorZh =
+      " tier" +
+      (lay.suggested_tier || "?") +
+      ((lay.reasons || []).length ? "（" + (lay.reasons || []).join("、") + "）" : "");
+    if (isPdf) {
+      return en
+        ? "PDF extracted — simple pages as text, complex pages as full-page images. " +
+            "Next message: doc + your question → intent classifier (tier2 / tier3, vision optional)." +
+            (hasVision ? " Rendered pages: " + visionPages.join(", ") + "." : "")
+        : "PDF 已提取——简单页文本，复杂页整页渲图。" +
+            " 下一条：文档+你的问题 → 意图分类（可走第 2 梯队，或无视觉的第 3 梯队）。" +
+            (hasVision ? " 已渲图页：" + visionPages.join("、") + "。" : "");
     }
     return en
-      ? "Preview only — RapidOCR/PDF extract + layout check. Not sent to LLM yet." +
-          " Suggested floor: tier" +
-          (lay.suggested_tier || "?") +
-          ((lay.reasons || []).length ? " (" + (lay.reasons || []).join(", ") + ")" : "")
-      : "仅预览——RapidOCR/PDF 提取 + 排版硬校验，暂不送 LLM。" +
-          " 建议下限：tier" +
-          (lay.suggested_tier || "?") +
-          ((lay.reasons || []).length ? "（" + (lay.reasons || []).join("、") + "）" : "");
+      ? "Image OCR ready for next message. Floor:" + floor
+      : "图片 OCR 已就绪，下一条消息会送 LLM。建议下限：" + floorZh;
   }
 
   function runOcrFile(file) {
@@ -433,15 +476,30 @@
           return;
         }
         var text = String(data.text || "").trim();
+        var textLlm = String(data.text_llm || data.text || "").trim();
         var en = currentLang() === "en";
+        var visionPages = [];
+        if (Array.isArray(data.pages)) {
+          data.pages.forEach(function (p) {
+            if (!p || !p.image_base64) return;
+            visionPages.push({
+              page: p.page,
+              image_base64: p.image_base64,
+              image_mime: p.image_mime || "image/jpeg",
+              needs_vision: true,
+            });
+          });
+        }
         pendingOcr = {
           text: text,
+          text_llm: textLlm || text,
           line_count: data.line_count || 0,
           layout: data.layout || null,
           source: data.source || (data.page_count != null ? "pdf" : "image"),
           page_count: data.page_count || null,
+          pages: visionPages,
         };
-        if (!text) pendingOcr = null;
+        if (!textLlm && !text && !visionPages.length) pendingOcr = null;
         pendingAttachment.ocrStatus = "done";
         renderAttachment();
         var isPdf = (data.source || pendingAttachment.kind) === "pdf";
@@ -1145,7 +1203,7 @@
     }
     appendMessage("user", q);
     inputEl.value = "";
-    // 当前阶段：附件提取结果只做预览，不送给 LLM
+    var ocrPayload = pendingOcr;
     clearAttachment({ keepOcr: true });
     pendingOcr = null;
     syncSendState();
@@ -1163,16 +1221,24 @@
     });
     var thinkingIdx = messages.length - 1;
 
+    var reqBody = {
+      phone: phone,
+      message: q,
+      modelId: want,
+      lang: currentLang(),
+    };
+    if (ocrPayload) reqBody.ocr = ocrPayload;
+    if (typeof window.getHzdvSystemSettings === "function") {
+      try {
+        reqBody.systemSettings = window.getHzdvSystemSettings();
+      } catch (eSys) {}
+    }
+
     fetch("/api/llm-chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       cache: "no-store",
-      body: JSON.stringify({
-        phone: phone,
-        message: q,
-        modelId: want,
-        lang: currentLang(),
-      }),
+      body: JSON.stringify(reqBody),
     })
       .then(function (r) {
         return r.json().then(function (j) {

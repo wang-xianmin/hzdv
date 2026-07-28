@@ -14,4 +14,7 @@ services:
     environment:
       OCR_API_KEY: "${OCR_API_KEY:-}"
       OCR_CORS_ORIGINS: "${OCR_CORS_ORIGINS:-*}"
+      # 可调：复杂页最多渲几张整页图（默认 6，上限 20）
+      PDF_VISION_MAX_PAGES: "${PDF_VISION_MAX_PAGES:-6}"
+      PDF_RENDER_DPI: "${PDF_RENDER_DPI:-120}"
     restart: unless-stopped
