@@ -230,6 +230,9 @@
       descEl.textContent = t("正在通知电脑端…", "Notifying the computer…");
       setStatus(t("请稍候", "Please wait"), "");
 
+      var qrPhone = params.get("p") || "";
+      var qrEmail = params.get("e") || "";
+
       fetch("/api/scan-login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -242,6 +245,10 @@
             awaitingPc: true,
             scannedAt: Date.now(),
             ua: navigator.userAgent || "",
+            phone: qrPhone,
+            email: qrEmail,
+            siteOrigin: window.location.origin || "",
+            lang: lang
           },
         }),
       })
