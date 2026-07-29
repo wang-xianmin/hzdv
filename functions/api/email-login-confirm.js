@@ -9,9 +9,10 @@
 import { pickKvBinding, kvBindingHint } from "../lib/kv-binding.js";
 import { assertPhoneKey, readKvUser } from "../lib/kv-secure.js";
 
-function htmlPage(title, bodyHtml, status = 200) {
+function htmlPage(title, bodyHtml, status = 200, lang = "zh") {
+  const isEn = String(lang || "").toLowerCase().indexOf("en") === 0;
   const html = `<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="${isEn ? "en" : "zh-CN"}">
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
@@ -35,6 +36,12 @@ function htmlPage(title, bodyHtml, status = 200) {
     status,
     headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
   });
+}
+
+function normalizeUiLang(v) {
+  const s = String(v || "").trim().toLowerCase();
+  if (s.indexOf("en") === 0) return "en";
+  return "zh";
 }
 
 function normalizeEmail(v) {
@@ -133,20 +140,23 @@ async function readLinkPayload(kv, token) {
 export async function onRequest(context) {
   const { request, env } = context;
   if (request.method !== "GET" && request.method !== "POST") {
-    return htmlPage("错误", "<h1 class='err'>Method Not Allowed</h1>", 405);
+    return htmlPage("Error", "<h1 class='err'>Method Not Allowed</h1>", 405, "en");
   }
 
   const url = new URL(request.url);
   let token = String(url.searchParams.get("token") || "").trim();
+  let queryLang = normalizeUiLang(url.searchParams.get("lang"));
   if (!token && request.method === "POST") {
     try {
       const ct = String(request.headers.get("content-type") || "");
       if (ct.indexOf("application/x-www-form-urlencoded") >= 0) {
         const form = await request.formData();
         token = String(form.get("token") || "").trim();
+        if (form.get("lang")) queryLang = normalizeUiLang(form.get("lang"));
       } else if (ct.indexOf("application/json") >= 0) {
         const body = await request.json();
         token = String((body && body.token) || "").trim();
+        if (body && body.lang) queryLang = normalizeUiLang(body.lang);
       }
     } catch (e) {
       token = "";
@@ -155,49 +165,84 @@ export async function onRequest(context) {
 
   if (!token) {
     return htmlPage(
-      "链接无效",
-      "<h1 class='err'>链接无效</h1><p>缺少确认参数，请回到电脑端重新扫码登录。</p>",
-      400
+      queryLang === "en" ? "Invalid link" : "链接无效",
+      queryLang === "en"
+        ? "<h1 class='err'>Invalid link</h1><p>Missing confirmation token. Please scan again on the computer.</p>"
+        : "<h1 class='err'>链接无效</h1><p>缺少确认参数，请回到电脑端重新扫码登录。</p>",
+      400,
+      queryLang
     );
   }
 
   const kv = pickKvBinding(env);
   if (!kv) {
     return htmlPage(
-      "服务未配置",
-      `<h1 class='err'>服务未配置</h1><p>${kvBindingHint()}</p>`,
-      503
+      queryLang === "en" ? "Service unavailable" : "服务未配置",
+      queryLang === "en"
+        ? `<h1 class='err'>Service unavailable</h1><p>${kvBindingHint()}</p>`
+        : `<h1 class='err'>服务未配置</h1><p>${kvBindingHint()}</p>`,
+      503,
+      queryLang
     );
   }
 
   const loaded = await readLinkPayload(kv, token);
+  const lang = normalizeUiLang(
+    (loaded.ok && loaded.link && loaded.link.lang) || queryLang
+  );
+
   if (loaded.missing) {
     return htmlPage(
-      "链接已失效",
-      "<h1 class='err'>链接已失效</h1><p>请回到电脑端重新扫码，并查收新的确认邮件。<br/>若刚才已点过确认，请直接查看电脑端是否已登录。</p>",
-      410
+      lang === "en" ? "Link expired" : "链接已失效",
+      lang === "en"
+        ? "<h1 class='err'>Link expired</h1><p>Please scan again on the computer and check your email for a new confirmation message.<br/>If you already confirmed, check whether the computer has signed you in.</p>"
+        : "<h1 class='err'>链接已失效</h1><p>请回到电脑端重新扫码，并查收新的确认邮件。<br/>若刚才已点过确认，请直接查看电脑端是否已登录。</p>",
+      410,
+      lang
     );
   }
   if (!loaded.ok) {
     return htmlPage(
-      "链接无效",
-      "<h1 class='err'>链接无效</h1><p>请回到电脑端重新扫码登录。</p>",
-      400
+      lang === "en" ? "Invalid link" : "链接无效",
+      lang === "en"
+        ? "<h1 class='err'>Invalid link</h1><p>Please scan again on the computer.</p>"
+        : "<h1 class='err'>链接无效</h1><p>请回到电脑端重新扫码登录。</p>",
+      400,
+      lang
     );
   }
 
   // GET：只展示确认按钮，绝不消费 token（防邮件安全扫描预取）
   if (request.method === "GET") {
     const safeToken = escapeHtml(token);
+    const safeLang = escapeHtml(lang);
+    if (lang === "en") {
+      return htmlPage(
+        "Confirm sign-in",
+        `<h1>Confirm sign-in to HZDV</h1>
+         <p>This is the last step. Click the button below so the computer can finish sign-in.</p>
+         <form method="POST" action="/api/email-login-confirm">
+           <input type="hidden" name="token" value="${safeToken}" />
+           <input type="hidden" name="lang" value="${safeLang}" />
+           <button class="btn" type="submit">Confirm sign-in</button>
+         </form>
+         <p style="margin-top:16px;font-size:12px;color:#888;">If this wasn’t you, close this page and ignore the email.</p>`,
+        200,
+        lang
+      );
+    }
     return htmlPage(
       "确认登录",
       `<h1>确认登录 HZDV</h1>
        <p>这是最后一步。请点击下方按钮，电脑端才会完成扫码登录。</p>
        <form method="POST" action="/api/email-login-confirm">
          <input type="hidden" name="token" value="${safeToken}" />
+         <input type="hidden" name="lang" value="${safeLang}" />
          <button class="btn" type="submit">确认登录</button>
        </form>
-       <p style="margin-top:16px;font-size:12px;color:#888;">若非本人操作，请关闭本页并忽略邮件。</p>`
+       <p style="margin-top:16px;font-size:12px;color:#888;">若非本人操作，请关闭本页并忽略邮件。</p>`,
+      200,
+      lang
     );
   }
 
@@ -210,9 +255,12 @@ export async function onRequest(context) {
   if (!matched) {
     await writeSessionPhoneMismatch(kv, link.sessionId, link);
     return htmlPage(
-      "手机号错",
-      "<h1 class='err'>手机号错！</h1><p>请回到电脑端核对手机号与邮箱后重新扫码。</p>",
-      403
+      lang === "en" ? "Wrong phone number" : "手机号错",
+      lang === "en"
+        ? "<h1 class='err'>Wrong phone number!</h1><p>Please check the phone and email on the computer, then scan again.</p>"
+        : "<h1 class='err'>手机号错！</h1><p>请回到电脑端核对手机号与邮箱后重新扫码。</p>",
+      403,
+      lang
     );
   }
 
@@ -224,6 +272,7 @@ export async function onRequest(context) {
     email: link.email || "",
     phone: normalizePhoneDigits(link.phone) || link.phone || "",
     username: link.username || "",
+    lang,
     confirmedAt: Date.now(),
   };
   try {
@@ -244,7 +293,11 @@ export async function onRequest(context) {
   await kv.put(link.sessionId, JSON.stringify(sessionData), { expirationTtl: 600 });
 
   return htmlPage(
-    "登录已确认",
-    "<h1 class='ok'>登录已确认</h1><p>可以关闭本页，回到电脑端继续。电脑上的登录窗口将自动完成登录。</p>"
+    lang === "en" ? "Sign-in confirmed" : "登录已确认",
+    lang === "en"
+      ? "<h1 class='ok'>Sign-in confirmed</h1><p>You can close this page and return to the computer. The sign-in window will finish automatically.</p>"
+      : "<h1 class='ok'>登录已确认</h1><p>可以关闭本页，回到电脑端继续。电脑上的登录窗口将自动完成登录。</p>",
+    200,
+    lang
   );
 }

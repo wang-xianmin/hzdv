@@ -110,8 +110,42 @@ async function sendViaResend({ apiKey, fromAddr, to, subject, text, html }) {
   return { ok: res.ok, status: res.status, data };
 }
 
-function buildMagicHtml({ confirmUrl, username }) {
-  const name = username ? String(username) : "用户";
+function buildMagicHtml({ confirmUrl, username, lang }) {
+  const isEn = String(lang || "").toLowerCase().indexOf("en") === 0;
+  const name = username
+    ? String(username)
+    : isEn
+      ? "there"
+      : "用户";
+  if (isEn) {
+    return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
+<body style="margin:0;padding:0;background:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f4f4f5;padding:32px 16px;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" style="max-width:480px;background:#fff;border-radius:12px;padding:32px 28px;">
+        <tr><td>
+          <p style="margin:0 0 12px;font-size:20px;font-weight:700;color:#111;">HZDV sign-in confirmation</p>
+          <p style="margin:0 0 24px;font-size:15px;line-height:1.6;color:#444;">
+            Hi, ${name}. We received a sign-in request. Open the link below, then click <strong>Confirm sign-in</strong> on that page (valid for about 10 minutes).
+          </p>
+          <p style="margin:0 0 28px;text-align:center;">
+            <a href="${confirmUrl}"
+               style="display:inline-block;background:#ff5a1f;color:#fff;text-decoration:none;font-weight:700;font-size:15px;padding:12px 28px;border-radius:999px;">
+              Open confirmation page
+            </a>
+          </p>
+          <p style="margin:0;font-size:12px;line-height:1.5;color:#888;">
+            If this wasn’t you, ignore this email. If the button doesn’t work, copy and paste this link into your browser:<br/>
+            <span style="word-break:break-all;color:#555;">${confirmUrl}</span>
+          </p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+  }
+  const nameZh = username ? String(username) : "用户";
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
 <body style="margin:0;padding:0;background:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
@@ -121,7 +155,7 @@ function buildMagicHtml({ confirmUrl, username }) {
         <tr><td>
           <p style="margin:0 0 12px;font-size:20px;font-weight:700;color:#111;">HZDV 登录确认</p>
           <p style="margin:0 0 24px;font-size:15px;line-height:1.6;color:#444;">
-            你好，${name}。我们收到了你的登录请求。请打开下面链接，在打开的页面里再次点击「确认登录」（链接约 10 分钟内有效）。
+            你好，${nameZh}。我们收到了你的登录请求。请打开下面链接，在打开的页面里再次点击「确认登录」（链接约 10 分钟内有效）。
           </p>
           <p style="margin:0 0 28px;text-align:center;">
             <a href="${confirmUrl}"
@@ -140,6 +174,12 @@ function buildMagicHtml({ confirmUrl, username }) {
 </body></html>`;
 }
 
+function normalizeUiLang(v) {
+  const s = String(v || "").trim().toLowerCase();
+  if (s.indexOf("en") === 0) return "en";
+  return "zh";
+}
+
 export async function onRequest(context) {
   const { request, env } = context;
   if (request.method !== "POST") {
@@ -153,12 +193,28 @@ export async function onRequest(context) {
   }
 
   const email = String(body.email || "").trim();
+  const uiLang = normalizeUiLang(body.lang || body.locale || body.language);
   if (!email) {
-    return jsonResponse({ success: false, error: "手机号、邮箱不能为空！" }, 400);
+    return jsonResponse(
+      {
+        success: false,
+        error:
+          uiLang === "en"
+            ? "Phone and email are required."
+            : "手机号、邮箱不能为空！",
+      },
+      400
+    );
   }
   if (!isValidEmailAddress(email)) {
     return jsonResponse(
-      { success: false, error: "邮箱格式不正确，请使用 email@example.com 形式" },
+      {
+        success: false,
+        error:
+          uiLang === "en"
+            ? "Invalid email format. Use email@example.com."
+            : "邮箱格式不正确，请使用 email@example.com 形式",
+      },
       400
     );
   }
@@ -223,6 +279,7 @@ export async function onRequest(context) {
       email,
       phone,
       username,
+      lang: uiLang,
       createdAt: Date.now(),
     };
     await kv.put("elink:" + token, JSON.stringify(payload), { expirationTtl: 600 });
@@ -233,6 +290,7 @@ export async function onRequest(context) {
       email,
       phone,
       username,
+      lang: uiLang,
     };
     try {
       const prev = await kv.get(sessionId);
@@ -243,15 +301,18 @@ export async function onRequest(context) {
     } catch (e) {}
     await kv.put(sessionId, JSON.stringify(sessionData), { expirationTtl: 600 });
 
-    const confirmUrl = `${origin}/api/email-login-confirm?token=${encodeURIComponent(token)}`;
-    const textBody = `你好，${username || "用户"}。请打开以下链接，在页面中再次点击「确认登录」（约 10 分钟内有效）：\n${confirmUrl}\n\n如非本人操作请忽略。`;
-    const htmlBody = buildMagicHtml({ confirmUrl, username });
+    const confirmUrl = `${origin}/api/email-login-confirm?token=${encodeURIComponent(token)}&lang=${encodeURIComponent(uiLang)}`;
+    const textBody =
+      uiLang === "en"
+        ? `Hi, ${username || "there"}. Open this link, then click “Confirm sign-in” on the page (valid for about 10 minutes):\n${confirmUrl}\n\nIf this wasn’t you, ignore this email.`
+        : `你好，${username || "用户"}。请打开以下链接，在页面中再次点击「确认登录」（约 10 分钟内有效）：\n${confirmUrl}\n\n如非本人操作请忽略。`;
+    const htmlBody = buildMagicHtml({ confirmUrl, username, lang: uiLang });
 
     const { ok, status, data } = await sendViaResend({
       apiKey,
       fromAddr,
       to: email,
-      subject: "确认登录 HZDV",
+      subject: uiLang === "en" ? "Confirm sign-in to HZDV" : "确认登录 HZDV",
       text: textBody,
       html: htmlBody,
     });
@@ -268,7 +329,11 @@ export async function onRequest(context) {
     return jsonResponse({
       success: true,
       mode: "magic_link",
-      message: "登录确认邮件已发送，请查收邮箱并点击按钮",
+      lang: uiLang,
+      message:
+        uiLang === "en"
+          ? "Confirmation email sent. Please check your inbox and confirm sign-in."
+          : "登录确认邮件已发送，请查收邮箱并点击按钮",
       phone,
       username,
       email,
