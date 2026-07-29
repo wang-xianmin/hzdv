@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>扫码成功</title>
+  <title>扫码登录</title>
   <style>
     :root {
       --bg: #f4f6f8;
@@ -63,9 +63,9 @@
 </head>
 <body>
   <div class="card">
-    <h1>扫码成功</h1>
-    <p id="desc">正在通知电脑端发送确认邮件…</p>
-    <p class="status" id="status">处理中…</p>
+    <h1 id="title">扫码登录</h1>
+    <p id="desc">正在通知电脑端…</p>
+    <p class="status" id="status">请稍候</p>
     <p class="hint" id="hint"></p>
   </div>
   <script>
@@ -76,9 +76,16 @@
         params.get("sessionid") ||
         params.get("key") ||
         "";
+      var lang = String(params.get("lang") || "zh").toLowerCase();
+      var isEn = lang.indexOf("en") === 0;
+      var titleEl = document.getElementById("title");
       var statusEl = document.getElementById("status");
       var descEl = document.getElementById("desc");
       var hintEl = document.getElementById("hint");
+
+      function t(zh, en) {
+        return isEn ? en : zh;
+      }
 
       function setStatus(text, kind) {
         statusEl.textContent = text || "";
@@ -86,13 +93,128 @@
         if (kind) statusEl.classList.add("is-" + kind);
       }
 
+      titleEl.textContent = t("扫码登录", "Scan to sign in");
+      document.documentElement.lang = isEn ? "en" : "zh-CN";
+
       if (!sessionId) {
-        descEl.textContent = "链接无效：缺少 sessionId。";
-        setStatus("请返回电脑端重新扫码", "err");
+        descEl.textContent = t("链接无效：缺少 sessionId。", "Invalid link: missing sessionId.");
+        setStatus(t("请返回电脑端重新扫码", "Please scan again on the computer"), "err");
         return;
       }
 
-      hintEl.textContent = "会话：" + sessionId.slice(0, 8) + "…";
+      hintEl.textContent =
+        t("会话：", "Session: ") + sessionId.slice(0, 8) + "…";
+
+      function showReject(pcStatus, data) {
+        titleEl.textContent = t("无法继续", "Cannot continue");
+        if (pcStatus === "reject_empty") {
+          descEl.textContent = t(
+            "电脑端未填写完整。",
+            "The computer form is incomplete."
+          );
+          setStatus(
+            (isEn && data && data.rejectMsgEn) ||
+              (data && data.rejectMsgZh) ||
+              t("手机号、邮箱不能为空！", "Phone and email are required!"),
+            "err"
+          );
+          return;
+        }
+        if (pcStatus === "reject_email") {
+          descEl.textContent = t(
+            "电脑端邮箱格式有误。",
+            "Invalid email on the computer."
+          );
+          setStatus(
+            (isEn && data && data.rejectMsgEn) ||
+              (data && data.rejectMsgZh) ||
+              t("邮箱格式不正确", "Invalid email format"),
+            "err"
+          );
+          return;
+        }
+        if (pcStatus === "reject_send") {
+          descEl.textContent = t(
+            "电脑端未能发送确认邮件。",
+            "The computer could not send the confirmation email."
+          );
+          setStatus(
+            (isEn && data && data.rejectMsgEn) ||
+              (data && data.rejectMsgZh) ||
+              t("发送失败，请回到电脑端重试", "Send failed. Retry on the computer."),
+            "err"
+          );
+          return;
+        }
+        descEl.textContent = t("电脑端已拒绝本次扫码。", "The computer rejected this scan.");
+        setStatus(String(pcStatus || t("已取消", "Cancelled")), "err");
+      }
+
+      function showOk() {
+        titleEl.textContent = t("扫码成功", "Scan successful");
+        descEl.textContent = t("已通知电脑端。", "The computer has been notified.");
+        setStatus(
+          t(
+            "请查收邮箱，并在邮件中点击「确认登录」",
+            "Check your email and confirm sign-in."
+          ),
+          "ok"
+        );
+      }
+
+      var pollCount = 0;
+      var maxPolls = 40;
+
+      function pollPcStatus() {
+        pollCount += 1;
+        if (pollCount > maxPolls) {
+          descEl.textContent = t(
+            "等待电脑端响应超时。",
+            "Timed out waiting for the computer."
+          );
+          setStatus(
+            t("请确认电脑端已打开登录窗口后重新扫码", "Open the login window on the computer and scan again"),
+            "err"
+          );
+          return;
+        }
+        fetch(
+          "/api/scan-login?sessionId=" +
+            encodeURIComponent(sessionId) +
+            "&_t=" +
+            Date.now(),
+          { cache: "no-store" }
+        )
+          .then(function (r) {
+            return r.json();
+          })
+          .then(function (j) {
+            var d = (j && j.data) || {};
+            var st = String(d.pcStatus || "");
+            if (st.indexOf("reject_") === 0) {
+              showReject(st, d);
+              return;
+            }
+            if (st === "ok") {
+              showOk();
+              return;
+            }
+            setStatus(
+              t("等待电脑端处理…", "Waiting for the computer…") +
+                " (" +
+                pollCount +
+                ")",
+              ""
+            );
+            setTimeout(pollPcStatus, 700);
+          })
+          .catch(function () {
+            setTimeout(pollPcStatus, 1000);
+          });
+      }
+
+      descEl.textContent = t("正在通知电脑端…", "Notifying the computer…");
+      setStatus(t("请稍候", "Please wait"), "");
 
       fetch("/api/scan-login", {
         method: "POST",
@@ -103,6 +225,7 @@
           data: {
             scanned: true,
             mobileConfirmed: true,
+            awaitingPc: true,
             scannedAt: Date.now(),
             ua: navigator.userAgent || "",
           },
@@ -116,27 +239,37 @@
                 j = JSON.parse(text);
               } catch (e) {}
             }
-            return { ok: r.ok, status: r.status, j: j, text: text };
+            return { ok: r.ok, status: r.status, j: j };
           });
         })
         .then(function (x) {
           if (x.ok && x.j && x.j.success === true) {
-            descEl.textContent = "已通知电脑端。";
-            setStatus("请查收邮箱，并在邮件中点击「确认登录」", "ok");
+            descEl.textContent = t(
+              "已送达电脑端，等待校验…",
+              "Delivered. Waiting for verification…"
+            );
+            setStatus(t("请稍候", "Please wait"), "");
+            pollPcStatus();
             return;
           }
           var msg =
             (x.j && (x.j.msg || x.j.error)) ||
             ("HTTP " + x.status);
-          descEl.textContent = "未能通知电脑端。";
+          descEl.textContent = t("未能通知电脑端。", "Could not notify the computer.");
           setStatus(msg, "err");
           if (x.status === 503) {
-            hintEl.textContent = "服务器 KV 未配置，请联系管理员。";
+            hintEl.textContent = t(
+              "服务器 KV 未配置，请联系管理员。",
+              "Server KV is not configured."
+            );
           }
         })
         .catch(function (err) {
-          descEl.textContent = "网络异常，未能通知电脑端。";
-          setStatus(String((err && err.message) || err || "网络错误"), "err");
+          descEl.textContent = t(
+            "网络异常，未能通知电脑端。",
+            "Network error. Could not notify the computer."
+          );
+          setStatus(String((err && err.message) || err || "network error"), "err");
         });
     })();
   </script>

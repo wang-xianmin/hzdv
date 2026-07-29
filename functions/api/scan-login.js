@@ -2,8 +2,7 @@ import { kvBindingHint, pickKvBinding } from "../lib/kv-binding.js";
 
 /**
  * 扫码登录 API：GET /api/scan-login?sessionId=xxx
- * POST：手机端回写「确认登录」；人机验证改在主站发信前完成。
- * Pages 里绑定的变量名必须与代码一致（常用 my_kv）；也兼容旧名 MY_KV。
+ * POST：写入/合并会话（手机扫码、电脑端回写 pcStatus 等）。
  */
 function jsonResponse(body, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(body), {
@@ -15,7 +14,6 @@ function jsonResponse(body, status = 200, extraHeaders = {}) {
   });
 }
 
-/** 兼容多种查询参数名（URL 查询键区分大小写） */
 function getQuerySessionId(url) {
   const p = url.searchParams;
   return (
@@ -76,26 +74,42 @@ export async function onRequest(context) {
       try {
         const body = await request.json();
         const sid = body.sessionId || body.key;
-        if (!sid || !body.data) {
+        if (!sid || !body.data || typeof body.data !== "object") {
           return jsonResponse(
             { success: false, msg: "Data incomplete" },
             400
           );
         }
 
-        const data =
-          body.data && typeof body.data === "object"
-            ? {
-                ...body.data,
-                scanned: body.data.scanned !== false,
-                mobileConfirmed: body.data.mobileConfirmed !== false,
-              }
-            : body.data;
+        let prev = {};
+        try {
+          const raw = await kv.get(sid);
+          if (raw) {
+            const j = JSON.parse(raw);
+            if (j && typeof j === "object") prev = j;
+          }
+        } catch (e) {
+          prev = {};
+        }
+
+        const incoming = body.data;
+        const data = {
+          ...prev,
+          ...incoming,
+          scanned:
+            incoming.scanned !== undefined
+              ? !!incoming.scanned
+              : !!prev.scanned,
+          mobileConfirmed:
+            incoming.mobileConfirmed !== undefined
+              ? !!incoming.mobileConfirmed
+              : !!prev.mobileConfirmed,
+        };
 
         await kv.put(sid, JSON.stringify(data), {
-          expirationTtl: 300,
+          expirationTtl: 600,
         });
-        return jsonResponse({ success: true });
+        return jsonResponse({ success: true, data });
       } catch {
         return jsonResponse({ success: false, msg: "Invalid JSON" }, 400);
       }
