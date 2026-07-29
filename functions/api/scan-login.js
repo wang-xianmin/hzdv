@@ -2,7 +2,7 @@ import { kvBindingHint, pickKvBinding } from "../lib/kv-binding.js";
 
 /**
  * 扫码登录 API：GET /api/scan-login?sessionId=xxx
- * POST：写入/合并会话（手机扫码、电脑端回写 pcStatus 等）。
+ * POST：写入会话数据到 KV，TTL 300 秒。
  */
 function jsonResponse(body, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(body), {
@@ -74,19 +74,16 @@ export async function onRequest(context) {
       try {
         const body = await request.json();
         const sid = body.sessionId || body.key;
-        if (!sid || !body.data || typeof body.data !== "object") {
+        if (!sid || !body.data) {
           return jsonResponse(
             { success: false, msg: "Data incomplete" },
             400
           );
         }
 
-        const incoming = body.data;
-
         // merge=true 时先读旧数据再合并（电脑端回写 pcStatus 用）
-        // 默认不 merge（手机扫码写入，直接覆盖，避免 KV 读延迟）
-        let prev = {};
         if (body.merge === true) {
+          let prev = {};
           try {
             const raw = await kv.get(sid);
             if (raw) {
@@ -94,25 +91,16 @@ export async function onRequest(context) {
               if (j && typeof j === "object") prev = j;
             }
           } catch (e) {}
+          const merged = { ...prev, ...body.data };
+          await kv.put(sid, JSON.stringify(merged), { expirationTtl: 600 });
+          return jsonResponse({ success: true });
         }
 
-        const data = {
-          ...prev,
-          ...incoming,
-          scanned:
-            incoming.scanned !== undefined
-              ? !!incoming.scanned
-              : !!prev.scanned,
-          mobileConfirmed:
-            incoming.mobileConfirmed !== undefined
-              ? !!incoming.mobileConfirmed
-              : !!prev.mobileConfirmed,
-        };
-
-        await kv.put(sid, JSON.stringify(data), {
-          expirationTtl: 600,
+        // 默认直接写入（手机扫码，不读旧数据，最快路径）
+        await kv.put(sid, JSON.stringify(body.data), {
+          expirationTtl: 300,
         });
-        return jsonResponse({ success: true, data });
+        return jsonResponse({ success: true });
       } catch {
         return jsonResponse({ success: false, msg: "Invalid JSON" }, 400);
       }

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>扫码登录</title>
+  <title>扫码确认</title>
   <style>
     :root {
       --bg: #f4f6f8;
@@ -63,7 +63,7 @@
 </head>
 <body>
   <div class="card">
-    <h1 id="title">扫码登录</h1>
+    <h1 id="title">扫码确认</h1>
     <p id="desc">正在通知电脑端…</p>
     <p class="status" id="status">请稍候</p>
     <p class="hint" id="hint"></p>
@@ -93,7 +93,7 @@
         if (kind) statusEl.classList.add("is-" + kind);
       }
 
-      titleEl.textContent = t("扫码登录", "Scan to sign in");
+      titleEl.textContent = t("扫码确认", "Scan confirm");
       document.documentElement.lang = isEn ? "en" : "zh-CN";
 
       if (!sessionId) {
@@ -104,128 +104,6 @@
 
       hintEl.textContent =
         t("会话：", "Session: ") + sessionId.slice(0, 8) + "…";
-
-      function showReject(pcStatus, data) {
-        titleEl.textContent = t("无法继续", "Cannot continue");
-        if (pcStatus === "reject_empty") {
-          descEl.textContent = t(
-            "电脑端未填写完整。",
-            "The computer form is incomplete."
-          );
-          setStatus(
-            (isEn && data && data.rejectMsgEn) ||
-              (data && data.rejectMsgZh) ||
-              t("手机号、邮箱不能为空！", "Phone and email are required!"),
-            "err"
-          );
-          return;
-        }
-        if (pcStatus === "reject_email") {
-          descEl.textContent = t(
-            "电脑端邮箱格式有误。",
-            "Invalid email on the computer."
-          );
-          setStatus(
-            (isEn && data && data.rejectMsgEn) ||
-              (data && data.rejectMsgZh) ||
-              t("邮箱格式不正确", "Invalid email format"),
-            "err"
-          );
-          return;
-        }
-        if (pcStatus === "reject_send") {
-          descEl.textContent = t(
-            "电脑端未能发送确认邮件。",
-            "The computer could not send the confirmation email."
-          );
-          setStatus(
-            (isEn && data && data.rejectMsgEn) ||
-              (data && data.rejectMsgZh) ||
-              t("发送失败，请回到电脑端重试", "Send failed. Retry on the computer."),
-            "err"
-          );
-          return;
-        }
-        descEl.textContent = t("电脑端已拒绝本次扫码。", "The computer rejected this scan.");
-        setStatus(String(pcStatus || t("已取消", "Cancelled")), "err");
-      }
-
-      function showNotified() {
-        titleEl.textContent = t("扫码成功", "Scan successful");
-        descEl.textContent = t("已通知电脑端。", "The computer has been notified.");
-        setStatus(t("等待电脑端确认…", "Waiting for the computer…"), "");
-      }
-
-      function showProcessing() {
-        titleEl.textContent = t("扫码成功", "Scan successful");
-        descEl.textContent = t("已通知电脑端。", "The computer has been notified.");
-        setStatus(t("电脑端处理中…", "Computer is processing…"), "");
-      }
-
-      function showOk() {
-        titleEl.textContent = t("扫码成功", "Scan successful");
-        descEl.textContent = t("已通知电脑端。", "The computer has been notified.");
-        setStatus(
-          t(
-            "请查收邮箱，并在邮件中点击「确认登录」",
-            "Check your email and confirm sign-in."
-          ),
-          "ok"
-        );
-      }
-
-      var pollCount = 0;
-      var maxPolls = 90;
-      var finished = false;
-
-      function pollPcStatus() {
-        if (finished) return;
-        pollCount += 1;
-        if (pollCount > maxPolls) {
-          finished = true;
-          descEl.textContent = t(
-            "等待电脑端响应超时。",
-            "Timed out waiting for the computer."
-          );
-          setStatus(
-            t("请确认电脑端已打开登录窗口后重新扫码", "Open the login window on the computer and scan again"),
-            "err"
-          );
-          return;
-        }
-        fetch(
-          "/api/scan-login?sessionId=" +
-            encodeURIComponent(sessionId) +
-            "&_t=" +
-            Date.now(),
-          { cache: "no-store" }
-        )
-          .then(function (r) {
-            return r.json();
-          })
-          .then(function (j) {
-            if (finished) return;
-            var d = (j && j.data) || {};
-            var st = String(d.pcStatus || "");
-            if (st.indexOf("reject_") === 0) {
-              finished = true;
-              showReject(st, d);
-              return;
-            }
-            if (st === "ok" || d.emailSent === true) {
-              finished = true;
-              showOk();
-              return;
-            }
-            if (st === "processing") {
-              showProcessing();
-            }
-            setTimeout(pollPcStatus, 400);
-          })
-          .catch(function () {
-            if (!finished) setTimeout(pollPcStatus, 800);
-          });
-      }
 
       descEl.textContent = t("正在通知电脑端…", "Notifying the computer…");
       setStatus(t("请稍候", "Please wait"), "");
@@ -238,8 +116,6 @@
           sessionId: sessionId,
           data: {
             scanned: true,
-            mobileConfirmed: true,
-            awaitingPc: true,
             scannedAt: Date.now(),
             ua: navigator.userAgent || "",
           },
@@ -258,8 +134,18 @@
         })
         .then(function (x) {
           if (x.ok && x.j && x.j.success === true) {
-            showNotified();
-            pollPcStatus();
+            titleEl.textContent = t("扫码成功", "Scan successful");
+            descEl.textContent = t(
+              "已通知电脑端。",
+              "The computer has been notified."
+            );
+            setStatus(
+              t(
+                "请回到电脑查看提示",
+                "Please check the computer for next steps."
+              ),
+              "ok"
+            );
             return;
           }
           var msg =
