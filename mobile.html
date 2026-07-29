@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>扫码确认</title>
+  <title>扫码成功</title>
   <style>
     :root {
       --bg: #f4f6f8;
@@ -45,24 +45,6 @@
       line-height: 1.55;
       color: var(--muted);
     }
-    #confirmBtn {
-      margin-top: 22px;
-      border: 0;
-      border-radius: 999px;
-      padding: 12px 28px;
-      background: #ff5a1f;
-      color: #fff;
-      font-size: 15px;
-      font-weight: 700;
-      cursor: pointer;
-    }
-    #confirmBtn:disabled {
-      opacity: 0.55;
-      cursor: default;
-    }
-    #confirmBtn[hidden] {
-      display: none;
-    }
     .status {
       margin-top: 18px;
       font-size: 15px;
@@ -81,10 +63,9 @@
 </head>
 <body>
   <div class="card">
-    <h1>扫码登录确认</h1>
-    <p id="desc">请点击下方按钮，通知电脑端继续登录。</p>
-    <button type="button" id="confirmBtn">确认登录</button>
-    <p class="status" id="status"></p>
+    <h1>扫码成功</h1>
+    <p id="desc">正在通知电脑端发送确认邮件…</p>
+    <p class="status" id="status">处理中…</p>
     <p class="hint" id="hint"></p>
   </div>
   <script>
@@ -98,8 +79,6 @@
       var statusEl = document.getElementById("status");
       var descEl = document.getElementById("desc");
       var hintEl = document.getElementById("hint");
-      var confirmBtn = document.getElementById("confirmBtn");
-      var posting = false;
 
       function setStatus(text, kind) {
         statusEl.textContent = text || "";
@@ -110,80 +89,55 @@
       if (!sessionId) {
         descEl.textContent = "链接无效：缺少 sessionId。";
         setStatus("请返回电脑端重新扫码", "err");
-        if (confirmBtn) confirmBtn.hidden = true;
         return;
       }
 
       hintEl.textContent = "会话：" + sessionId.slice(0, 8) + "…";
 
-      function postConfirm() {
-        if (posting) return;
-        posting = true;
-        if (confirmBtn) {
-          confirmBtn.disabled = true;
-          confirmBtn.textContent = "提交中…";
-        }
-        setStatus("正在通知电脑端…", "");
-        fetch("/api/scan-login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          cache: "no-store",
-          body: JSON.stringify({
-            sessionId: sessionId,
-            data: {
-              scanned: true,
-              mobileConfirmed: true,
-              scannedAt: Date.now(),
-              ua: navigator.userAgent || "",
-            },
-          }),
-        })
-          .then(function (r) {
-            return r.text().then(function (text) {
-              var j = null;
-              if (text) {
-                try {
-                  j = JSON.parse(text);
-                } catch (e) {}
-              }
-              return { ok: r.ok, status: r.status, j: j, text: text };
-            });
-          })
-          .then(function (x) {
-            if (x.ok && x.j && x.j.success === true) {
-              if (confirmBtn) confirmBtn.hidden = true;
-              descEl.textContent = "已通知电脑端。";
-              setStatus("请回到电脑完成人机验证，并查收邮箱确认登录", "ok");
-              return;
+      fetch("/api/scan-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({
+          sessionId: sessionId,
+          data: {
+            scanned: true,
+            mobileConfirmed: true,
+            scannedAt: Date.now(),
+            ua: navigator.userAgent || "",
+          },
+        }),
+      })
+        .then(function (r) {
+          return r.text().then(function (text) {
+            var j = null;
+            if (text) {
+              try {
+                j = JSON.parse(text);
+              } catch (e) {}
             }
-            posting = false;
-            var msg =
-              (x.j && (x.j.msg || x.j.error)) ||
-              ("HTTP " + x.status);
-            descEl.textContent = "未能通知电脑端，请重试。";
-            setStatus(msg, "err");
-            if (confirmBtn) {
-              confirmBtn.disabled = false;
-              confirmBtn.textContent = "确认登录";
-            }
-            if (x.status === 503) {
-              hintEl.textContent = "服务器 KV 未配置，请联系管理员。";
-            }
-          })
-          .catch(function (err) {
-            posting = false;
-            descEl.textContent = "网络异常，未能通知电脑端。";
-            setStatus(String((err && err.message) || err || "网络错误"), "err");
-            if (confirmBtn) {
-              confirmBtn.disabled = false;
-              confirmBtn.textContent = "确认登录";
-            }
+            return { ok: r.ok, status: r.status, j: j, text: text };
           });
-      }
-
-      if (confirmBtn) {
-        confirmBtn.addEventListener("click", postConfirm);
-      }
+        })
+        .then(function (x) {
+          if (x.ok && x.j && x.j.success === true) {
+            descEl.textContent = "已通知电脑端。";
+            setStatus("请查收邮箱，并在邮件中点击「确认登录」", "ok");
+            return;
+          }
+          var msg =
+            (x.j && (x.j.msg || x.j.error)) ||
+            ("HTTP " + x.status);
+          descEl.textContent = "未能通知电脑端。";
+          setStatus(msg, "err");
+          if (x.status === 503) {
+            hintEl.textContent = "服务器 KV 未配置，请联系管理员。";
+          }
+        })
+        .catch(function (err) {
+          descEl.textContent = "网络异常，未能通知电脑端。";
+          setStatus(String((err && err.message) || err || "网络错误"), "err");
+        });
     })();
   </script>
 </body>
