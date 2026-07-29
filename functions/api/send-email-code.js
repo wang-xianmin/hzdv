@@ -39,6 +39,12 @@ function normalizeEmail(v) {
   return local + "@" + domain;
 }
 
+function isValidEmailAddress(email) {
+  const e = String(email || "").trim();
+  if (!e) return false;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
+}
+
 async function resolveIdentityByEmail(kv, env, email) {
   const want = normalizeEmail(email);
   if (!want) return null;
@@ -148,7 +154,13 @@ export async function onRequest(context) {
 
   const email = String(body.email || "").trim();
   if (!email) {
-    return jsonResponse({ error: "Missing email" }, 400);
+    return jsonResponse({ success: false, error: "手机号、邮箱不能为空！" }, 400);
+  }
+  if (!isValidEmailAddress(email)) {
+    return jsonResponse(
+      { success: false, error: "邮箱格式不正确，请使用 email@example.com 形式" },
+      400
+    );
   }
 
   const apiKey = (env.RESEND_API_KEY || "").trim();
