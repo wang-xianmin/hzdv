@@ -287,6 +287,7 @@ export async function onRequest(context) {
     let sessionData = {
       scanned: true,
       emailLoginPending: true,
+      pcStatus: "processing",
       email,
       phone,
       username,
@@ -299,6 +300,7 @@ export async function onRequest(context) {
         if (j && typeof j === "object") sessionData = { ...j, ...sessionData };
       }
     } catch (e) {}
+    // 发信前先标 processing，手机端可立刻感知电脑端已接手
     await kv.put(sessionId, JSON.stringify(sessionData), { expirationTtl: 600 });
 
     const confirmUrl = `${origin}/api/email-login-confirm?token=${encodeURIComponent(token)}&lang=${encodeURIComponent(uiLang)}`;
@@ -320,11 +322,40 @@ export async function onRequest(context) {
     if (!ok) {
       const msg = (data && (data.message || data.name)) || `Resend HTTP ${status}`;
       console.error("[send-email-code] Resend error:", status, data);
+      try {
+        await kv.put(
+          sessionId,
+          JSON.stringify({
+            ...sessionData,
+            pcStatus: "reject_send",
+            rejectMsgZh: "发送确认邮件失败，请回到电脑端重试",
+            rejectMsgEn:
+              "Failed to send confirmation email. Please retry on the computer.",
+            awaitingPc: false,
+          }),
+          { expirationTtl: 600 }
+        );
+      } catch (eFail) {}
       return jsonResponse(
         { success: false, error: String(msg) },
         status >= 400 && status < 600 ? status : 502
       );
     }
+
+    // 发信成功即写 ok，手机端不必再等电脑端二次回写
+    try {
+      await kv.put(
+        sessionId,
+        JSON.stringify({
+          ...sessionData,
+          pcStatus: "ok",
+          emailSent: true,
+          emailLoginPending: true,
+          awaitingPc: false,
+        }),
+        { expirationTtl: 600 }
+      );
+    } catch (eOk) {}
 
     return jsonResponse({
       success: true,

@@ -150,6 +150,18 @@
         setStatus(String(pcStatus || t("已取消", "Cancelled")), "err");
       }
 
+      function showNotified() {
+        titleEl.textContent = t("扫码成功", "Scan successful");
+        descEl.textContent = t("已通知电脑端。", "The computer has been notified.");
+        setStatus(t("等待电脑端确认…", "Waiting for the computer…"), "");
+      }
+
+      function showProcessing() {
+        titleEl.textContent = t("扫码成功", "Scan successful");
+        descEl.textContent = t("已通知电脑端。", "The computer has been notified.");
+        setStatus(t("电脑端处理中…", "Computer is processing…"), "");
+      }
+
       function showOk() {
         titleEl.textContent = t("扫码成功", "Scan successful");
         descEl.textContent = t("已通知电脑端。", "The computer has been notified.");
@@ -163,11 +175,14 @@
       }
 
       var pollCount = 0;
-      var maxPolls = 40;
+      var maxPolls = 90;
+      var finished = false;
 
       function pollPcStatus() {
+        if (finished) return;
         pollCount += 1;
         if (pollCount > maxPolls) {
+          finished = true;
           descEl.textContent = t(
             "等待电脑端响应超时。",
             "Timed out waiting for the computer."
@@ -189,27 +204,26 @@
             return r.json();
           })
           .then(function (j) {
+            if (finished) return;
             var d = (j && j.data) || {};
             var st = String(d.pcStatus || "");
             if (st.indexOf("reject_") === 0) {
+              finished = true;
               showReject(st, d);
               return;
             }
-            if (st === "ok") {
+            if (st === "ok" || d.emailSent === true) {
+              finished = true;
               showOk();
               return;
             }
-            setStatus(
-              t("等待电脑端处理…", "Waiting for the computer…") +
-                " (" +
-                pollCount +
-                ")",
-              ""
-            );
-            setTimeout(pollPcStatus, 700);
+            if (st === "processing") {
+              showProcessing();
+            }
+            setTimeout(pollPcStatus, 400);
           })
           .catch(function () {
-            setTimeout(pollPcStatus, 1000);
+            if (!finished) setTimeout(pollPcStatus, 800);
           });
       }
 
@@ -244,11 +258,8 @@
         })
         .then(function (x) {
           if (x.ok && x.j && x.j.success === true) {
-            descEl.textContent = t(
-              "已送达电脑端，等待校验…",
-              "Delivered. Waiting for verification…"
-            );
-            setStatus(t("请稍候", "Please wait"), "");
+            // 与原先一致：POST 成功立刻显示扫码成功；查收邮箱等电脑端 ok
+            showNotified();
             pollPcStatus();
             return;
           }
