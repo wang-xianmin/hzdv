@@ -230,9 +230,6 @@
       descEl.textContent = t("正在通知电脑端…", "Notifying the computer…");
       setStatus(t("请稍候", "Please wait"), "");
 
-      var qrPhone = params.get("p") || "";
-      var qrEmail = params.get("e") || "";
-
       fetch("/api/scan-login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -245,10 +242,6 @@
             awaitingPc: true,
             scannedAt: Date.now(),
             ua: navigator.userAgent || "",
-            phone: qrPhone,
-            email: qrEmail,
-            siteOrigin: window.location.origin || "",
-            lang: lang
           },
         }),
       })
@@ -265,18 +258,6 @@
         })
         .then(function (x) {
           if (x.ok && x.j && x.j.success === true) {
-            var rd = (x.j && x.j.data) || {};
-            var rst = String(rd.pcStatus || "");
-            // 服务端已在 POST 内直接发信完成
-            if (x.j.triggered && rst === "ok") {
-              showOk();
-              return;
-            }
-            if (x.j.triggered && rst.indexOf("reject_") === 0) {
-              showReject(rst, rd);
-              return;
-            }
-            // 服务端未触发发信（phone/email 未预写等），走轮询
             showNotified();
             pollPcStatus();
             return;
