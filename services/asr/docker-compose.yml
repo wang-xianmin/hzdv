@@ -1,0 +1,25 @@
+# 在 VPS / Mac 上启动同一套 ASR（sherpa-onnx）服务
+# 用法：
+#   cd services/asr
+#   ./download_models.sh          # 先下载模型到 ./models
+#   docker compose up -d --build
+# 健康检查：
+#   curl http://127.0.0.1:8090/health
+
+services:
+  asr:
+    build: .
+    image: hzdv-asr:latest
+    container_name: hzdv-asr
+    ports:
+      - "${ASR_PUBLISH_PORT:-8090}:8090"
+    environment:
+      ASR_API_KEY: "${ASR_API_KEY:-}"
+      ASR_CORS_ORIGINS: "${ASR_CORS_ORIGINS:-*}"
+      ASR_MODELS_DIR: /app/models
+      ASR_NUM_THREADS: "${ASR_NUM_THREADS:-2}"
+      ASR_USE_ITN: "${ASR_USE_ITN:-1}"
+      ASR_LANGUAGE: "${ASR_LANGUAGE:-auto}"
+    volumes:
+      - ./models:/app/models
+    restart: unless-stopped

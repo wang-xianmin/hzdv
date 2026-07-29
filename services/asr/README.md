@@ -1,0 +1,111 @@
+# hzdv ASR 服务（Python + sherpa-onnx / Next-gen Kaldi）
+
+一套 Docker 镜像，VPS 上跑一份，Mac / 两个 Cloudflare 项目都调它。  
+模型来自 [k2-fsa/sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) 官方免费开源发布（ONNX）。
+
+默认模型：**SenseVoice Small int8**（中/英/日/韩/粤），约 230MB。
+
+## 架构
+
+```text
+Mac 开发 ──┐
+VPS 本仓库 ─┼── docker compose → hzdv-asr:8090
+CF 项目 A ──┤         ▲
+CF 项目 B ──┘         │
+              ASR_SERVICE_URL + 可选 ASR_API_KEY
+```
+
+Cloudflare Pages **不**内嵌 Python / ONNX 大模型；通过 `agent` 包的 `/api/asr` 代理到本服务（与 OCR 同模式）。
+
+## 1. 下载模型
+
+```bash
+cd services/asr
+chmod +x download_models.sh
+./download_models.sh              # SenseVoice int8（推荐）
+# ./download_models.sh all        # + Silero VAD
+# ./download_models.sh whisper-tiny.en
+```
+
+模型落在 `models/`（已 gitignore，勿提交大文件）。
+
+官方来源：
+
+- Releases：https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models  
+- SenseVoice 说明：https://k2-fsa.github.io/sherpa/onnx/sense-voice/pretrained.html  
+
+## 2. 本地 / VPS 启动
+
+```bash
+cd services/asr
+# 推荐：echo 'ASR_API_KEY=换成你的密钥' > .env
+docker compose up -d --build
+curl http://127.0.0.1:8090/health
+```
+
+识别示例：
+
+```bash
+curl -X POST http://127.0.0.1:8090/asr \
+  -H "X-API-Key: $ASR_API_KEY" \
+  -F "file=@/path/to/audio.wav"
+```
+
+返回大致为：
+
+```json
+{
+  "success": true,
+  "text": "识别出的文字",
+  "lang": "<|zh|>",
+  "engine": "sherpa-onnx",
+  "model": "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17",
+  "elapsed_sec": 0.4
+}
+```
+
+推荐音频：16 kHz 单声道 wav/flac/ogg。其它采样率会在服务内线性重采样。
+
+## Cloudflare Pages 环境变量
+
+| 变量 | 说明 |
+|------|------|
+| `ASR_SERVICE_URL` | **必须用域名**（Workers/Pages 不能 `fetch` 裸 IP）。例：`http://asr.hzdv.net` |
+| `ASR_API_KEY` | 与容器 `ASR_API_KEY` 一致（可选但建议生产开启） |
+
+DNS：`asr` A 记录 → VPS IP，**灰云 DNS only**。  
+Nginx 把 `asr.你的域名:80` 反代到 `127.0.0.1:8090`。
+
+前端只请求同源 `/api/asr`，不要把密钥写进浏览器。
+
+## 与 OCR 对照
+
+| | OCR | ASR |
+|--|-----|-----|
+| 目录 | `services/ocr` | `services/asr` |
+| 引擎 | RapidOCR + ONNX Runtime | sherpa-onnx |
+| 端口 | 8089 | 8090 |
+| CF 代理 | `/api/ocr` | `/api/asr` |
+| 多项目 | 共用 `OCR_SERVICE_URL` | 共用 `ASR_SERVICE_URL` |
+
+## 拷到另一项目
+
+1. 复制整个 `services/asr/`（含 `download_models.sh`）  
+2. 在目标项目加 `functions/api/asr.js` → re-export `agent/functions/api/asr.js`（或同步拷贝 agent 代理）  
+3. 配置 `ASR_SERVICE_URL` / `ASR_API_KEY`  
+4. VPS 上只需跑**一份** `hzdv-asr`，两个 CF 项目都指向它  
+
+## 推送到镜像仓库（可选）
+
+```bash
+docker tag hzdv-asr:latest ghcr.io/<org>/hzdv-asr:latest
+docker push ghcr.io/<org>/hzdv-asr:latest
+```
+
+注意：镜像默认**不含**模型权重；另一台仍需挂载已下载的 `models/`，或在容器内执行 `./download_models.sh`。
+
+## 安全建议
+
+- 生产务必设 `ASR_API_KEY`
+- 防火墙仅放行需要来源，或前面加 Nginx + HTTPS
+- 不要对公网裸奔无密钥的 8090

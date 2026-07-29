@@ -28,6 +28,7 @@ agent/
 - `functions/api/llm-ping.js` → re-export `agent/functions/api/llm-ping.js`
 - `functions/api/llm-chat.js` → re-export `agent/functions/api/llm-chat.js`
 - `functions/api/ocr.js` → re-export `agent/functions/api/ocr.js`
+- `functions/api/asr.js` → re-export `agent/functions/api/asr.js`
 
 ## 接入本站
 
@@ -53,6 +54,7 @@ agent/
 | `ALIYUN_MAAS_API_KEY` | 阿里 MaaS（二/三梯队多数模型） |
 | `DEEPSEEK_API_KEY` | DeepSeek 官方 |
 | `OCR_SERVICE_URL` / `OCR_API_KEY` | OCR 代理 |
+| `ASR_SERVICE_URL` / `ASR_API_KEY` | ASR（sherpa-onnx）代理 |
 | 各模型 `apiKeyEnv` 指向的 Secret | 第二/三梯队 |
 
 5. 绑定 KV（模型库存在键 `hzdv:llm_models_v1`，可按项目改 store 内常量）
@@ -69,6 +71,16 @@ Python + RapidOCR + ONNX Runtime 跑在仓库 `services/ocr/`（Docker，VPS `oc
    → 此时**尚未**送进任何 LLM；后续 chat 网关可把这段当 user 上下文再走梯队。
 
 `agent` 只含 OCR **HTTP 代理**；多项目可共用同一 `OCR_SERVICE_URL`。
+
+## 与 ASR 服务的关系
+
+Python + sherpa-onnx（Next-gen Kaldi ONNX）跑在仓库 `services/asr/`（Docker，默认端口 `8090`）。
+
+1. 先 `cd services/asr && ./download_models.sh` 下载免费 SenseVoice 等模型  
+2. `docker compose up -d --build`  
+3. Pages 配 `ASR_SERVICE_URL` / `ASR_API_KEY`，浏览器走同源 `/api/asr`
+
+与 OCR 一样：CF 上只跑代理，模型与推理在 VPS；多个 CF 项目可共用同一 ASR 服务。
 
 ## Auto 选模与回复语言
 

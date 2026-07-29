@@ -1,0 +1,12 @@
+.env
+.asr_api_key
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+models/**
+!models/.gitkeep
+!models/README.md
+*.onnx
+*.tar.bz2
+.DS_Store
