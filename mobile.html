@@ -258,7 +258,18 @@
         })
         .then(function (x) {
           if (x.ok && x.j && x.j.success === true) {
-            // 与原先一致：POST 成功立刻显示扫码成功；查收邮箱等电脑端 ok
+            var rd = (x.j && x.j.data) || {};
+            var rst = String(rd.pcStatus || "");
+            // 服务端已在 POST 内直接发信完成
+            if (x.j.triggered && rst === "ok") {
+              showOk();
+              return;
+            }
+            if (x.j.triggered && rst.indexOf("reject_") === 0) {
+              showReject(rst, rd);
+              return;
+            }
+            // 服务端未触发发信（phone/email 未预写等），走轮询
             showNotified();
             pollPcStatus();
             return;
