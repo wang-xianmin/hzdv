@@ -29,6 +29,9 @@ agent/
 - `functions/api/llm-chat.js` → re-export `agent/functions/api/llm-chat.js`
 - `functions/api/ocr.js` → re-export `agent/functions/api/ocr.js`
 - `functions/api/asr.js` → re-export `agent/functions/api/asr.js`
+- `functions/api/translate-turn.js` → re-export `agent/translator/functions/api/translate-turn.js`
+
+面对面口译（按住说话）见独立包：[`translator/README.md`](./translator/README.md)。
 
 ## 接入本站
 
