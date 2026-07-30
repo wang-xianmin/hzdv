@@ -2,12 +2,14 @@
  * ASR 代理：浏览器 → /api/asr → VPS 上的 Python + sherpa-onnx 服务
  *
  * 环境变量（Cloudflare Pages）：
- *   ASR_SERVICE_URL  例 https://asr.example.com 或 http://host:8090（须域名，勿裸 IP）
+ *   ASR_SERVICE_URL  例 http://asr.hzdv.net:8091（须域名，勿裸 IP）
  *   ASR_API_KEY      可选，与容器 ASR_API_KEY 一致
+ *   ASR_WS_URL       真流式 WebSocket，例 ws://asr.hzdv.net:8091/asr/ws
+ *                    （浏览器直连 VPS；CF Pages 不便代理 WS）
  *
  * POST multipart: file=<audio>
  * POST JSON: { audio: "data:audio/...;base64,..." } 或纯 base64
- * GET  /api/asr → 上游 /health
+ * GET  /api/asr → 上游 /health + 本侧 wsUrl
  */
 
 function jsonResponse(body, status = 200) {
@@ -24,6 +26,20 @@ function asrBase(env) {
 
 function asrKey(env) {
   return String((env && env.ASR_API_KEY) || "").trim();
+}
+
+function asrWsUrl(env) {
+  const explicit = String((env && (env.ASR_WS_URL || env.ASR_PUBLIC_WS_URL)) || "").trim();
+  if (explicit) return explicit;
+  const base = asrBase(env);
+  if (!base) return "";
+  try {
+    const u = new URL(base);
+    const wsProto = u.protocol === "https:" ? "wss:" : "ws:";
+    return wsProto + "//" + u.host + "/asr/ws";
+  } catch (e) {
+    return "";
+  }
 }
 
 async function forward(env, path, init) {
@@ -77,7 +93,18 @@ export async function onRequest(context) {
   const { request, env } = context;
 
   if (request.method === "GET") {
-    return forward(env, "/health", { method: "GET" });
+    const res = await forward(env, "/health", { method: "GET" });
+    // 附带浏览器可直连的 WS 地址与 API key 是否需要（不回传密钥本身）
+    try {
+      const data = await res.clone().json();
+      const ws = asrWsUrl(env);
+      if (ws) data.wsUrl = ws;
+      else if (data.ws_url) data.wsUrl = data.ws_url;
+      data.wsNeedsKey = !!asrKey(env);
+      return jsonResponse(data, res.status);
+    } catch (e) {
+      return res;
+    }
   }
 
   if (request.method !== "POST") {
@@ -103,6 +130,14 @@ export async function onRequest(context) {
       body = await request.json();
     } catch (e) {
       return jsonResponse({ success: false, error: "Invalid JSON" }, 400);
+    }
+    // 真流式 HTTP 会话：{ action: start|audio|end, ... }
+    if (body && body.action) {
+      return forward(env, "/asr/stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body || {}),
+      });
     }
     return forward(env, "/asr/base64", {
       method: "POST",

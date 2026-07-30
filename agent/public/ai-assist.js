@@ -57,7 +57,7 @@
   var asrAbort = null;
   var attachStrip = null;
   var lightboxEl = null;
-  /** 麦克风录音状态（默认 VAD 断句 + 边录边上屏；系统设置 asrVadLive=0 可切回整段识别） */
+  /** 麦克风录音状态：mode 0整段 / 1 VAD+SenseVoice / 2真流式 */
   var asrMic = {
     recording: false,
     stream: null,
@@ -67,6 +67,7 @@
     chunks: [],
     sampleRate: 16000,
     btn: null,
+    micMode: 1,
     /** VAD */
     vadMode: true,
     speechActive: false,
@@ -80,6 +81,15 @@
     pendingText: {},
     inFlight: 0,
     statusMsgIdx: null,
+    /** 真流式 */
+    streamSessionId: null,
+    streamBusy: false,
+    streamQueue: [],
+    streamCommitted: [],
+    streamPartial: "",
+    inputPrefix: "",
+    streamSendTimer: null,
+    streamBuf: [],
   };
 
   var ASR_VAD = {
@@ -97,15 +107,25 @@
     speechFactor: 2.6,
   };
 
-  function isAsrVadLiveEnabled() {
+  /** 0整段 / 1 VAD断句离线 / 2真流式（互斥） */
+  function getAsrMicMode() {
     var s =
       (typeof window.getHzdvSystemSettings === "function" && window.getHzdvSystemSettings()) ||
       window.__HZDV_SYSTEM_SETTINGS ||
       null;
-    if (!s || s.asrVadLive == null) return true;
-    var v = s.asrVadLive;
-    if (v === false || v === "0" || v === 0 || v === "false") return false;
-    return true;
+    if (s && s.asrMicMode != null) {
+      var n = parseInt(s.asrMicMode, 10);
+      if (n === 0 || n === 1 || n === 2) return n;
+    }
+    // 兼容旧 asrVadLive
+    if (s && (s.asrVadLive === 0 || s.asrVadLive === "0" || s.asrVadLive === false)) {
+      return 0;
+    }
+    return 1;
+  }
+
+  function isAsrVadLiveEnabled() {
+    return getAsrMicMode() === 1;
   }
 
   /** 排版硬校验原因码 → 文案 */
@@ -171,15 +191,19 @@
     if (!btn) return;
     btn.classList.toggle("is-recording", !!on);
     btn.setAttribute("aria-pressed", on ? "true" : "false");
-    var vad = !!asrMic.vadMode;
+    var mode = asrMic.micMode;
     btn.setAttribute(
       "aria-label",
       on ? t("停止录音", "Stop recording") : t("语音", "Voice")
     );
     if (on) {
-      btn.title = vad
-        ? t("点击结束（停顿会自动上屏）", "Click to stop (auto-transcribe on pause)")
-        : t("点击结束并识别", "Click to stop and transcribe");
+      if (mode === 2) {
+        btn.title = t("真流式识别中，点击结束", "Streaming ASR; click to stop");
+      } else if (mode === 1) {
+        btn.title = t("点击结束（停顿会自动上屏）", "Click to stop (auto-transcribe on pause)");
+      } else {
+        btn.title = t("点击结束并识别", "Click to stop and transcribe");
+      }
     } else {
       btn.title = t("语音", "Voice");
     }
@@ -216,6 +240,17 @@
     asrMic.speechChunks = [];
     asrMic.preroll = [];
     asrMic.chunks = [];
+    asrMic.streamSessionId = null;
+    asrMic.streamBusy = false;
+    asrMic.streamQueue = [];
+    asrMic.streamCommitted = [];
+    asrMic.streamPartial = "";
+    asrMic.inputPrefix = "";
+    asrMic.streamBuf = [];
+    if (asrMic.streamSendTimer) {
+      clearInterval(asrMic.streamSendTimer);
+      asrMic.streamSendTimer = null;
+    }
     setMicRecordingUi(false);
   }
 
@@ -300,6 +335,171 @@
       asrMic.nextApply += 1;
       if (piece) applyAsrTextToInput(piece);
     }
+  }
+
+  function float32ToBase64(samples) {
+    var buf = samples.buffer.slice(
+      samples.byteOffset,
+      samples.byteOffset + samples.byteLength
+    );
+    var bytes = new Uint8Array(buf);
+    var bin = "";
+    var chunk = 0x8000;
+    for (var i = 0; i < bytes.length; i += chunk) {
+      bin += String.fromCharCode.apply(
+        null,
+        bytes.subarray(i, Math.min(i + chunk, bytes.length))
+      );
+    }
+    return btoa(bin);
+  }
+
+  function resampleLinear(samples, fromSr, toSr) {
+    if (fromSr === toSr) return samples;
+    var n = Math.max(1, Math.round((samples.length * toSr) / fromSr));
+    var out = new Float32Array(n);
+    for (var i = 0; i < n; i++) {
+      var x = (i * (samples.length - 1)) / Math.max(1, n - 1);
+      var i0 = Math.floor(x);
+      var i1 = Math.min(samples.length - 1, i0 + 1);
+      var t = x - i0;
+      out[i] = samples[i0] * (1 - t) + samples[i1] * t;
+    }
+    return out;
+  }
+
+  function paintStreamInput() {
+    if (!inputEl) return;
+    var prefix = asrMic.inputPrefix || "";
+    var parts = (asrMic.streamCommitted || []).filter(Boolean);
+    if (asrMic.streamPartial) parts = parts.concat([asrMic.streamPartial]);
+    var body = parts.join(" ").trim();
+    if (prefix && body) inputEl.value = prefix + " " + body;
+    else inputEl.value = prefix || body || "";
+    syncSendState();
+  }
+
+  function postAsrStream(body) {
+    return fetch("/api/asr", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify(body),
+    }).then(function (res) {
+      return res.json().then(function (data) {
+        return { ok: res.ok, data: data || {} };
+      });
+    });
+  }
+
+  function drainStreamQueue() {
+    if (asrMic.streamBusy) return;
+    if (!asrMic.streamQueue.length) return;
+    asrMic.streamBusy = true;
+    var job = asrMic.streamQueue.shift();
+    postAsrStream(job.body)
+      .then(function (pack) {
+        asrMic.streamBusy = false;
+        if (job.onDone) job.onDone(pack);
+        drainStreamQueue();
+      })
+      .catch(function (err) {
+        asrMic.streamBusy = false;
+        if (job.onDone) job.onDone({ ok: false, data: { error: String(err) } });
+        drainStreamQueue();
+      });
+  }
+
+  function enqueueStream(body, onDone) {
+    asrMic.streamQueue.push({ body: body, onDone: onDone });
+    drainStreamQueue();
+  }
+
+  function flushStreamAudioBuf(force) {
+    if (asrMic.micMode !== 2) return;
+    if (!force && !asrMic.recording) return;
+    if (!asrMic.streamSessionId) return;
+    if (!asrMic.streamBuf.length) return;
+    var samples = mergeFloatChunks(asrMic.streamBuf);
+    asrMic.streamBuf = [];
+    if (!samples.length) return;
+    var pcm16k = resampleLinear(samples, asrMic.sampleRate || 48000, 16000);
+    enqueueStream(
+      {
+        action: "audio",
+        sessionId: asrMic.streamSessionId,
+        pcm: float32ToBase64(pcm16k),
+        sampleRate: 16000,
+        dtype: "float32",
+      },
+      function (pack) {
+        if (!pack || !pack.ok || pack.data.success === false) {
+          setAsrLiveStatus(
+            t("真流式识别失败：", "Streaming ASR failed: ") +
+              ((pack && pack.data && (pack.data.error || pack.data.detail)) ||
+                "unknown")
+          );
+          return;
+        }
+        var d = pack.data;
+        if (Array.isArray(d.committed)) asrMic.streamCommitted = d.committed.slice();
+        if (d.final) {
+          asrMic.streamPartial = "";
+        } else {
+          asrMic.streamPartial = String(d.partial || "").trim();
+        }
+        paintStreamInput();
+      }
+    );
+  }
+
+  function startStreamingSession(done) {
+    postAsrStream({ action: "start" })
+      .then(function (pack) {
+        if (!pack.ok || pack.data.success === false || !pack.data.sessionId) {
+          done(
+            new Error(
+              (pack.data && (pack.data.error || pack.data.detail)) ||
+                "无法启动真流式会话"
+            )
+          );
+          return;
+        }
+        asrMic.streamSessionId = pack.data.sessionId;
+        asrMic.streamCommitted = [];
+        asrMic.streamPartial = "";
+        done(null);
+      })
+      .catch(function (err) {
+        done(err);
+      });
+  }
+
+  function endStreamingSession(cb) {
+    flushStreamAudioBuf(true);
+    var sid = asrMic.streamSessionId;
+    if (!sid) {
+      if (cb) cb();
+      return;
+    }
+    function tryEnd() {
+      if (asrMic.streamBusy || asrMic.streamQueue.length) {
+        setTimeout(tryEnd, 80);
+        return;
+      }
+      enqueueStream({ action: "end", sessionId: sid }, function (pack) {
+        asrMic.streamSessionId = null;
+        if (pack && pack.ok && pack.data) {
+          if (Array.isArray(pack.data.committed)) {
+            asrMic.streamCommitted = pack.data.committed.slice();
+          }
+          asrMic.streamPartial = "";
+          paintStreamInput();
+        }
+        if (cb) cb();
+      });
+    }
+    tryEnd();
   }
 
   function runAsrBlob(blob, filename, opts) {
@@ -490,77 +690,156 @@
       );
       return;
     }
-    navigator.mediaDevices
-      .getUserMedia({ audio: true })
-      .then(function (stream) {
-        var Ctx = window.AudioContext || window.webkitAudioContext;
-        if (!Ctx) {
-          stream.getTracks().forEach(function (tr) {
-            tr.stop();
-          });
+    var mode = getAsrMicMode();
+    asrMic.micMode = mode;
+    asrMic.vadMode = mode === 1;
+
+    function beginCapture() {
+      navigator.mediaDevices
+        .getUserMedia({ audio: true })
+        .then(function (stream) {
+          var Ctx = window.AudioContext || window.webkitAudioContext;
+          if (!Ctx) {
+            stream.getTracks().forEach(function (tr) {
+              tr.stop();
+            });
+            appendAssistant(
+              t("当前浏览器不支持 AudioContext。", "AudioContext is not supported.")
+            );
+            return;
+          }
+          var ctx = new Ctx();
+          var source = ctx.createMediaStreamSource(stream);
+          var processor = ctx.createScriptProcessor(4096, 1, 1);
+          asrMic.stream = stream;
+          asrMic.ctx = ctx;
+          asrMic.source = source;
+          asrMic.processor = processor;
+          asrMic.chunks = [];
+          asrMic.sampleRate = ctx.sampleRate || 48000;
+          asrMic.speechActive = false;
+          asrMic.silenceMs = 0;
+          asrMic.speechMs = 0;
+          asrMic.speechChunks = [];
+          asrMic.preroll = [];
+          asrMic.noiseEma = 0.008;
+          asrMic.seq = 0;
+          asrMic.nextApply = 1;
+          asrMic.pendingText = {};
+          asrMic.inFlight = 0;
+          asrMic.statusMsgIdx = null;
+          asrMic.streamBuf = [];
+          asrMic.inputPrefix = inputEl ? String(inputEl.value || "").trim() : "";
+          asrMic.recording = true;
+          setMicRecordingUi(true);
+          if (mode === 2) {
+            setAsrLiveStatus(
+              t(
+                "SenseVoice 流式识别中… 边说边上屏，再点麦克风结束",
+                "SenseVoice streaming… text appears live; click mic to stop"
+              )
+            );
+            asrMic.streamSendTimer = setInterval(flushStreamAudioBuf, 280);
+          } else if (mode === 1) {
+            setAsrLiveStatus(
+              t(
+                "正在听… 停顿后自动上屏，再点麦克风结束",
+                "Listening… auto-fill on pause; click mic to stop"
+              )
+            );
+          }
+          processor.onaudioprocess = function (ev) {
+            if (!asrMic.recording) return;
+            var input = ev.inputBuffer.getChannelData(0);
+            if (asrMic.micMode === 2) {
+              asrMic.streamBuf.push(new Float32Array(input));
+            } else if (asrMic.vadMode) {
+              onVadAudioFrame(input);
+            } else {
+              asrMic.chunks.push(new Float32Array(input));
+            }
+          };
+          var mute = ctx.createGain();
+          mute.gain.value = 0;
+          source.connect(processor);
+          processor.connect(mute);
+          mute.connect(ctx.destination);
+        })
+        .catch(function (err) {
           appendAssistant(
-            t("当前浏览器不支持 AudioContext。", "AudioContext is not supported.")
+            t("无法打开麦克风：", "Cannot open microphone: ") +
+              String((err && err.message) || err || "")
+          );
+        });
+    }
+
+    if (mode === 2) {
+      startStreamingSession(function (err) {
+        if (err) {
+          appendAssistant(
+            t("无法启动真流式：", "Cannot start streaming ASR: ") +
+              String((err && err.message) || err || "") +
+              t(
+                "（请确认 VPS 已 ./download_models.sh streaming 并重启容器）",
+                " (ensure VPS ran download_models.sh streaming and restarted)"
+              )
           );
           return;
         }
-        var ctx = new Ctx();
-        var source = ctx.createMediaStreamSource(stream);
-        var processor = ctx.createScriptProcessor(4096, 1, 1);
-        asrMic.stream = stream;
-        asrMic.ctx = ctx;
-        asrMic.source = source;
-        asrMic.processor = processor;
-        asrMic.chunks = [];
-        asrMic.sampleRate = ctx.sampleRate || 48000;
-        asrMic.vadMode = isAsrVadLiveEnabled();
-        asrMic.speechActive = false;
-        asrMic.silenceMs = 0;
-        asrMic.speechMs = 0;
-        asrMic.speechChunks = [];
-        asrMic.preroll = [];
-        asrMic.noiseEma = 0.008;
-        asrMic.seq = 0;
-        asrMic.nextApply = 1;
-        asrMic.pendingText = {};
-        asrMic.inFlight = 0;
-        asrMic.statusMsgIdx = null;
-        asrMic.recording = true;
-        setMicRecordingUi(true);
-        if (asrMic.vadMode) {
-          setAsrLiveStatus(
-            t(
-              "正在听… 停顿后自动上屏，再点麦克风结束",
-              "Listening… auto-fill on pause; click mic to stop"
-            )
-          );
-        }
-        processor.onaudioprocess = function (ev) {
-          if (!asrMic.recording) return;
-          var input = ev.inputBuffer.getChannelData(0);
-          if (asrMic.vadMode) {
-            onVadAudioFrame(input);
-          } else {
-            asrMic.chunks.push(new Float32Array(input));
-          }
-        };
-        var mute = ctx.createGain();
-        mute.gain.value = 0;
-        source.connect(processor);
-        processor.connect(mute);
-        mute.connect(ctx.destination);
-      })
-      .catch(function (err) {
-        appendAssistant(
-          t("无法打开麦克风：", "Cannot open microphone: ") +
-            String((err && err.message) || err || "")
-        );
+        beginCapture();
       });
+      return;
+    }
+    beginCapture();
   }
 
   function finishMicRecording() {
     if (!asrMic.recording) return;
-    var vad = !!asrMic.vadMode;
-    if (vad) {
+    var mode = asrMic.micMode;
+
+    if (mode === 2) {
+      asrMic.recording = false;
+      setMicRecordingUi(false);
+      if (asrMic.streamSendTimer) {
+        clearInterval(asrMic.streamSendTimer);
+        asrMic.streamSendTimer = null;
+      }
+      // 先停采集，再冲刷流式会话（保留 sessionId）
+      try {
+        if (asrMic.processor) {
+          asrMic.processor.disconnect();
+          asrMic.processor.onaudioprocess = null;
+        }
+      } catch (e1) {}
+      try {
+        if (asrMic.source) asrMic.source.disconnect();
+      } catch (e2) {}
+      try {
+        if (asrMic.ctx && asrMic.ctx.state !== "closed") asrMic.ctx.close();
+      } catch (e3) {}
+      try {
+        if (asrMic.stream) {
+          asrMic.stream.getTracks().forEach(function (tr) {
+            tr.stop();
+          });
+        }
+      } catch (e4) {}
+      asrMic.processor = null;
+      asrMic.source = null;
+      asrMic.ctx = null;
+      asrMic.stream = null;
+      endStreamingSession(function () {
+        setAsrLiveStatus(
+          t(
+            "真流式结束，文字已写入输入框",
+            "Streaming ended; text is in the input"
+          )
+        );
+      });
+      return;
+    }
+
+    if (mode === 1) {
       if (asrMic.speechActive) emitVadSegment(true);
       stopMicCapture();
       if (asrMic.inFlight === 0 && asrMic.seq === 0) {
@@ -572,6 +851,7 @@
       }
       return;
     }
+
     var chunks = asrMic.chunks.slice();
     var sr = asrMic.sampleRate || 48000;
     stopMicCapture();

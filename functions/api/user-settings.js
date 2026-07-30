@@ -23,8 +23,8 @@ const DEFAULT_SETTINGS = {
   ocrVisionMaxPages: 6,
   pdfVisionMaxPages: 6,
   pdfRenderDpi: 120,
-  /** 1=麦克风 VAD 断句边录边上屏；0=整段录完再识别 */
-  asrVadLive: 1,
+  /** 0整段离线 SenseVoice / 1客户端VAD+SenseVoice / 2服务端 SenseVoice+VAD 模拟流式 */
+  asrMicMode: 1,
 };
 
 function mergeSettings(saved) {
@@ -34,6 +34,10 @@ function mergeSettings(saved) {
     if (DEFAULT_SETTINGS.hasOwnProperty(k)) {
       out[k] = saved.hasOwnProperty(k) ? saved[k] : DEFAULT_SETTINGS[k];
     }
+  }
+  if (saved.asrMicMode == null && saved.asrVadLive != null) {
+    var legacy = parseInt(saved.asrVadLive, 10);
+    out.asrMicMode = legacy === 0 ? 0 : 1;
   }
   return out;
 }
@@ -76,7 +80,16 @@ function sanitizeIncoming(incoming) {
       base.pdfVisionMaxPages
     ),
     pdfRenderDpi: clampInt(incoming.pdfRenderDpi, 72, 200, base.pdfRenderDpi),
-    asrVadLive: clampInt(incoming.asrVadLive, 0, 1, base.asrVadLive),
+    asrMicMode: clampInt(
+      incoming.asrMicMode != null
+        ? incoming.asrMicMode
+        : incoming.asrVadLive === 0 || incoming.asrVadLive === "0"
+          ? 0
+          : base.asrMicMode,
+      0,
+      2,
+      base.asrMicMode
+    ),
   };
 }
 

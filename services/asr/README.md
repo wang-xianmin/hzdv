@@ -67,6 +67,28 @@ curl -X POST http://127.0.0.1:8091/asr \
 
 推荐音频：16 kHz 单声道 wav/flac/ogg。其它采样率会在服务内线性重采样。
 
+## 真流式（可选）
+
+SenseVoice Small **没有**真正的 Online 流式权重。本服务的「流式」固定为：
+
+**Silero VAD + SenseVoice Small ONNX**（边缓冲边识别，模拟流式；中英日韩粤）
+
+```bash
+cd services/asr
+./download_models.sh sensevoice-int8   # 若尚未下载离线模型
+./download_models.sh vad
+./download_models.sh streaming         # 写入 streaming.json = sense_voice_simulate
+docker compose up -d --build
+curl http://127.0.0.1:8091/health      # streaming_mode=sense_voice_simulate
+```
+
+不再使用 Zipformer Online / CTC 作为默认流式后端。
+
+- HTTP 会话：`POST /asr/stream`（`action=start|audio|end`），经 CF `/api/asr` 代理  
+- WebSocket：`/asr/ws`（浏览器可直连；Pages 配可选 `ASR_WS_URL`）
+
+系统设置 `asrMicMode`：`0` 整段 / `1` VAD断句离线 / `2` 真流式（三选一，互斥）。
+
 ## Cloudflare Pages 环境变量
 
 | 变量 | 说明 |
