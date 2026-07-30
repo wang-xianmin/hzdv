@@ -23,6 +23,7 @@ COPY requirements.txt .
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
 COPY app.py .
+COPY icon_templates ./icon_templates
 
 EXPOSE 8089
 

@@ -275,6 +275,158 @@ def detect_green_checkmarks(arr: Any) -> list[dict[str, Any]]:
     return detect_status_marks(arr)
 
 
+# UI 线框图标：模板放 icon_templates/，慢慢追加即可
+_ICON_TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon_templates")
+UI_ICON_CATALOG: list[dict[str, Any]] = [
+    {
+        "id": "git_branch",
+        "char": "🔱",
+        "file": "git_branch.png",
+        "threshold": 0.55,
+    },
+    {
+        "id": "external_link",
+        "char": "⧉",
+        "file": "external_link.png",
+        "threshold": 0.55,
+    },
+]
+_ICON_TEMPLATE_CACHE: dict[str, Any] | None = None
+
+
+def _load_ui_icon_templates() -> dict[str, Any]:
+    """加载图标墨迹模板（二值图）。"""
+    global _ICON_TEMPLATE_CACHE
+    if _ICON_TEMPLATE_CACHE is not None:
+        return _ICON_TEMPLATE_CACHE
+    import cv2
+    import numpy as np
+
+    cache: dict[str, Any] = {}
+    for spec in UI_ICON_CATALOG:
+        path = os.path.join(_ICON_TEMPLATE_DIR, str(spec["file"]))
+        if not os.path.isfile(path):
+            print("[ocr] missing icon template:", path)
+            continue
+        img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+        if img is None:
+            continue
+        if img.ndim == 3 and img.shape[2] == 4:
+            bgr = img[:, :, :3]
+            alpha = img[:, :, 3]
+            gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+            ink = ((gray < 200) & (alpha > 40)).astype(np.uint8) * 255
+        elif img.ndim == 3:
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            _, ink = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY_INV)
+        else:
+            _, ink = cv2.threshold(img, 200, 255, cv2.THRESH_BINARY_INV)
+        if cv2.countNonZero(ink) < 8:
+            continue
+        cache[str(spec["id"])] = {"ink": ink, "spec": spec}
+    _ICON_TEMPLATE_CACHE = cache
+    return cache
+
+
+def _image_ink_mask(arr: Any) -> Any:
+    """灰度墨迹掩膜：抓灰色/黑色线框图标（不依赖彩色）。"""
+    import cv2
+    import numpy as np
+
+    if arr.ndim == 3:
+        gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+    else:
+        gray = arr
+    # 中灰图标 ~90–160；阈值偏松以覆盖浅灰描边
+    _, ink = cv2.threshold(gray, 185, 255, cv2.THRESH_BINARY_INV)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    ink = cv2.morphologyEx(ink, cv2.MORPH_OPEN, kernel, iterations=1)
+    return ink
+
+
+def detect_ui_icons(arr: Any) -> list[dict[str, Any]]:
+    """多尺度模板匹配：检出 UI 线框图标并映射为 Unicode（🔱 / ⧉ …）。"""
+    import cv2
+    import numpy as np
+
+    if arr is None or getattr(arr, "ndim", 0) < 2:
+        return []
+    h_img, w_img = int(arr.shape[0]), int(arr.shape[1])
+    if h_img < 12 or w_img < 12:
+        return []
+
+    templates = _load_ui_icon_templates()
+    if not templates:
+        return []
+
+    ink = _image_ink_mask(arr)
+    # 尺度：相对模板原尺寸；整页截图上图标常 0.7x–3x
+    scales = (0.55, 0.7, 0.85, 1.0, 1.15, 1.35, 1.6, 1.9, 2.3, 2.8, 3.3)
+    candidates: list[dict[str, Any]] = []
+
+    for _tid, pack in templates.items():
+        tmpl = pack["ink"]
+        spec = pack["spec"]
+        score_th = float(spec.get("threshold") or 0.55)
+        th0, tw0 = int(tmpl.shape[0]), int(tmpl.shape[1])
+        for scale in scales:
+            rh = max(10, int(round(th0 * scale)))
+            rw = max(10, int(round(tw0 * scale)))
+            if rh >= h_img or rw >= w_img:
+                continue
+            if rh * rw > h_img * w_img * 0.25:
+                continue
+            resized = cv2.resize(tmpl, (rw, rh), interpolation=cv2.INTER_AREA)
+            if cv2.countNonZero(resized) < 8:
+                continue
+            res = cv2.matchTemplate(ink, resized, cv2.TM_CCOEFF_NORMED)
+            loc = np.where(res >= score_th)
+            for y, x in zip(loc[0].tolist(), loc[1].tolist()):
+                score = float(res[y, x])
+                x0, y0 = int(x), int(y)
+                x1, y1 = x0 + rw, y0 + rh
+                candidates.append(
+                    {
+                        "text": str(spec["char"]),
+                        "score": round(score, 3),
+                        "box": _rect_to_box(float(x0), float(y0), float(x1), float(y1)),
+                        "symbol": str(spec["id"]),
+                        "engine": "opencv_template",
+                        "area": float(rw * rh),
+                        "bbox": [x0, y0, x1, y1],
+                        "match": round(score, 3),
+                        "scale": round(scale, 3),
+                    }
+                )
+
+    if not candidates:
+        return []
+
+    candidates.sort(key=lambda s: float(s.get("score") or 0), reverse=True)
+    kept: list[dict[str, Any]] = []
+    for s in candidates:
+        b = s["bbox"]
+        xyxy = (float(b[0]), float(b[1]), float(b[2]), float(b[3]))
+        if any(
+            _iou_xyxy(
+                xyxy,
+                (
+                    float(k["bbox"][0]),
+                    float(k["bbox"][1]),
+                    float(k["bbox"][2]),
+                    float(k["bbox"][3]),
+                ),
+            )
+            > 0.3
+            for k in kept
+        ):
+            continue
+        kept.append(s)
+        if len(kept) >= 40:
+            break
+    return kept
+
+
 def _line_xyxy(ln: dict[str, Any]) -> tuple[float, float, float, float] | None:
     box = ln.get("box")
     if not box:
@@ -296,10 +448,10 @@ def _y_overlap_ratio(a: tuple[float, float, float, float], b: tuple[float, float
 def _merge_symbol_lines(
     lines: list[dict[str, Any]], symbols: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
-    """把状态符号（✅/❎/❌）贴到同一视觉行最近的文字块前后；无邻行则保留独立符号行。
+    """把检出符号贴到同一视觉行最近的文字块前后；无邻行则保留独立符号行。
 
     规则：
-    1. 去掉与符号强重叠的 OCR 误识碎片
+    1. 去掉与符号重叠（或中心落在符号内）的 OCR 误识碎片（如分支图标→°）
     2. 找 y 重叠足够（或中心距小）的文字块，按水平距离选最近
     3. 符号在文字左侧 → 前缀「符号+空格」；在右侧 → 后缀「空格+符号」
     4. 同一文字块可挂多个符号（按 x 排序）
@@ -307,7 +459,7 @@ def _merge_symbol_lines(
     if not symbols:
         return lines
 
-    STATUS_CHARS = ("✅", "❎", "❌")
+    KNOWN_SYMBOL_CHARS = ("✅", "❎", "❌", "🔱", "⧉")
 
     sym_rects: list[tuple[float, float, float, float]] = []
     for s in symbols:
@@ -315,14 +467,26 @@ def _merge_symbol_lines(
         if len(b) == 4:
             sym_rects.append((float(b[0]), float(b[1]), float(b[2]), float(b[3])))
 
-    # 1) 清掉与符号重叠的 OCR 碎片
+    def _center_in(
+        xyxy: tuple[float, float, float, float], sr: tuple[float, float, float, float]
+    ) -> bool:
+        cx = (xyxy[0] + xyxy[2]) * 0.5
+        cy = (xyxy[1] + xyxy[3]) * 0.5
+        return sr[0] <= cx <= sr[2] and sr[1] <= cy <= sr[3]
+
+    # 1) 清掉与符号重叠 / 落在符号内的 OCR 碎片（含 ° 误识）
     cleaned: list[dict[str, Any]] = []
     for ln in lines or []:
         xyxy = _line_xyxy(ln)
         if xyxy is None or not sym_rects:
             cleaned.append(ln)
             continue
-        if any(_iou_xyxy(xyxy, sr) > 0.25 for sr in sym_rects):
+        drop = False
+        for sr in sym_rects:
+            if _iou_xyxy(xyxy, sr) > 0.15 or _center_in(xyxy, sr):
+                drop = True
+                break
+        if drop:
             continue
         cleaned.append(dict(ln))
 
@@ -350,8 +514,8 @@ def _merge_symbol_lines(
     orphan_symbols: list[dict[str, Any]] = []
 
     for s in symbols:
-        char = str(s.get("text") or "✅")
-        if char not in STATUS_CHARS:
+        char = str(s.get("text") or "").strip()
+        if not char:
             char = "✅"
         b = s.get("bbox") or []
         if len(b) != 4:
@@ -413,13 +577,13 @@ def _merge_symbol_lines(
 
     def _strip_leading_status(t: str) -> str:
         t = t.strip()
-        while t and t[0] in STATUS_CHARS:
+        while t and t[0] in KNOWN_SYMBOL_CHARS:
             t = t[1:].lstrip()
         return t
 
     def _strip_trailing_status(t: str) -> str:
         t = t.strip()
-        while t and t[-1] in STATUS_CHARS:
+        while t and t[-1] in KNOWN_SYMBOL_CHARS:
             t = t[:-1].rstrip()
         return t
 
@@ -444,7 +608,7 @@ def _merge_symbol_lines(
                 "score": float(s.get("score") or 0.99),
                 "box": s.get("box"),
                 "symbol": s.get("symbol") or "status_mark",
-                "engine": "opencv",
+                "engine": s.get("engine") or "opencv",
             }
         )
 
@@ -650,6 +814,176 @@ def _join_cell_fragments(parts: list[str]) -> str:
     cjk = sum(1 for ch in sample if "\u4e00" <= ch <= "\u9fff")
     joiner = "" if cjk >= max(1, len(sample) // 4) else " "
     return joiner.join(parts).strip()
+
+
+def _is_glued_latin_text(text: str) -> bool:
+    """像 anhourago：几乎全是拉丁字母/数字，却没有空格。"""
+    t = (text or "").strip()
+    if len(t) < 4 or " " in t or "\t" in t:
+        return False
+    # 已有常见分隔则不必修
+    if any(ch in t for ch in ("-", "_", "/", "·", "|")):
+        return False
+    ascii_alnum = sum(1 for c in t if c.isalnum() and ord(c) < 128)
+    return ascii_alnum / len(t) >= 0.85
+
+
+def _split_latin_by_widths(text: str, widths: list[float]) -> str:
+    """按各词块像素宽度，把无空格拉丁串切成多词。"""
+    n = len(text)
+    k = len(widths)
+    if k <= 1 or n < k:
+        return text
+    total = float(sum(max(1.0, w) for w in widths))
+    exact = [max(1.0, w) / total * n for w in widths]
+    counts = [int(x) for x in exact]
+    # 先保证能分完；零宽块至少 0，其余用最大余数法
+    for i in range(k):
+        if exact[i] >= 0.5 and counts[i] < 1:
+            counts[i] = 1
+    while sum(counts) > n:
+        # 从最大块减
+        j = max(range(k), key=lambda i: counts[i])
+        if counts[j] <= 1:
+            break
+        counts[j] -= 1
+    rem = n - sum(counts)
+    order = sorted(range(k), key=lambda i: exact[i] - counts[i], reverse=True)
+    for i in range(max(0, rem)):
+        counts[order[i % k]] += 1
+    if sum(counts) != n or any(c < 1 for c in counts):
+        return text
+    parts: list[str] = []
+    idx = 0
+    for c in counts:
+        parts.append(text[idx : idx + c])
+        idx += c
+    return " ".join(parts)
+
+
+def _latin_word_segments_from_crop(crop_rgb: Any) -> list[tuple[int, int]]:
+    """从行裁剪图得到词级墨迹区间 [(x0,x1), ...]（相对 crop）。
+
+    先得到较细的墨迹块（约字母级），再按间隙大小区分「字间距 / 词间距」。
+    """
+    import cv2
+    import numpy as np
+
+    if crop_rgb is None or getattr(crop_rgb, "size", 0) == 0:
+        return []
+    h, w = int(crop_rgb.shape[0]), int(crop_rgb.shape[1])
+    if h < 4 or w < 8:
+        return []
+    if crop_rgb.ndim == 3:
+        gray = cv2.cvtColor(crop_rgb, cv2.COLOR_RGB2GRAY)
+    else:
+        gray = crop_rgb
+    # 浅灰字：阈值略松
+    _, ink = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY_INV)
+    if cv2.countNonZero(ink) < 6:
+        blur = cv2.GaussianBlur(gray, (3, 3), 0)
+        _, ink = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    if cv2.countNonZero(ink) < 6:
+        return []
+
+    # 轻微闭运算：只粘断裂笔画，尽量不跨过词间空格
+    kw = max(1, int(round(h * 0.08)))
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kw, max(1, h // 8)))
+    closed = cv2.morphologyEx(ink, cv2.MORPH_CLOSE, kernel, iterations=1)
+
+    col = np.count_nonzero(closed, axis=0).astype(np.float32)
+    if float(col.max()) <= 0:
+        return []
+    thr = max(1.0, float(col.max()) * 0.10)
+    active = col >= thr
+
+    fine: list[tuple[int, int]] = []
+    i = 0
+    while i < w:
+        if not bool(active[i]):
+            i += 1
+            continue
+        j = i + 1
+        while j < w and bool(active[j]):
+            j += 1
+        if j - i >= 1:
+            fine.append((i, j))
+        i = j
+
+    if len(fine) <= 1:
+        return fine
+
+    gaps = [float(fine[i + 1][0] - fine[i][1]) for i in range(len(fine) - 1)]
+    widths = [float(b - a) for a, b in fine]
+    med_w = float(statistics.median(widths))
+    # 字间距通常远小于字宽；词间距接近或大于字宽的一小半
+    small_gaps = sorted(g for g in gaps if g <= med_w * 0.55)
+    med_small = float(statistics.median(small_gaps)) if small_gaps else float(statistics.median(gaps))
+    word_gap_th = max(med_small * 1.75, med_w * 0.35, 2.0)
+
+    words: list[tuple[int, int]] = []
+    start = fine[0][0]
+    end = fine[0][1]
+    for idx in range(len(gaps)):
+        if gaps[idx] >= word_gap_th:
+            words.append((start, end))
+            start = fine[idx + 1][0]
+            end = fine[idx + 1][1]
+        else:
+            end = fine[idx + 1][1]
+    words.append((start, end))
+    return words
+
+
+def repair_latin_word_spaces(arr: Any, lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """修复中文 OCR 模型吃掉的英文词间空格（anhourago → an hour ago）。
+
+    用行框内墨迹的词级空隙按宽度切开，不依赖词典；中文行不受影响。
+    """
+    if arr is None or not lines:
+        return lines
+    h_img, w_img = int(arr.shape[0]), int(arr.shape[1])
+    out: list[dict[str, Any]] = []
+    for ln in lines:
+        text = str(ln.get("text") or "")
+        box = ln.get("box")
+        if not box or not _is_glued_latin_text(text):
+            out.append(ln)
+            continue
+        try:
+            x0, x1, y0, y1 = _box_bounds(box)
+            pad_x = max(1, int(round((x1 - x0) * 0.02)))
+            pad_y = max(1, int(round((y1 - y0) * 0.08)))
+            xa = max(0, int(x0) - pad_x)
+            xb = min(w_img, int(x1) + pad_x)
+            ya = max(0, int(y0) - pad_y)
+            yb = min(h_img, int(y1) + pad_y)
+            crop = arr[ya:yb, xa:xb]
+            segs = _latin_word_segments_from_crop(crop)
+            if len(segs) < 2:
+                out.append(ln)
+                continue
+            raw = text.strip()
+            # 词块过多 ≈ 字母级切开，宁可不修，避免 "a n h o u r a g o"
+            if len(segs) >= max(5, int(len(raw) * 0.55)):
+                out.append(ln)
+                continue
+            if len(segs) > len(raw):
+                out.append(ln)
+                continue
+            widths = [float(b - a) for a, b in segs]
+            fixed = _split_latin_by_widths(raw, widths)
+            if fixed != raw and " " in fixed:
+                nl = dict(ln)
+                nl["text"] = fixed
+                nl["space_repaired"] = True
+                nl["text_raw"] = text
+                out.append(nl)
+            else:
+                out.append(ln)
+        except Exception:
+            out.append(ln)
+    return out
 
 
 def image_lines_to_llm_text(lines: list[dict[str, Any]]) -> str:
@@ -2007,15 +2341,22 @@ def run_ocr_bytes(data: bytes) -> dict[str, Any]:
                 }
             )
 
-    # OpenCV：检出 ✅ / ❎ / ❌（基于原图颜色+形状，再贴到邻近文字）
+    # OpenCV：状态色标 ✅/❎/❌ + UI 线框图标 🔱/⧉…（可贴邻文字，并清掉 ° 等误识）
     symbols: list[dict[str, Any]] = []
     try:
         symbols = detect_status_marks(arr)
+        symbols.extend(detect_ui_icons(arr))
         if symbols:
             lines = _merge_symbol_lines(lines, symbols)
     except Exception as eSym:
         # 符号检测失败不影响主 OCR
-        print("[ocr] status mark detect failed:", eSym)
+        print("[ocr] status/icon detect failed:", eSym)
+
+    # 中文 rec 常吃掉英文空格：按行内墨迹词隙补回（anhourago → an hour ago）
+    try:
+        lines = repair_latin_word_spaces(arr, lines)
+    except Exception as eSp:
+        print("[ocr] latin space repair failed:", eSp)
 
     # 预览用：保持引擎原始行序；送模用：阅读顺序整理后的纯文本
     full_text = "\n".join(str(ln["text"]) for ln in lines).strip()
@@ -2036,6 +2377,7 @@ def run_ocr_bytes(data: bytes) -> dict[str, Any]:
                 "bbox": s.get("bbox"),
                 "area": s.get("area"),
                 "color": s.get("color"),
+                "match": s.get("match"),
                 "attach": s.get("attach"),
                 "shape_scores": s.get("shape_scores"),
             }

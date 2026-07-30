@@ -2,8 +2,11 @@
 
 一套 Docker 镜像，VPS 上跑一份，Mac / 两个 Cloudflare 项目都调它。
 
-图片识别后额外用 **OpenCV HSV + 形状模板** 检出状态符号并写入文本：
-`✅`（绿勾）、`❎`（绿叉）、`❌`（红叉）；响应字段 `symbols` / `symbol_count`。
+图片识别后额外用 OpenCV 补符号并写入文本：
+- 色标：`✅`（绿勾）、`❎`（绿叉）、`❌`（红叉）
+- UI 线框图标（模板 `icon_templates/`，可继续追加）：分支 `🔱`、外链 `⧉`
+- 英文词间空格：中文 rec 常把 `an hour ago` 读成 `anhourago`，按行内墨迹词隙补回
+响应字段 `symbols` / `symbol_count`。
 
 ## 架构
 
