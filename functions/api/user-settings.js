@@ -23,6 +23,8 @@ const DEFAULT_SETTINGS = {
   ocrVisionMaxPages: 6,
   pdfVisionMaxPages: 6,
   pdfRenderDpi: 120,
+  /** 1=麦克风 VAD 断句边录边上屏；0=整段录完再识别 */
+  asrVadLive: 1,
 };
 
 function mergeSettings(saved) {
@@ -74,6 +76,7 @@ function sanitizeIncoming(incoming) {
       base.pdfVisionMaxPages
     ),
     pdfRenderDpi: clampInt(incoming.pdfRenderDpi, 72, 200, base.pdfRenderDpi),
+    asrVadLive: clampInt(incoming.asrVadLive, 0, 1, base.asrVadLive),
   };
 }
 
