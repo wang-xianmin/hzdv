@@ -131,4 +131,4 @@ echo "模型目录: $MODELS_DIR"
 ls -lh "$MODELS_DIR" | head -40
 echo
 echo "下一步: docker compose up -d --build"
-echo "健康检查: curl http://127.0.0.1:8090/health"
+echo "健康检查: curl http://127.0.0.1:8091/health"

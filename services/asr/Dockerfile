@@ -8,7 +8,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     ASR_HOST=0.0.0.0 \
-    ASR_PORT=8090 \
+    ASR_PORT=8091 \
     ASR_MODELS_DIR=/app/models
 
 WORKDIR /app
@@ -31,9 +31,9 @@ RUN chmod +x download_models.sh
 # 模型通过 volume 挂载；也可在构建后进容器执行 download_models.sh
 RUN mkdir -p /app/models
 
-EXPOSE 8090
+EXPOSE 8091
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=3)"
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/health', timeout=3)"
 
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8090"]
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8091"]

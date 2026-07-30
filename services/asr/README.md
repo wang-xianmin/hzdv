@@ -9,7 +9,7 @@
 
 ```text
 Mac 开发 ──┐
-VPS 本仓库 ─┼── docker compose → hzdv-asr:8090
+VPS 本仓库 ─┼── docker compose → hzdv-asr:8091
 CF 项目 A ──┤         ▲
 CF 项目 B ──┘         │
               ASR_SERVICE_URL + 可选 ASR_API_KEY
@@ -40,13 +40,14 @@ chmod +x download_models.sh
 cd services/asr
 # 推荐：echo 'ASR_API_KEY=换成你的密钥' > .env
 docker compose up -d --build
-curl http://127.0.0.1:8090/health
+curl http://127.0.0.1:8091/health
+ufw allow 8091/tcp comment hzdv-asr
 ```
 
 识别示例：
 
 ```bash
-curl -X POST http://127.0.0.1:8090/asr \
+curl -X POST http://127.0.0.1:8091/asr \
   -H "X-API-Key: $ASR_API_KEY" \
   -F "file=@/path/to/audio.wav"
 ```
@@ -70,23 +71,20 @@ curl -X POST http://127.0.0.1:8090/asr \
 
 | 变量 | 说明 |
 |------|------|
-| `ASR_SERVICE_URL` | **必须用域名**（Workers/Pages 不能 `fetch` 裸 IP）。例：`http://asr.hzdv.net` |
-| `ASR_API_KEY` | 与容器 `ASR_API_KEY` 一致（可选但建议生产开启） |
+| `ASR_SERVICE_URL` | **必须用域名**（Workers/Pages 不能 `fetch` 裸 IP）。与 OCR 同机时用：`http://ocr.hzdv.net:8091` |
+| `ASR_API_KEY` | 与容器 `ASR_API_KEY` 一致（Secret） |
 
-DNS：`asr` A 记录 → VPS IP，**灰云 DNS only**。  
-Nginx 把 `asr.你的域名:80` 反代到 `127.0.0.1:8090`。
-
+DNS：可复用 `ocr.hzdv.net`（灰云）+ 端口 `8091`，不必新建子域。  
 前端只请求同源 `/api/asr`，不要把密钥写进浏览器。
 
-## 与 OCR 对照
+## 与 OCR / Intent 对照
 
-| | OCR | ASR |
-|--|-----|-----|
-| 目录 | `services/ocr` | `services/asr` |
-| 引擎 | RapidOCR + ONNX Runtime | sherpa-onnx |
-| 端口 | 8089 | 8090 |
-| CF 代理 | `/api/ocr` | `/api/asr` |
-| 多项目 | 共用 `OCR_SERVICE_URL` | 共用 `ASR_SERVICE_URL` |
+| | OCR | Intent | ASR |
+|--|-----|--------|-----|
+| 目录 | `services/ocr` | `services/intent` | `services/asr` |
+| 端口 | 8089 | 8090 | **8091** |
+| CF 代理 | `/api/ocr` | 内嵌 llm-chat | `/api/asr` |
+| 示例 URL | `http://ocr.hzdv.net:8089` | `http://ocr.hzdv.net:8090/v1` | `http://ocr.hzdv.net:8091` |
 
 ## 拷到另一项目
 

@@ -4,7 +4,7 @@
 #   ./download_models.sh          # 先下载模型到 ./models
 #   docker compose up -d --build
 # 健康检查：
-#   curl http://127.0.0.1:8090/health
+#   curl http://127.0.0.1:8091/health
 
 services:
   asr:
@@ -12,7 +12,7 @@ services:
     image: hzdv-asr:latest
     container_name: hzdv-asr
     ports:
-      - "${ASR_PUBLISH_PORT:-8090}:8090"
+      - "${ASR_PUBLISH_PORT:-8091}:8091"
     environment:
       ASR_API_KEY: "${ASR_API_KEY:-}"
       ASR_CORS_ORIGINS: "${ASR_CORS_ORIGINS:-*}"
