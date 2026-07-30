@@ -35,15 +35,37 @@
   /** 可调：预览里最多列多少行明细（图片 OCR） */
   var OCR_PREVIEW_LINES = 80;
 
-  function syncOcrPreviewLimitsFromSystemSettings() {
-    var s =
+  function getOcrSystemSettings() {
+    return (
       (typeof window.getHzdvSystemSettings === "function" && window.getHzdvSystemSettings()) ||
       window.__HZDV_SYSTEM_SETTINGS ||
-      null;
+      null
+    );
+  }
+
+  function syncOcrPreviewLimitsFromSystemSettings() {
+    var s = getOcrSystemSettings();
     if (!s) return;
     var n = parseInt(s.ocrPreviewChars, 10);
     if (!isNaN(n) && n >= 500) OCR_PREVIEW_CHARS = n;
   }
+
+  /** 1=聊天区显示 OCR 开发者预览；默认开 */
+  function isOcrShowDevPreview() {
+    var s = getOcrSystemSettings();
+    if (!s || s.ocrShowDevPreview == null) return true;
+    var n = parseInt(s.ocrShowDevPreview, 10);
+    return n !== 0;
+  }
+
+  /** 1=OCR 随下一条消息送 LLM；默认开 */
+  function isOcrSendToLlm() {
+    var s = getOcrSystemSettings();
+    if (!s || s.ocrSendToLlm == null) return true;
+    var n = parseInt(s.ocrSendToLlm, 10);
+    return n !== 0;
+  }
+
   window.onHzdvSystemSettingsChange = function () {
     syncOcrPreviewLimitsFromSystemSettings();
   };
@@ -1297,27 +1319,57 @@
             });
           });
         }
-        pendingOcr = {
-          text: text,
-          text_llm: textLlm || text,
-          line_count: data.line_count || 0,
-          layout: data.layout || null,
-          source: data.source || (data.page_count != null ? "pdf" : "image"),
-          page_count: data.page_count || null,
-          pages: visionPages,
-        };
-        if (!textLlm && !text && !visionPages.length) pendingOcr = null;
+        var sendToLlm = isOcrSendToLlm();
+        var showDev = isOcrShowDevPreview();
+        pendingOcr = null;
+        if (sendToLlm) {
+          pendingOcr = {
+            text: text,
+            text_llm: textLlm || text,
+            line_count: data.line_count || 0,
+            layout: data.layout || null,
+            source: data.source || (data.page_count != null ? "pdf" : "image"),
+            page_count: data.page_count || null,
+            pages: visionPages,
+          };
+          if (!textLlm && !text && !visionPages.length) pendingOcr = null;
+        }
         pendingAttachment.ocrStatus = "done";
         renderAttachment();
         var isPdf = (data.source || pendingAttachment.kind) === "pdf";
         var engine = data.engine ? String(data.engine) : isPdf ? "pdfplumber" : "";
-        appendAssistant(ocrReportText(data, en), {
-          modelBadge: isPdf
-            ? "PDF · " + (engine || "pdfplumber")
-            : "RapidOCR + ONNX Runtime",
-          modelNote: ocrRoutingNote(data, en),
-          mono: true,
-        });
+        var badge = isPdf
+          ? "PDF · " + (engine || "pdfplumber")
+          : "RapidOCR + ONNX Runtime";
+        if (showDev) {
+          appendAssistant(ocrReportText(data, en), {
+            modelBadge: badge,
+            modelNote: sendToLlm
+              ? ocrRoutingNote(data, en)
+              : en
+                ? "Dev preview only — not attached for next LLM message."
+                : "仅开发者预览——不会随下一条消息送 LLM。",
+            mono: true,
+          });
+        } else if (sendToLlm && pendingOcr) {
+          appendAssistant(
+            en
+              ? "[OCR ready · LLM only]\nResult will ride with your next message. Dev preview is off in System settings."
+              : "【OCR 已就绪 · 仅送 LLM】\n结果会随你的下一条消息送模型。开发者预览已在系统设置中关闭。",
+            {
+              modelBadge: badge,
+              modelNote: ocrRoutingNote(data, en),
+              mono: true,
+            }
+          );
+        } else if (!sendToLlm) {
+          appendAssistant(
+            en
+              ? "[OCR done]\nNot shown in chat and not sent to LLM (both toggles off / send off)."
+              : "【OCR 完成】\n未在聊天区展开，也未送 LLM（请在系统设置「OCR输出」调整）。",
+            { modelBadge: badge, mono: true }
+          );
+        }
       })
       .catch(function (err) {
         if (err && err.name === "AbortError") return;

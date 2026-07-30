@@ -57,6 +57,400 @@ def _box_bounds(box: Any) -> tuple[float, float, float, float]:
     return min(xs), max(xs), min(ys), max(ys)
 
 
+def _rect_to_box(x0: float, y0: float, x1: float, y1: float) -> list[list[float]]:
+    return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+
+
+def _iou_xyxy(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> float:
+    ax0, ay0, ax1, ay1 = a
+    bx0, by0, bx1, by1 = b
+    ix0, iy0 = max(ax0, bx0), max(ay0, by0)
+    ix1, iy1 = min(ax1, bx1), min(ay1, by1)
+    iw, ih = max(0.0, ix1 - ix0), max(0.0, iy1 - iy0)
+    inter = iw * ih
+    if inter <= 0:
+        return 0.0
+    area_a = max(1.0, (ax1 - ax0) * (ay1 - ay0))
+    area_b = max(1.0, (bx1 - bx0) * (by1 - by0))
+    return inter / (area_a + area_b - inter)
+
+
+def _mark_templates(size: int = 48):
+    """生成勾 / 叉的二值模板，供形状打分。"""
+    import cv2
+    import numpy as np
+
+    s = int(size)
+    check = np.zeros((s, s), dtype=np.uint8)
+    # 勾：短臂左上→中下，长臂中下→右上
+    p1 = (int(s * 0.18), int(s * 0.52))
+    p2 = (int(s * 0.42), int(s * 0.78))
+    p3 = (int(s * 0.86), int(s * 0.22))
+    thick = max(2, s // 10)
+    cv2.line(check, p1, p2, 255, thick, lineType=cv2.LINE_AA)
+    cv2.line(check, p2, p3, 255, thick, lineType=cv2.LINE_AA)
+
+    cross = np.zeros((s, s), dtype=np.uint8)
+    m = int(s * 0.18)
+    cv2.line(cross, (m, m), (s - 1 - m, s - 1 - m), 255, thick, lineType=cv2.LINE_AA)
+    cv2.line(cross, (s - 1 - m, m), (m, s - 1 - m), 255, thick, lineType=cv2.LINE_AA)
+    return check, cross
+
+
+def _shape_scores(roi_bin: Any) -> tuple[float, float]:
+    """返回 (check_score, cross_score)，越大越像。"""
+    import cv2
+    import numpy as np
+
+    if roi_bin is None or roi_bin.size == 0:
+        return 0.0, 0.0
+    s = 48
+    roi = cv2.resize(roi_bin, (s, s), interpolation=cv2.INTER_AREA)
+    _, roi = cv2.threshold(roi, 40, 255, cv2.THRESH_BINARY)
+    if cv2.countNonZero(roi) < 8:
+        return 0.0, 0.0
+    check_t, cross_t = _mark_templates(s)
+
+    def ncc(a: Any, b: Any) -> float:
+        af = a.astype(np.float32).ravel()
+        bf = b.astype(np.float32).ravel()
+        af = af - af.mean()
+        bf = bf - bf.mean()
+        denom = float(np.linalg.norm(af) * np.linalg.norm(bf)) + 1e-6
+        return float(np.dot(af, bf) / denom)
+
+    return ncc(roi, check_t), ncc(roi, cross_t)
+
+
+def _collect_color_mask_marks(
+    mask: Any,
+    *,
+    color_name: str,
+    h_img: int,
+    w_img: int,
+) -> list[dict[str, Any]]:
+    """从单色掩膜中收集候选勾/叉，并按形状分类。"""
+    import cv2
+
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    img_area = float(h_img * w_img)
+    min_area = max(24.0, img_area * 0.00004)
+    # 整页截图图标通常很小；若输入本身是小图标裁切，允许更大占比
+    if min(h_img, w_img) < 220:
+        max_area = img_area * 0.6
+    else:
+        max_area = img_area * 0.12
+    out: list[dict[str, Any]] = []
+
+    for cnt in contours:
+        area = float(cv2.contourArea(cnt))
+        if area < min_area or area > max_area:
+            continue
+        x, y, w, h = cv2.boundingRect(cnt)
+        if w < 4 or h < 4:
+            continue
+        aspect = w / float(h)
+        if aspect < 0.35 or aspect > 2.8:
+            continue
+        rect_area = float(max(1, w * h))
+        fill = area / rect_area
+        if fill > 0.92 or fill < 0.08:
+            continue
+        roi = mask[y : y + h, x : x + w]
+        ink_ratio = float(cv2.countNonZero(roi)) / rect_area
+        if ink_ratio < 0.12:
+            continue
+        hull = cv2.convexHull(cnt)
+        hull_area = float(cv2.contourArea(hull)) or 1.0
+        solidity = area / hull_area
+        if solidity < 0.25 or solidity > 0.98:
+            continue
+
+        check_s, cross_s = _shape_scores(roi)
+        # 形状不够像勾也不像叉则跳过（减少色块误报）
+        if max(check_s, cross_s) < 0.08:
+            continue
+
+        if color_name == "green":
+            if check_s >= cross_s:
+                char, sym = "✅", "green_check"
+            else:
+                char, sym = "❎", "green_cross"
+        else:  # red
+            # 红色以叉为主；若更像勾也归为 ❌（少见红勾）
+            if cross_s >= check_s * 0.85:
+                char, sym = "❌", "red_cross"
+            else:
+                char, sym = "❌", "red_mark"
+
+        pad = max(1, int(round(min(w, h) * 0.08)))
+        x0 = max(0, x - pad)
+        y0 = max(0, y - pad)
+        x1 = min(w_img, x + w + pad)
+        y1 = min(h_img, y + h + pad)
+        out.append(
+            {
+                "text": char,
+                "score": 0.99,
+                "box": _rect_to_box(float(x0), float(y0), float(x1), float(y1)),
+                "symbol": sym,
+                "engine": "opencv",
+                "area": round(area, 1),
+                "bbox": [int(x0), int(y0), int(x1), int(y1)],
+                "shape_scores": {
+                    "check": round(check_s, 3),
+                    "cross": round(cross_s, 3),
+                },
+                "color": color_name,
+            }
+        )
+    return out
+
+
+def detect_status_marks(arr: Any) -> list[dict[str, Any]]:
+    """OpenCV 检出状态符号：绿色勾 ✅、绿色叉 ❎、红色叉 ❌。"""
+    import cv2
+    import numpy as np
+
+    if arr is None or getattr(arr, "ndim", 0) != 3:
+        return []
+    h_img, w_img = int(arr.shape[0]), int(arr.shape[1])
+    if h_img < 8 or w_img < 8:
+        return []
+
+    bgr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+
+    green = cv2.inRange(
+        hsv,
+        np.array([35, 60, 60], dtype=np.uint8),
+        np.array([95, 255, 255], dtype=np.uint8),
+    )
+    # 红色跨 H=0：两段
+    red1 = cv2.inRange(
+        hsv,
+        np.array([0, 70, 70], dtype=np.uint8),
+        np.array([12, 255, 255], dtype=np.uint8),
+    )
+    red2 = cv2.inRange(
+        hsv,
+        np.array([168, 70, 70], dtype=np.uint8),
+        np.array([180, 255, 255], dtype=np.uint8),
+    )
+    red = cv2.bitwise_or(red1, red2)
+
+    out = _collect_color_mask_marks(green, color_name="green", h_img=h_img, w_img=w_img)
+    out.extend(
+        _collect_color_mask_marks(red, color_name="red", h_img=h_img, w_img=w_img)
+    )
+
+    out.sort(key=lambda s: float(s.get("area") or 0), reverse=True)
+    kept: list[dict[str, Any]] = []
+    for s in out:
+        b = s["bbox"]
+        xyxy = (float(b[0]), float(b[1]), float(b[2]), float(b[3]))
+        if any(
+            _iou_xyxy(
+                xyxy,
+                (
+                    float(k["bbox"][0]),
+                    float(k["bbox"][1]),
+                    float(k["bbox"][2]),
+                    float(k["bbox"][3]),
+                ),
+            )
+            > 0.35
+            for k in kept
+        ):
+            continue
+        kept.append(s)
+    return kept
+
+
+def detect_green_checkmarks(arr: Any) -> list[dict[str, Any]]:
+    """兼容旧名：返回全部状态符号（✅/❎/❌）。"""
+    return detect_status_marks(arr)
+
+
+def _line_xyxy(ln: dict[str, Any]) -> tuple[float, float, float, float] | None:
+    box = ln.get("box")
+    if not box:
+        return None
+    x0, x1, y0, y1 = _box_bounds(box)
+    return (x0, y0, x1, y1)
+
+
+def _y_overlap_ratio(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> float:
+    """两框在 y 轴重叠长度 / 较小高度。"""
+    ay0, ay1 = a[1], a[3]
+    by0, by1 = b[1], b[3]
+    ih = max(0.0, min(ay1, by1) - max(ay0, by0))
+    ha = max(1.0, ay1 - ay0)
+    hb = max(1.0, by1 - by0)
+    return ih / min(ha, hb)
+
+
+def _merge_symbol_lines(
+    lines: list[dict[str, Any]], symbols: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """把状态符号（✅/❎/❌）贴到同一视觉行最近的文字块前后；无邻行则保留独立符号行。
+
+    规则：
+    1. 去掉与符号强重叠的 OCR 误识碎片
+    2. 找 y 重叠足够（或中心距小）的文字块，按水平距离选最近
+    3. 符号在文字左侧 → 前缀「符号+空格」；在右侧 → 后缀「空格+符号」
+    4. 同一文字块可挂多个符号（按 x 排序）
+    """
+    if not symbols:
+        return lines
+
+    STATUS_CHARS = ("✅", "❎", "❌")
+
+    sym_rects: list[tuple[float, float, float, float]] = []
+    for s in symbols:
+        b = s.get("bbox") or []
+        if len(b) == 4:
+            sym_rects.append((float(b[0]), float(b[1]), float(b[2]), float(b[3])))
+
+    # 1) 清掉与符号重叠的 OCR 碎片
+    cleaned: list[dict[str, Any]] = []
+    for ln in lines or []:
+        xyxy = _line_xyxy(ln)
+        if xyxy is None or not sym_rects:
+            cleaned.append(ln)
+            continue
+        if any(_iou_xyxy(xyxy, sr) > 0.25 for sr in sym_rects):
+            continue
+        cleaned.append(dict(ln))
+
+    # 预计算文字块几何
+    text_metas: list[dict[str, Any]] = []
+    for i, ln in enumerate(cleaned):
+        xyxy = _line_xyxy(ln)
+        if xyxy is None:
+            continue
+        x0, y0, x1, y1 = xyxy
+        h = max(1.0, y1 - y0)
+        text_metas.append(
+            {
+                "idx": i,
+                "xyxy": xyxy,
+                "yc": (y0 + y1) * 0.5,
+                "xc": (x0 + x1) * 0.5,
+                "h": h,
+                "text": str(ln.get("text") or "").strip(),
+            }
+        )
+
+    prefix_marks: dict[int, list[tuple[float, str, dict[str, Any]]]] = {}
+    suffix_marks: dict[int, list[tuple[float, str, dict[str, Any]]]] = {}
+    orphan_symbols: list[dict[str, Any]] = []
+
+    for s in symbols:
+        char = str(s.get("text") or "✅")
+        if char not in STATUS_CHARS:
+            char = "✅"
+        b = s.get("bbox") or []
+        if len(b) != 4:
+            orphan_symbols.append(s)
+            continue
+        sx0, sy0, sx1, sy1 = float(b[0]), float(b[1]), float(b[2]), float(b[3])
+        sxyxy = (sx0, sy0, sx1, sy1)
+        syc = (sy0 + sy1) * 0.5
+        sxc = (sx0 + sx1) * 0.5
+        sh = max(1.0, sy1 - sy0)
+
+        best = None
+        for m in text_metas:
+            if not m["text"]:
+                continue
+            y_ov = _y_overlap_ratio(sxyxy, m["xyxy"])
+            y_dist = abs(syc - m["yc"])
+            row_tol = max(sh, m["h"]) * 0.7
+            if y_ov < 0.35 and y_dist > row_tol:
+                continue
+            mx0, _my0, mx1, _my1 = m["xyxy"]
+            if sxc <= m["xc"]:
+                gap = max(0.0, mx0 - sx1)
+                side = "before"
+            else:
+                gap = max(0.0, sx0 - mx1)
+                side = "after"
+            if gap > max(sh, m["h"]) * 8.0:
+                continue
+            score = (1.0 - min(1.0, y_dist / max(1.0, row_tol))) * 2.0 - gap / max(
+                1.0, max(sh, m["h"])
+            )
+            if best is None or score > best[0]:
+                best = (score, m, side, gap, char)
+
+        if best is None:
+            orphan_symbols.append(s)
+            s["attach"] = {"mode": "orphan", "char": char}
+            continue
+
+        _score, m, side, gap, char = best
+        idx = int(m["idx"])
+        if side == "before":
+            prefix_marks.setdefault(idx, []).append((sxc, char, s))
+            s["attach"] = {
+                "mode": "prefix",
+                "char": char,
+                "text": m["text"][:40],
+                "gap": round(gap, 1),
+            }
+        else:
+            suffix_marks.setdefault(idx, []).append((sxc, char, s))
+            s["attach"] = {
+                "mode": "suffix",
+                "char": char,
+                "text": m["text"][:40],
+                "gap": round(gap, 1),
+            }
+
+    def _strip_leading_status(t: str) -> str:
+        t = t.strip()
+        while t and t[0] in STATUS_CHARS:
+            t = t[1:].lstrip()
+        return t
+
+    def _strip_trailing_status(t: str) -> str:
+        t = t.strip()
+        while t and t[-1] in STATUS_CHARS:
+            t = t[:-1].rstrip()
+        return t
+
+    for idx, items in prefix_marks.items():
+        items.sort(key=lambda t: t[0])
+        marks = "".join(ch for _x, ch, _s in items)
+        t0 = _strip_leading_status(str(cleaned[idx].get("text") or ""))
+        cleaned[idx]["text"] = (marks + " " + t0).strip() if t0 else marks
+        cleaned[idx]["symbol_attached"] = True
+
+    for idx, items in suffix_marks.items():
+        items.sort(key=lambda t: t[0])
+        marks = "".join(" " + ch for _x, ch, _s in items)
+        t0 = _strip_trailing_status(str(cleaned[idx].get("text") or ""))
+        cleaned[idx]["text"] = (t0 + marks).strip() if t0 else marks.strip()
+        cleaned[idx]["symbol_attached"] = True
+
+    for s in orphan_symbols:
+        cleaned.append(
+            {
+                "text": str(s.get("text") or "✅"),
+                "score": float(s.get("score") or 0.99),
+                "box": s.get("box"),
+                "symbol": s.get("symbol") or "status_mark",
+                "engine": "opencv",
+            }
+        )
+
+    return cleaned
+
+
 def _box_angle(box: Any) -> float:
     """文本框上边缘与水平线的夹角（度），用于判断拍歪/旋转。"""
     x0, y0 = float(box[0][0]), float(box[0][1])
@@ -1613,6 +2007,16 @@ def run_ocr_bytes(data: bytes) -> dict[str, Any]:
                 }
             )
 
+    # OpenCV：检出 ✅ / ❎ / ❌（基于原图颜色+形状，再贴到邻近文字）
+    symbols: list[dict[str, Any]] = []
+    try:
+        symbols = detect_status_marks(arr)
+        if symbols:
+            lines = _merge_symbol_lines(lines, symbols)
+    except Exception as eSym:
+        # 符号检测失败不影响主 OCR
+        print("[ocr] status mark detect failed:", eSym)
+
     # 预览用：保持引擎原始行序；送模用：阅读顺序整理后的纯文本
     full_text = "\n".join(str(ln["text"]) for ln in lines).strip()
     text_llm = image_lines_to_llm_text(lines) or full_text
@@ -1625,6 +2029,19 @@ def run_ocr_bytes(data: bytes) -> dict[str, Any]:
         "text_llm": text_llm,
         "lines": lines,
         "line_count": len(lines),
+        "symbols": [
+            {
+                "type": s.get("symbol") or "status_mark",
+                "char": s.get("text") or "✅",
+                "bbox": s.get("bbox"),
+                "area": s.get("area"),
+                "color": s.get("color"),
+                "attach": s.get("attach"),
+                "shape_scores": s.get("shape_scores"),
+            }
+            for s in symbols
+        ],
+        "symbol_count": len(symbols),
         "elapse": elapse,
         "image": {"width": img_w, "height": img_h},
         "layout": analyze_layout(lines, img_w, img_h),

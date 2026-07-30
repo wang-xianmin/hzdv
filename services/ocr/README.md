@@ -2,6 +2,9 @@
 
 一套 Docker 镜像，VPS 上跑一份，Mac / 两个 Cloudflare 项目都调它。
 
+图片识别后额外用 **OpenCV HSV + 形状模板** 检出状态符号并写入文本：
+`✅`（绿勾）、`❎`（绿叉）、`❌`（红叉）；响应字段 `symbols` / `symbol_count`。
+
 ## 架构
 
 ```text

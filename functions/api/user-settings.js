@@ -23,6 +23,10 @@ const DEFAULT_SETTINGS = {
   ocrVisionMaxPages: 6,
   pdfVisionMaxPages: 6,
   pdfRenderDpi: 120,
+  /** 1=聊天区显示 OCR 开发者预览；0=不展开 */
+  ocrShowDevPreview: 1,
+  /** 1=OCR 随下一条消息送 LLM；0=不送 */
+  ocrSendToLlm: 1,
   /** 0整段离线 SenseVoice / 1客户端VAD+SenseVoice / 2服务端 SenseVoice+VAD 模拟流式 */
   asrMicMode: 1,
 };
@@ -80,6 +84,13 @@ function sanitizeIncoming(incoming) {
       base.pdfVisionMaxPages
     ),
     pdfRenderDpi: clampInt(incoming.pdfRenderDpi, 72, 200, base.pdfRenderDpi),
+    ocrShowDevPreview: clampInt(
+      incoming.ocrShowDevPreview,
+      0,
+      1,
+      base.ocrShowDevPreview
+    ),
+    ocrSendToLlm: clampInt(incoming.ocrSendToLlm, 0, 1, base.ocrSendToLlm),
     asrMicMode: clampInt(
       incoming.asrMicMode != null
         ? incoming.asrMicMode
