@@ -3,6 +3,7 @@ import { kvBindingHint, pickKvBinding } from "../lib/kv-binding.js";
 /**
  * 扫码登录 API：GET /api/scan-login?sessionId=xxx
  * POST：写入会话数据到 KV，TTL 300 秒。
+ * 手机扫码若携带 phone+email，后台触发 magic-link 发信（不阻塞扫码响应）。
  */
 function jsonResponse(body, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(body), {
@@ -22,6 +23,40 @@ function getQuerySessionId(url) {
     p.get("key") ||
     p.get("Key")
   );
+}
+
+function looksLikeEmail(s) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s || "").trim());
+}
+
+async function triggerMagicLinkFromScan(request, env, sid, data) {
+  const phone = String((data && data.phone) || "").trim();
+  const email = String((data && data.email) || "").trim();
+  if (!sid || !phone || !email || !looksLikeEmail(email)) return;
+
+  const origin = new URL(request.url).origin;
+  const siteOrigin = String((data && data.siteOrigin) || origin).trim() || origin;
+  const lang = String((data && data.lang) || "zh").trim() || "zh";
+
+  try {
+    const res = await fetch(`${origin}/api/send-email-code`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode: "magic_link",
+        email,
+        phone,
+        sessionId: sid,
+        siteOrigin,
+        lang,
+      }),
+    });
+    if (!res.ok) {
+      console.warn("scan-login magic_link trigger HTTP", res.status);
+    }
+  } catch (err) {
+    console.warn("scan-login magic_link trigger failed:", err);
+  }
 }
 
 export async function onRequest(context) {
@@ -97,9 +132,32 @@ export async function onRequest(context) {
         }
 
         // 默认直接写入（手机扫码，不读旧数据，最快路径）
-        await kv.put(sid, JSON.stringify(body.data), {
+        const data = body.data && typeof body.data === "object" ? { ...body.data } : {};
+        const canTrigger =
+          data.scanned &&
+          data.phone &&
+          data.email &&
+          looksLikeEmail(data.email);
+
+        // 先标 processing，避免电脑端轮询抢先再发一封
+        if (canTrigger && !data.pcStatus) {
+          data.pcStatus = "processing";
+          data.emailLoginPending = true;
+        }
+
+        await kv.put(sid, JSON.stringify(data), {
           expirationTtl: 300,
         });
+
+        if (canTrigger) {
+          const job = triggerMagicLinkFromScan(request, env, sid, data);
+          if (typeof context.waitUntil === "function") {
+            context.waitUntil(job);
+          } else {
+            job.catch(function () {});
+          }
+        }
+
         return jsonResponse({ success: true });
       } catch {
         return jsonResponse({ success: false, msg: "Invalid JSON" }, 400);

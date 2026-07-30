@@ -5,69 +5,34 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>扫码确认</title>
   <style>
-    :root {
-      --bg: #f4f6f8;
-      --card: #fff;
-      --text: #1a1a1a;
-      --muted: #666;
-      --ok: #2b8a3e;
-      --err: #c92a2a;
-      --accent: #3d6a96;
-    }
     * { box-sizing: border-box; }
-    body {
+    html, body {
       margin: 0;
-      min-height: 100vh;
+      min-height: 100%;
+      background: #f4f6f8;
+      color: #1a1a1a;
       font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
-      background: var(--bg);
-      color: var(--text);
+    }
+    body {
       display: flex;
       align-items: center;
       justify-content: center;
       padding: 24px 16px;
+      min-height: 100vh;
     }
-    .card {
-      width: min(420px, 100%);
-      background: var(--card);
-      border-radius: 16px;
-      padding: 28px 22px 32px;
-      box-shadow: 0 10px 36px rgba(0, 0, 0, 0.08);
-      text-align: center;
-    }
-    h1 {
-      margin: 0 0 10px;
-      font-size: 20px;
-      font-weight: 700;
-    }
-    p {
-      margin: 0;
-      font-size: 14px;
-      line-height: 1.55;
-      color: var(--muted);
-    }
-    .status {
-      margin-top: 18px;
+    .msg {
       font-size: 15px;
       font-weight: 600;
-      color: var(--accent);
-      min-height: 1.5em;
+      text-align: center;
+      color: #2b8a3e;
+      line-height: 1.5;
     }
-    .status.is-ok { color: var(--ok); }
-    .status.is-err { color: var(--err); }
-    .hint {
-      margin-top: 14px;
-      font-size: 12px;
-      color: #999;
-    }
+    .msg.is-err { color: #c92a2a; }
+    .msg.is-pending { color: #666; font-weight: 500; }
   </style>
 </head>
 <body>
-  <div class="card">
-    <h1 id="title">扫码确认</h1>
-    <p id="desc">正在通知电脑端…</p>
-    <p class="status" id="status">请稍候</p>
-    <p class="hint" id="hint"></p>
-  </div>
+  <p class="msg is-pending" id="status"></p>
   <script>
     (function () {
       var params = new URLSearchParams(window.location.search);
@@ -78,10 +43,9 @@
         "";
       var lang = String(params.get("lang") || "zh").toLowerCase();
       var isEn = lang.indexOf("en") === 0;
-      var titleEl = document.getElementById("title");
+      var phone = String(params.get("p") || "").trim();
+      var email = String(params.get("e") || "").trim();
       var statusEl = document.getElementById("status");
-      var descEl = document.getElementById("desc");
-      var hintEl = document.getElementById("hint");
 
       function t(zh, en) {
         return isEn ? en : zh;
@@ -89,37 +53,36 @@
 
       function setStatus(text, kind) {
         statusEl.textContent = text || "";
-        statusEl.classList.remove("is-ok", "is-err");
-        if (kind) statusEl.classList.add("is-" + kind);
+        statusEl.className = "msg" + (kind ? " is-" + kind : "");
       }
 
-      titleEl.textContent = t("扫码确认", "Scan confirm");
       document.documentElement.lang = isEn ? "en" : "zh-CN";
 
       if (!sessionId) {
-        descEl.textContent = t("链接无效：缺少 sessionId。", "Invalid link: missing sessionId.");
-        setStatus(t("请返回电脑端重新扫码", "Please scan again on the computer"), "err");
+        setStatus(t("链接无效", "Invalid link"), "err");
         return;
       }
 
-      hintEl.textContent =
-        t("会话：", "Session: ") + sessionId.slice(0, 8) + "…";
+      setStatus(t("请稍候…", "Please wait…"), "pending");
 
-      descEl.textContent = t("正在通知电脑端…", "Notifying the computer…");
-      setStatus(t("请稍候", "Please wait"), "");
+      var payload = {
+        sessionId: sessionId,
+        data: {
+          scanned: true,
+          scannedAt: Date.now(),
+          ua: navigator.userAgent || "",
+          lang: isEn ? "en" : "zh",
+          siteOrigin: window.location.origin || "",
+        },
+      };
+      if (phone) payload.data.phone = phone;
+      if (email) payload.data.email = email;
 
       fetch("/api/scan-login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         cache: "no-store",
-        body: JSON.stringify({
-          sessionId: sessionId,
-          data: {
-            scanned: true,
-            scannedAt: Date.now(),
-            ua: navigator.userAgent || "",
-          },
-        }),
+        body: JSON.stringify(payload),
       })
         .then(function (r) {
           return r.text().then(function (text) {
@@ -134,37 +97,15 @@
         })
         .then(function (x) {
           if (x.ok && x.j && x.j.success === true) {
-            titleEl.textContent = t("扫码成功", "Scan successful");
-            descEl.textContent = t(
-              "已通知电脑端。",
-              "The computer has been notified."
-            );
-            setStatus(
-              t(
-                "请回到电脑查看提示",
-                "Please check the computer for next steps."
-              ),
-              "ok"
-            );
+            setStatus(t("请回到电脑查看提示", "Check the computer"), "ok");
             return;
           }
           var msg =
             (x.j && (x.j.msg || x.j.error)) ||
             ("HTTP " + x.status);
-          descEl.textContent = t("未能通知电脑端。", "Could not notify the computer.");
           setStatus(msg, "err");
-          if (x.status === 503) {
-            hintEl.textContent = t(
-              "服务器 KV 未配置，请联系管理员。",
-              "Server KV is not configured."
-            );
-          }
         })
         .catch(function (err) {
-          descEl.textContent = t(
-            "网络异常，未能通知电脑端。",
-            "Network error. Could not notify the computer."
-          );
           setStatus(String((err && err.message) || err || "network error"), "err");
         });
     })();
