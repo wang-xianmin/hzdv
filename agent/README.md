@@ -78,7 +78,8 @@ Python + sherpa-onnx（Next-gen Kaldi ONNX）跑在仓库 `services/asr/`（Dock
 
 1. 先 `cd services/asr && ./download_models.sh` 下载免费 SenseVoice 等模型  
 2. `docker compose up -d --build`  
-3. Pages 配 `ASR_SERVICE_URL` / `ASR_API_KEY`，浏览器走同源 `/api/asr`
+3. Pages 配 `ASR_SERVICE_URL` / `ASR_API_KEY`，浏览器走同源 `/api/asr`  
+4. AI 助手麦克风：点一下开始录音（按钮变红脉冲），再点结束 → 识别结果写入输入框；也可上传 wav/mp3 等音频文件  
 
 与 OCR 一样：CF 上只跑代理，模型与推理在 VPS；多个 CF 项目可共用同一 ASR 服务。
 

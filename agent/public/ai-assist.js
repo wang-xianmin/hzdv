@@ -54,8 +54,20 @@
   /** 输入框附件：{ kind, name, file, previewUrl, ext } */
   var pendingAttachment = null;
   var ocrAbort = null;
+  var asrAbort = null;
   var attachStrip = null;
   var lightboxEl = null;
+  /** 麦克风录音状态 */
+  var asrMic = {
+    recording: false,
+    stream: null,
+    ctx: null,
+    processor: null,
+    source: null,
+    chunks: [],
+    sampleRate: 16000,
+    btn: null,
+  };
 
   /** 排版硬校验原因码 → 文案 */
   var LAYOUT_REASONS = {
@@ -78,6 +90,246 @@
         return pair ? (en ? pair[1] : pair[0]) : c;
       })
       .join(en ? ", " : "、");
+  }
+
+  function isAudioFile(file) {
+    if (!file) return false;
+    if (file.type && file.type.indexOf("audio/") === 0) return true;
+    return /\.(wav|mp3|ogg|flac|m4a|webm|aac)$/i.test(String(file.name || ""));
+  }
+
+  function encodeWavMono(floatSamples, sampleRate) {
+    var n = floatSamples.length;
+    var buffer = new ArrayBuffer(44 + n * 2);
+    var view = new DataView(buffer);
+    function writeStr(offset, str) {
+      for (var i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+    }
+    writeStr(0, "RIFF");
+    view.setUint32(4, 36 + n * 2, true);
+    writeStr(8, "WAVE");
+    writeStr(12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeStr(36, "data");
+    view.setUint32(40, n * 2, true);
+    var offset = 44;
+    for (var i = 0; i < n; i++) {
+      var s = Math.max(-1, Math.min(1, floatSamples[i]));
+      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+      offset += 2;
+    }
+    return new Blob([buffer], { type: "audio/wav" });
+  }
+
+  function setMicRecordingUi(on) {
+    var btn = asrMic.btn || document.getElementById("aiAssistMic");
+    if (!btn) return;
+    btn.classList.toggle("is-recording", !!on);
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
+    btn.setAttribute(
+      "aria-label",
+      on ? t("停止录音", "Stop recording") : t("语音", "Voice")
+    );
+    btn.title = on
+      ? t("点击结束并识别", "Click to stop and transcribe")
+      : t("语音", "Voice");
+  }
+
+  function stopMicCapture() {
+    try {
+      if (asrMic.processor) {
+        asrMic.processor.disconnect();
+        asrMic.processor.onaudioprocess = null;
+      }
+    } catch (e1) {}
+    try {
+      if (asrMic.source) asrMic.source.disconnect();
+    } catch (e2) {}
+    try {
+      if (asrMic.ctx && asrMic.ctx.state !== "closed") asrMic.ctx.close();
+    } catch (e3) {}
+    try {
+      if (asrMic.stream) {
+        asrMic.stream.getTracks().forEach(function (tr) {
+          tr.stop();
+        });
+      }
+    } catch (e4) {}
+    asrMic.processor = null;
+    asrMic.source = null;
+    asrMic.ctx = null;
+    asrMic.stream = null;
+    asrMic.recording = false;
+    setMicRecordingUi(false);
+  }
+
+  function mergeFloatChunks(chunks) {
+    var total = 0;
+    for (var i = 0; i < chunks.length; i++) total += chunks[i].length;
+    var out = new Float32Array(total);
+    var off = 0;
+    for (var j = 0; j < chunks.length; j++) {
+      out.set(chunks[j], off);
+      off += chunks[j].length;
+    }
+    return out;
+  }
+
+  function asrReportText(data, en) {
+    var text = String((data && data.text) || "").trim();
+    var head = en
+      ? "[Sherpa-onnx / SenseVoice]"
+      : "【Sherpa-onnx / SenseVoice】";
+    if (!text) {
+      return head + (en ? "\n(no speech recognized)" : "\n（未识别到语音）");
+    }
+    return head + "\n" + text;
+  }
+
+  function applyAsrTextToInput(text) {
+    if (!inputEl) return;
+    var t0 = String(text || "").trim();
+    if (!t0) return;
+    var cur = String(inputEl.value || "").trim();
+    inputEl.value = cur ? cur + " " + t0 : t0;
+    try {
+      inputEl.focus();
+    } catch (e) {}
+    syncSendState();
+  }
+
+  function runAsrBlob(blob, filename) {
+    if (!blob) return;
+    if (asrAbort) {
+      try {
+        asrAbort.abort();
+      } catch (e) {}
+    }
+    asrAbort = typeof AbortController !== "undefined" ? new AbortController() : null;
+    var fd = new FormData();
+    fd.append("file", blob, filename || "speech.wav");
+    appendAssistant(t("正在识别语音…", "Transcribing speech…"));
+    fetch("/api/asr", {
+      method: "POST",
+      body: fd,
+      signal: asrAbort ? asrAbort.signal : undefined,
+    })
+      .then(function (res) {
+        return res.json().then(function (data) {
+          return { ok: res.ok, data: data };
+        });
+      })
+      .then(function (pack) {
+        var data = pack.data || {};
+        if (!pack.ok || data.success === false) {
+          appendAssistant(
+            t("语音识别失败：", "Speech recognition failed: ") +
+              (data.error || data.detail || "unknown")
+          );
+          return;
+        }
+        var text = String(data.text || "").trim();
+        var en = currentLang() === "en";
+        appendAssistant(asrReportText(data, en), {
+          modelBadge: "Sherpa-onnx",
+          modelNote: en
+            ? "Text filled into the input box."
+            : "已填入输入框，可继续编辑后发送。",
+          mono: true,
+        });
+        applyAsrTextToInput(text);
+      })
+      .catch(function (err) {
+        if (err && err.name === "AbortError") return;
+        appendAssistant(
+          t("语音识别网络异常：", "Speech recognition network error: ") +
+            String((err && err.message) || err || "")
+        );
+      });
+  }
+
+  function startMicRecording() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      appendAssistant(
+        t(
+          "当前浏览器不支持麦克风录音。",
+          "This browser does not support microphone recording."
+        )
+      );
+      return;
+    }
+    navigator.mediaDevices
+      .getUserMedia({ audio: true })
+      .then(function (stream) {
+        var Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) {
+          stream.getTracks().forEach(function (tr) {
+            tr.stop();
+          });
+          appendAssistant(
+            t("当前浏览器不支持 AudioContext。", "AudioContext is not supported.")
+          );
+          return;
+        }
+        var ctx = new Ctx();
+        var source = ctx.createMediaStreamSource(stream);
+        var processor = ctx.createScriptProcessor(4096, 1, 1);
+        asrMic.stream = stream;
+        asrMic.ctx = ctx;
+        asrMic.source = source;
+        asrMic.processor = processor;
+        asrMic.chunks = [];
+        asrMic.sampleRate = ctx.sampleRate || 48000;
+        asrMic.recording = true;
+        setMicRecordingUi(true);
+        processor.onaudioprocess = function (ev) {
+          if (!asrMic.recording) return;
+          var input = ev.inputBuffer.getChannelData(0);
+          asrMic.chunks.push(new Float32Array(input));
+        };
+        var mute = ctx.createGain();
+        mute.gain.value = 0;
+        source.connect(processor);
+        processor.connect(mute);
+        mute.connect(ctx.destination);
+      })
+      .catch(function (err) {
+        appendAssistant(
+          t("无法打开麦克风：", "Cannot open microphone: ") +
+            String((err && err.message) || err || "")
+        );
+      });
+  }
+
+  function finishMicRecording() {
+    if (!asrMic.recording) return;
+    var chunks = asrMic.chunks.slice();
+    var sr = asrMic.sampleRate || 48000;
+    stopMicCapture();
+    if (!chunks.length) {
+      appendAssistant(t("没有录到声音。", "No audio captured."));
+      return;
+    }
+    var samples = mergeFloatChunks(chunks);
+    if (samples.length < sr * 0.2) {
+      appendAssistant(
+        t("录音太短，请再说久一点。", "Recording too short. Please speak longer.")
+      );
+      return;
+    }
+    var blob = encodeWavMono(samples, sr);
+    runAsrBlob(blob, "mic-" + Date.now() + ".wav");
+  }
+
+  function toggleMicRecording() {
+    if (asrMic.recording) finishMicRecording();
+    else startMicRecording();
   }
 
   function isImageFile(file) {
@@ -229,6 +481,11 @@
     ensureDom();
     if (!opened) openChat();
     clearAttachment();
+
+    if (isAudioFile(file)) {
+      runAsrBlob(file, file.name || "audio.wav");
+      return;
+    }
 
     var kind = isImageFile(file) ? "image" : isPdfFile(file) ? "pdf" : "other";
     var previewUrl = kind === "image" ? URL.createObjectURL(file) : "";
@@ -772,14 +1029,17 @@
       submitPrompt(inputEl.value);
     });
     inputEl.addEventListener("input", syncSendState);
-    root.querySelector("#aiAssistMic").addEventListener("click", function () {
-      appendAssistant(t("语音输入即将接入。", "Voice input coming soon."));
-    });
+    asrMic.btn = root.querySelector("#aiAssistMic");
+    if (asrMic.btn) {
+      asrMic.btn.addEventListener("click", function () {
+        toggleMicRecording();
+      });
+    }
 
     var fileInput = document.createElement("input");
     fileInput.type = "file";
     fileInput.accept =
-      "image/*,.png,.jpg,.jpeg,.webp,.bmp,.gif,.pdf,.txt,.md,.doc,.docx,.csv";
+      "image/*,.png,.jpg,.jpeg,.webp,.bmp,.gif,.pdf,.txt,.md,.doc,.docx,.csv,audio/*,.wav,.mp3,.ogg,.flac,.m4a,.webm";
     fileInput.hidden = true;
     fileInput.id = "aiAssistFileInput";
     root.appendChild(fileInput);
@@ -1326,6 +1586,7 @@
 
   function hideAll() {
     if (!root) return;
+    if (asrMic.recording) stopMicCapture();
     visible = false;
     opened = false;
     closeModelMenu();
