@@ -2229,7 +2229,19 @@
       }).then(parseLlmResponse);
     }
 
-    /** Auto：先 /api/llm-intent（短），再 /api/llm-chat（复用 intent），避免单次墙钟叠满被 CF 502 */
+    /** Auto：intent →（如需）websearch → llm-chat，三段短请求避免 CF HTML 502 */
+    function mergeNotes() {
+      var out = [];
+      for (var i = 0; i < arguments.length; i++) {
+        var arr = arguments[i];
+        if (!Array.isArray(arr)) continue;
+        arr.forEach(function (n) {
+          if (n && out.indexOf(n) === -1) out.push(n);
+        });
+      }
+      return out;
+    }
+
     var chain =
       want === "auto"
         ? postJson("/api/llm-intent", {
@@ -2239,13 +2251,15 @@
             ocr: reqBody.ocr,
           }).then(function (intentPack) {
             var ij = intentPack.j || {};
-            var intentNote = formatPipelineNote(ij);
-            if (intentNote) {
+            var allNotes = mergeNotes(ij.notes);
+            if (allNotes.length && wantPipelineTrace()) {
               messages[thinkingIdx].text = t(
-                "已完成意图分类，正在生成…",
-                "Intent done, generating…"
+                "已完成意图分类…",
+                "Intent done…"
               );
-              messages[thinkingIdx].modelNote = intentNote;
+              messages[thinkingIdx].modelNote = formatPipelineNote({
+                notes: allNotes,
+              });
               messages[thinkingIdx].modelBadge = "Auto · intent";
               renderThread();
             }
@@ -2253,21 +2267,90 @@
               applyAssistantPack(intentPack, "");
               return null;
             }
-            var chatBody = Object.assign({}, reqBody, {
-              intent: ij.intent || null,
+
+            var intentObj = ij.intent || null;
+            var needWeb =
+              !!(intentObj && intentObj.web) ||
+              /最新|今天|新闻|实时|股价|天气|latest|today|news/i.test(
+                reqBody.message || ""
+              );
+
+            var afterWeb = Promise.resolve({
+              webCtx: "",
+              webNote: null,
+              webSkipped: "not_needed",
+              notes: [],
             });
-            return postJson("/api/llm-chat", chatBody).then(function (chatPack) {
-              var mergedNotes = [];
-              if (Array.isArray(ij.notes)) mergedNotes = mergedNotes.concat(ij.notes);
-              var cj = chatPack.j || {};
-              if (Array.isArray(cj.notes)) {
-                cj.notes.forEach(function (n) {
-                  if (n && mergedNotes.indexOf(n) === -1) mergedNotes.push(n);
+
+            if (needWeb) {
+              messages[thinkingIdx].text = t(
+                "正在联网检索…",
+                "Searching the web…"
+              );
+              messages[thinkingIdx].modelBadge = "Auto · web";
+              renderThread();
+              afterWeb = postJson("/api/llm-websearch", {
+                phone: reqBody.phone,
+                message: reqBody.message,
+                lang: reqBody.lang,
+                intent: intentObj,
+                systemSettings: reqBody.systemSettings,
+              }).then(function (webPack) {
+                var wj = webPack.j || {};
+                allNotes = mergeNotes(allNotes, wj.notes);
+                if (wantPipelineTrace()) {
+                  messages[thinkingIdx].modelNote = formatPipelineNote({
+                    notes: allNotes,
+                  });
+                  renderThread();
+                }
+                if (!webPack.ok || wj.success === false) {
+                  allNotes.push(
+                    t(
+                      "搜网请求失败，将无联网材料继续生成",
+                      "Websearch request failed; continue without web context"
+                    )
+                  );
+                  return {
+                    webCtx: "",
+                    webSkipped: "request_failed",
+                    notes: wj.notes || [],
+                  };
+                }
+                return {
+                  webCtx: typeof wj.webCtx === "string" ? wj.webCtx : "",
+                  webSkipped: wj.skipped || null,
+                  notes: wj.notes || [],
+                  webSearch: wj.webSearch || null,
+                };
+              });
+            }
+
+            return afterWeb.then(function (webInfo) {
+              messages[thinkingIdx].text = t(
+                "正在生成回答…",
+                "Generating answer…"
+              );
+              messages[thinkingIdx].modelBadge = "Auto · chat";
+              if (wantPipelineTrace()) {
+                messages[thinkingIdx].modelNote = formatPipelineNote({
+                  notes: allNotes,
                 });
               }
-              cj.notes = mergedNotes;
-              chatPack.j = cj;
-              applyAssistantPack(chatPack, "");
+              renderThread();
+
+              var chatBody = Object.assign({}, reqBody, {
+                intent: intentObj,
+                webProvided: true,
+                webCtx: webInfo.webCtx || "",
+                webSkipped: webInfo.webSkipped || null,
+              });
+              return postJson("/api/llm-chat", chatBody).then(function (chatPack) {
+                var cj = chatPack.j || {};
+                cj.notes = mergeNotes(allNotes, cj.notes);
+                chatPack.j = cj;
+                applyAssistantPack(chatPack, "");
+              });
             });
           })
         : postJson("/api/llm-chat", reqBody).then(function (pack) {

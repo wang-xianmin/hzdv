@@ -294,7 +294,7 @@ function buildUserContent(message, ocr, useVision) {
   return parts;
 }
 
-async function callModel(env, target, message, replyLang, ocr, useVision, webCtx) {
+async function callModel(env, target, message, replyLang, ocr, useVision, webCtx, opts) {
   const apiKey = resolveApiKey(env, target.apiKeyEnv);
   if (!apiKey) {
     return {
@@ -322,6 +322,10 @@ async function callModel(env, target, message, replyLang, ocr, useVision, webCtx
     !!(ocr && ocr.visionImages && ocr.visionImages.length) &&
     !!(target.caps && target.caps.vision);
   const userContent = buildUserContent(message, ocr, wantVision);
+  const timeoutMs =
+    (opts && opts.timeoutMs) || (wantVision ? 55000 : 28000);
+  const maxTokens =
+    (opts && opts.maxTokens) || (wantVision ? 2048 : 1024);
   const result = await chatCompletions({
     baseUrl: target.baseUrl,
     apiKey,
@@ -331,8 +335,8 @@ async function callModel(env, target, message, replyLang, ocr, useVision, webCtx
       { role: "user", content: userContent },
     ],
     temperature: 0.3,
-    max_tokens: wantVision ? 2048 : 1024,
-    timeoutMs: wantVision ? 55000 : 28000,
+    max_tokens: maxTokens,
+    timeoutMs,
   });
   const reply = extractAssistantText(result.data) || "";
   if (result.ok && !String(reply).trim()) {
@@ -549,10 +553,13 @@ async function handleLlmChat(env, body) {
   const attempts = [];
   const notes = [];
   /**
-   * 墙钟预算：仅用于在 Cloudflare 掐断前尽量返回 JSON（便于看 notes/意图），
-   * 不替代意图分类。若 body.intent 已由 /api/llm-intent 提供，预算可略紧。
+   * 墙钟预算：仅用于在 Cloudflare 掐断前尽量返回 JSON。
+   * 分阶段（已带 intent / webCtx）时预算更紧，本请求应只剩 LLM。
    */
-  const budgetMs = body.intent && typeof body.intent === "object" ? 35000 : 45000;
+  const budgetMs =
+    body.webProvided === true || Object.prototype.hasOwnProperty.call(body, "intent")
+      ? 28000
+      : 45000;
   const t0 = Date.now();
   function remMs() {
     return budgetMs - (Date.now() - t0);
@@ -638,12 +645,33 @@ async function handleLlmChat(env, body) {
       : "墙钟预算 " + budgetMs + "ms · 分类后剩余 " + remMs() + "ms"
   );
 
-  const web = await resolveWebContext(env, message, replyLang, {
-    force: forceWeb || !!intent.web,
-    intentWeb: !!intent.web,
-    systemSettings: body.systemSettings || body.system_settings || {},
-    timeoutMs: 12000,
-  });
+  /** 前端可先调 /api/llm-websearch，再带 webCtx / webProvided，本请求跳过 Tavily */
+  let web;
+  if (body.webProvided === true || typeof body.webCtx === "string") {
+    const ctx = typeof body.webCtx === "string" ? body.webCtx : "";
+    web = {
+      webCtx: ctx,
+      pack: body.webPack && typeof body.webPack === "object" ? body.webPack : null,
+      used: !!ctx,
+      skipped: ctx ? null : body.webSkipped || "provided_empty",
+      note:
+        body.webNote ||
+        (uiLang === "en"
+          ? ctx
+            ? "Web context reused from /api/llm-websearch"
+            : "Web search reused (empty) from /api/llm-websearch"
+          : ctx
+            ? "联网材料（复用 /api/llm-websearch）"
+            : "联网材料（复用，空）"),
+    };
+  } else {
+    web = await resolveWebContext(env, message, replyLang, {
+      force: forceWeb || !!intent.web,
+      intentWeb: !!intent.web,
+      systemSettings: body.systemSettings || body.system_settings || {},
+      timeoutMs: 12000,
+    });
+  }
   if (web.note) notes.push(web.note);
   const webCtx = web.webCtx || "";
 
@@ -753,12 +781,26 @@ async function handleLlmChat(env, body) {
   }
 
   let lastFail = null;
-  const maxAttempts = webCtx ? 2 : 4;
+  /** 分阶段调用时只试 1 次，避免生成阶段再叠多模型超时 */
+  const phased =
+    Object.prototype.hasOwnProperty.call(body, "intent") ||
+    body.webProvided === true;
+  const maxAttempts = phased ? 1 : webCtx ? 2 : 4;
+  const callOpts = phased ? { timeoutMs: 20000, maxTokens: 800 } : null;
   for (const { target, via } of queue.slice(0, maxAttempts)) {
     const result =
       primaryPromise && primary && target.id === primary.target.id
         ? await primaryPromise
-        : await callModel(env, target, message, replyLang, ocr, useVision, webCtx);
+        : await callModel(
+            env,
+            target,
+            message,
+            replyLang,
+            ocr,
+            useVision,
+            webCtx,
+            callOpts
+          );
     const attempt = {
       label: target.label,
       modelId: target.modelId,
