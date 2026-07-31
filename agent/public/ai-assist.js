@@ -2103,8 +2103,36 @@
       body: JSON.stringify(reqBody),
     })
       .then(function (r) {
-        return r.json().then(function (j) {
-          return { ok: r.ok, j: j };
+        return r.text().then(function (text) {
+          var j = null;
+          if (text) {
+            try {
+              j = JSON.parse(text);
+            } catch (eParse) {
+              var snip = String(text).replace(/\s+/g, " ").trim().slice(0, 180);
+              return {
+                ok: false,
+                j: {
+                  success: false,
+                  error:
+                    t("服务返回非 JSON（HTTP ", "Non-JSON response (HTTP ") +
+                    r.status +
+                    (snip ? "）：" + snip : "）"),
+                },
+              };
+            }
+          } else if (!r.ok || r.status === 204) {
+            return {
+              ok: false,
+              j: {
+                success: false,
+                error:
+                  t("空响应 HTTP ", "Empty response HTTP ") +
+                  r.status,
+              },
+            };
+          }
+          return { ok: r.ok, j: j || {} };
         });
       })
       .then(function (pack) {

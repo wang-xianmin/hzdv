@@ -331,7 +331,7 @@ async function callModel(env, target, message, replyLang, ocr, useVision, webCtx
     ],
     temperature: 0.3,
     max_tokens: wantVision ? 2048 : 1024,
-    timeoutMs: wantVision ? 120000 : 60000,
+    timeoutMs: wantVision ? 55000 : 28000,
   });
   const reply = extractAssistantText(result.data) || "";
   if (result.ok && !String(reply).trim()) {
@@ -464,6 +464,21 @@ export async function onRequest(context) {
     return opsAuthErrorResponse(err);
   }
 
+  try {
+    return await handleLlmChat(env, body);
+  } catch (e) {
+    console.error("llm-chat:", e);
+    return jsonResponse(
+      {
+        success: false,
+        error: String((e && e.message) || e || "llm-chat failed"),
+      },
+      500
+    );
+  }
+}
+
+async function handleLlmChat(env, body) {
   const message = String(body.message || body.prompt || "").trim();
   if (!message) {
     return jsonResponse({ success: false, error: "缺少 message" }, 400);
@@ -638,7 +653,9 @@ export async function onRequest(context) {
     : null;
 
   let lastFail = null;
-  for (const { target, via } of queue.slice(0, 4)) {
+  /** 联网场景少试几次，避免拖垮 Pages Function 墙钟上限 */
+  const maxAttempts = webCtx ? 2 : 4;
+  for (const { target, via } of queue.slice(0, maxAttempts)) {
     const result =
       primaryPromise && primary && target.id === primary.target.id
         ? await primaryPromise
