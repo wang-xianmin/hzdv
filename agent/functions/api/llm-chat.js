@@ -9,6 +9,7 @@
  * 再按模型库（KV）里对应梯队的排序依次尝试：
  *   tier1 → [1,2,3]，tier2 → [2,3,1]，tier3 → [3,2,1]
  * 分类器标 web、关键词启发式或 body.webSearch=true 时先 Tavily 搜网再注入 system。
+ * 前端 Auto 推荐：先 POST /api/llm-intent，再本接口并带 body.intent 复用分类结果（缩短单次墙钟）。
  * 分类器未配置或失败时从第一梯队开始。梯队内顺序即模型库里的排序，与菜单语言无关。
  * 回复语言只看提问语言。需要联网时配 TAVILY_API_KEY。
  *
@@ -549,9 +550,9 @@ async function handleLlmChat(env, body) {
   const notes = [];
   /**
    * 墙钟预算：仅用于在 Cloudflare 掐断前尽量返回 JSON（便于看 notes/意图），
-   * 不替代意图分类，也不走「联网快路径」。
+   * 不替代意图分类。若 body.intent 已由 /api/llm-intent 提供，预算可略紧。
    */
-  const budgetMs = 45000;
+  const budgetMs = body.intent && typeof body.intent === "object" ? 35000 : 45000;
   const t0 = Date.now();
   function remMs() {
     return budgetMs - (Date.now() - t0);
@@ -560,46 +561,75 @@ async function handleLlmChat(env, body) {
   const tier1Cands = registryCandidates(env, models, [1]);
   const forceWeb = body.webSearch === true || body.forceWeb === true;
 
-  // 意图分类优先（分类文本带上 OCR，让分类器看到图里内容）
-  const classifyText =
-    ocr.present && ocr.text ? message + "\n" + ocr.text : message;
-  const intent = await classifyIntent(env, classifyText);
-  if (intent.tier) {
+  /** 前端可先调 /api/llm-intent，再把结果放进 body.intent，本请求跳过分类以缩短墙钟 */
+  let intent;
+  if (Object.prototype.hasOwnProperty.call(body, "intent")) {
+    const provided =
+      body.intent && typeof body.intent === "object"
+        ? body.intent
+        : { tier: null, web: false, latencyMs: 0, error: null, raw: "" };
+    const tierNum = Number(provided.tier);
+    intent = {
+      tier: tierNum === 1 || tierNum === 2 || tierNum === 3 ? tierNum : null,
+      web: !!provided.web,
+      latencyMs: Number(provided.latencyMs) || 0,
+      error: provided.error || null,
+      raw: String(provided.raw || ""),
+    };
     notes.push(
       uiLang === "en"
-        ? "Intent → tier" +
-          intent.tier +
-          (intent.web ? " +web" : "") +
-          " · " +
-          intent.latencyMs +
-          "ms" +
+        ? "Intent (from /api/llm-intent) → " +
+          (intent.tier
+            ? "tier" + intent.tier + (intent.web ? " +web" : "")
+            : "none") +
           (intent.raw ? ' · raw "' + intent.raw + '"' : "")
-        : "意图分类 → tier" +
-          intent.tier +
-          (intent.web ? " +web" : "") +
-          " · " +
-          intent.latencyMs +
-          "ms" +
+        : "意图分类（复用 /api/llm-intent）→ " +
+          (intent.tier
+            ? "tier" + intent.tier + (intent.web ? " +web" : "")
+            : "无有效分级") +
           (intent.raw ? " · 原文「" + intent.raw + "」" : "")
     );
   } else {
-    notes.push(
-      uiLang === "en"
-        ? "Intent failed (" +
-          (intent.error || "error") +
-          ")" +
-          (intent.raw ? ' · raw "' + intent.raw + '"' : "") +
-          " · " +
-          (intent.latencyMs || 0) +
-          "ms → default order"
-        : "意图分类失败（" +
-          (intent.error || "错误") +
-          "）" +
-          (intent.raw ? " · 原文「" + intent.raw + "」" : "") +
-          " · " +
-          (intent.latencyMs || 0) +
-          "ms → 按默认顺序"
-    );
+    const classifyText =
+      ocr.present && ocr.text ? message + "\n" + ocr.text : message;
+    intent = await classifyIntent(env, classifyText);
+    if (intent.tier) {
+      notes.push(
+        uiLang === "en"
+          ? "Intent → tier" +
+            intent.tier +
+            (intent.web ? " +web" : "") +
+            " · " +
+            intent.latencyMs +
+            "ms" +
+            (intent.raw ? ' · raw "' + intent.raw + '"' : "")
+          : "意图分类 → tier" +
+            intent.tier +
+            (intent.web ? " +web" : "") +
+            " · " +
+            intent.latencyMs +
+            "ms" +
+            (intent.raw ? " · 原文「" + intent.raw + "」" : "")
+      );
+    } else {
+      notes.push(
+        uiLang === "en"
+          ? "Intent failed (" +
+            (intent.error || "error") +
+            ")" +
+            (intent.raw ? ' · raw "' + intent.raw + '"' : "") +
+            " · " +
+            (intent.latencyMs || 0) +
+            "ms → default order"
+          : "意图分类失败（" +
+            (intent.error || "错误") +
+            "）" +
+            (intent.raw ? " · 原文「" + intent.raw + "」" : "") +
+            " · " +
+            (intent.latencyMs || 0) +
+            "ms → 按默认顺序"
+      );
+    }
   }
 
   notes.push(

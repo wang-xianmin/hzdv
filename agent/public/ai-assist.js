@@ -2132,110 +2132,160 @@
       } catch (eSys) {}
     }
 
-    fetch("/api/llm-chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      cache: "no-store",
-      body: JSON.stringify(reqBody),
-    })
-      .then(function (r) {
-        return r.text().then(function (text) {
-          var j = null;
-          if (text) {
-            try {
-              j = JSON.parse(text);
-            } catch (eParse) {
-              var snip = String(text).replace(/\s+/g, " ").trim().slice(0, 180);
-              var cfHint =
-                /<!DOCTYPE|cloudflare|attention required/i.test(text) ||
-                r.status === 502 ||
-                r.status === 504 ||
-                r.status === 524;
-              return {
-                ok: false,
-                j: {
-                  success: false,
-                  error: cfHint
-                    ? t(
-                        "Cloudflare 网关超时/失败（HTTP " +
-                          r.status +
-                          "）。跟踪开关开了也看不到步骤——Worker 没返回 JSON。请再试或问非实时问题。",
-                        "Cloudflare gateway timeout/fail (HTTP " +
-                          r.status +
-                          "). Pipeline trace needs a JSON response. Retry or ask a non-realtime question."
-                      )
-                    : t("服务返回非 JSON（HTTP ", "Non-JSON response (HTTP ") +
-                      r.status +
-                      (snip ? "）：" + snip : "）"),
-                },
-              };
-            }
-          } else if (!r.ok || r.status === 204) {
+    function parseLlmResponse(r) {
+      return r.text().then(function (text) {
+        var j = null;
+        if (text) {
+          try {
+            j = JSON.parse(text);
+          } catch (eParse) {
+            var snip = String(text).replace(/\s+/g, " ").trim().slice(0, 180);
+            var cfHint =
+              /<!DOCTYPE|cloudflare|attention required/i.test(text) ||
+              r.status === 502 ||
+              r.status === 504 ||
+              r.status === 524;
             return {
               ok: false,
               j: {
                 success: false,
-                error:
-                  t("空响应 HTTP ", "Empty response HTTP ") +
-                  r.status,
+                error: cfHint
+                  ? t(
+                      "Cloudflare 网关超时/失败（HTTP " +
+                        r.status +
+                        "）。本段 Worker 未返回 JSON。若意图阶段已成功，跟踪里应仍保留分类结果。",
+                      "Cloudflare gateway timeout/fail (HTTP " +
+                        r.status +
+                        "). This Worker returned no JSON. If intent phase succeeded, its notes should remain."
+                    )
+                  : t("服务返回非 JSON（HTTP ", "Non-JSON response (HTTP ") +
+                    r.status +
+                    (snip ? "）：" + snip : "）"),
               },
             };
           }
-          return { ok: r.ok, j: j || {} };
-        });
-      })
-      .then(function (pack) {
-        var j = pack.j || {};
-        var badge = formatModelBadge(j.model, want);
-        var latency =
-          j.latencyMs != null ? " · " + j.latencyMs + "ms" : "";
-        var note = formatPipelineNote(j);
-        if (j.success && j.reply) {
-          messages[thinkingIdx] = {
-            role: "assistant",
-            text: String(j.reply),
-            model: want,
-            modelBadge: badge + latency,
-            modelNote: note,
-            modelMeta: j.model || null,
-          };
-        } else {
-          var errText = j.error || "";
-          if (!errText && j.upstreamStatus) {
-            errText = "HTTP " + j.upstreamStatus;
-          }
-          if (!errText && j.upstream) {
-            try {
-              errText = JSON.stringify(j.upstream).slice(0, 240);
-            } catch (e2) {
-              errText = "";
-            }
-          }
-          if (!errText) {
-            errText = pack.ok
-              ? t("上游返回空内容或无法解析", "Empty or unreadable upstream reply")
-              : t("请求失败（无详细错误）", "Request failed (no detail)");
-          }
-          messages[thinkingIdx] = {
-            role: "assistant",
-            text: t("调用失败：", "Failed: ") + errText,
-            model: want,
-            modelBadge: (badge || "LLM") + latency,
-            modelNote: note,
-            modelMeta: j.model || null,
+        } else if (!r.ok || r.status === 204) {
+          return {
+            ok: false,
+            j: {
+              success: false,
+              error: t("空响应 HTTP ", "Empty response HTTP ") + r.status,
+            },
           };
         }
-        renderThread();
-      })
-      .catch(function (err) {
+        return { ok: r.ok, j: j || {} };
+      });
+    }
+
+    function applyAssistantPack(pack, notePrefix) {
+      var j = pack.j || {};
+      var badge = formatModelBadge(j.model, want);
+      var latency = j.latencyMs != null ? " · " + j.latencyMs + "ms" : "";
+      var note = formatPipelineNote(j);
+      if (notePrefix && note) note = notePrefix + "\n" + note;
+      else if (notePrefix) note = notePrefix;
+      if (j.success && j.reply) {
         messages[thinkingIdx] = {
           role: "assistant",
-          text: t("网络错误：", "Network error: ") + String((err && err.message) || err),
+          text: String(j.reply),
           model: want,
-          modelBadge: formatModelBadge(null, want),
+          modelBadge: badge + latency,
+          modelNote: note,
+          modelMeta: j.model || null,
         };
-        renderThread();
-      });
+      } else {
+        var errText = j.error || "";
+        if (!errText && j.upstreamStatus) errText = "HTTP " + j.upstreamStatus;
+        if (!errText && j.upstream) {
+          try {
+            errText = JSON.stringify(j.upstream).slice(0, 240);
+          } catch (e2) {
+            errText = "";
+          }
+        }
+        if (!errText) {
+          errText = pack.ok
+            ? t("上游返回空内容或无法解析", "Empty or unreadable upstream reply")
+            : t("请求失败（无详细错误）", "Request failed (no detail)");
+        }
+        messages[thinkingIdx] = {
+          role: "assistant",
+          text: t("调用失败：", "Failed: ") + errText,
+          model: want,
+          modelBadge: (badge || "LLM") + latency,
+          modelNote: note || messages[thinkingIdx].modelNote || "",
+          modelMeta: j.model || null,
+        };
+      }
+      renderThread();
+    }
+
+    function postJson(url, body) {
+      return fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify(body),
+      }).then(parseLlmResponse);
+    }
+
+    /** Auto：先 /api/llm-intent（短），再 /api/llm-chat（复用 intent），避免单次墙钟叠满被 CF 502 */
+    var chain =
+      want === "auto"
+        ? postJson("/api/llm-intent", {
+            phone: reqBody.phone,
+            message: reqBody.message,
+            lang: reqBody.lang,
+            ocr: reqBody.ocr,
+          }).then(function (intentPack) {
+            var ij = intentPack.j || {};
+            var intentNote = formatPipelineNote(ij);
+            if (intentNote) {
+              messages[thinkingIdx].text = t(
+                "已完成意图分类，正在生成…",
+                "Intent done, generating…"
+              );
+              messages[thinkingIdx].modelNote = intentNote;
+              messages[thinkingIdx].modelBadge = "Auto · intent";
+              renderThread();
+            }
+            if (!intentPack.ok || ij.success === false) {
+              applyAssistantPack(intentPack, "");
+              return null;
+            }
+            var chatBody = Object.assign({}, reqBody, {
+              intent: ij.intent || null,
+            });
+            return postJson("/api/llm-chat", chatBody).then(function (chatPack) {
+              var mergedNotes = [];
+              if (Array.isArray(ij.notes)) mergedNotes = mergedNotes.concat(ij.notes);
+              var cj = chatPack.j || {};
+              if (Array.isArray(cj.notes)) {
+                cj.notes.forEach(function (n) {
+                  if (n && mergedNotes.indexOf(n) === -1) mergedNotes.push(n);
+                });
+              }
+              cj.notes = mergedNotes;
+              chatPack.j = cj;
+              applyAssistantPack(chatPack, "");
+            });
+          })
+        : postJson("/api/llm-chat", reqBody).then(function (pack) {
+            applyAssistantPack(pack, "");
+          });
+
+    chain.catch(function (err) {
+      messages[thinkingIdx] = {
+        role: "assistant",
+        text:
+          t("网络错误：", "Network error: ") +
+          String((err && err.message) || err),
+        model: want,
+        modelBadge: formatModelBadge(null, want),
+        modelNote: messages[thinkingIdx] && messages[thinkingIdx].modelNote,
+      };
+      renderThread();
+    });
   }
 
   function closePlusMenuSafe() {
