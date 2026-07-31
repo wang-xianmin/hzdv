@@ -293,7 +293,7 @@ function buildUserContent(message, ocr, useVision) {
   return parts;
 }
 
-async function callModel(env, target, message, replyLang, ocr, useVision, webCtx, opts) {
+async function callModel(env, target, message, replyLang, ocr, useVision, webCtx) {
   const apiKey = resolveApiKey(env, target.apiKeyEnv);
   if (!apiKey) {
     return {
@@ -321,7 +321,6 @@ async function callModel(env, target, message, replyLang, ocr, useVision, webCtx
     !!(ocr && ocr.visionImages && ocr.visionImages.length) &&
     !!(target.caps && target.caps.vision);
   const userContent = buildUserContent(message, ocr, wantVision);
-  const fast = !!(opts && opts.fastWeb);
   const result = await chatCompletions({
     baseUrl: target.baseUrl,
     apiKey,
@@ -331,13 +330,8 @@ async function callModel(env, target, message, replyLang, ocr, useVision, webCtx
       { role: "user", content: userContent },
     ],
     temperature: 0.3,
-    max_tokens: wantVision ? 2048 : fast ? 500 : 1024,
-    /** 联网快路径压进 Pages 墙钟；普通对话略宽裕 */
-    timeoutMs: wantVision
-      ? 55000
-      : fast
-        ? Math.min(12000, Math.max(4000, (opts && opts.budgetMs) || 12000))
-        : 28000,
+    max_tokens: wantVision ? 2048 : 1024,
+    timeoutMs: wantVision ? 55000 : 28000,
   });
   const reply = extractAssistantText(result.data) || "";
   if (result.ok && !String(reply).trim()) {
@@ -358,6 +352,7 @@ async function callModel(env, target, message, replyLang, ocr, useVision, webCtx
  * 决定是否搜网并拉取 Tavily 材料。
  * force：body.webSearch / body.forceWeb
  * intentWeb：分类器标了 web
+ * heuristicNeedsWeb：仅作「要不要搜」的兜底，不替代意图分类、不跳过分类器
  */
 async function resolveWebContext(env, message, replyLang, opts) {
   const force = !!(opts && (opts.force || opts.intentWeb));
@@ -552,8 +547,11 @@ async function handleLlmChat(env, body) {
 
   const attempts = [];
   const notes = [];
-  /** 整请求墙钟预算：先于 Cloudflare HTML 502 返回 JSON */
-  const budgetMs = 22000;
+  /**
+   * 墙钟预算：仅用于在 Cloudflare 掐断前尽量返回 JSON（便于看 notes/意图），
+   * 不替代意图分类，也不走「联网快路径」。
+   */
+  const budgetMs = 45000;
   const t0 = Date.now();
   function remMs() {
     return budgetMs - (Date.now() - t0);
@@ -561,88 +559,60 @@ async function handleLlmChat(env, body) {
 
   const tier1Cands = registryCandidates(env, models, [1]);
   const forceWeb = body.webSearch === true || body.forceWeb === true;
-  /** 新闻/实时类：跳过分类器，搜网+单次 LLM，压进 CF 墙钟避免 HTML 502 */
-  const webFast =
-    !ocr.present && (forceWeb || heuristicNeedsWeb(message));
 
-  let intent = { tier: null, web: false, latencyMs: 0, error: null, raw: "" };
-  if (!webFast) {
-    const classifyText =
-      ocr.present && ocr.text ? message + "\n" + ocr.text : message;
-    intent = await classifyIntent(env, classifyText);
-    if (intent.tier) {
-      notes.push(
-        uiLang === "en"
-          ? "Intent → tier" +
-            intent.tier +
-            (intent.web ? " +web" : "") +
-            " · " +
-            intent.latencyMs +
-            "ms" +
-            (intent.raw ? ' · raw "' + intent.raw + '"' : "")
-          : "意图分类 → tier" +
-            intent.tier +
-            (intent.web ? " +web" : "") +
-            " · " +
-            intent.latencyMs +
-            "ms" +
-            (intent.raw ? " · 原文「" + intent.raw + "」" : "")
-      );
-    } else {
-      notes.push(
-        uiLang === "en"
-          ? "Intent failed (" +
-            (intent.error || "error") +
-            ")" +
-            (intent.raw ? ' · raw "' + intent.raw + '"' : "") +
-            " · " +
-            (intent.latencyMs || 0) +
-            "ms → default order"
-          : "意图分类失败（" +
-            (intent.error || "错误") +
-            "）" +
-            (intent.raw ? " · 原文「" + intent.raw + "」" : "") +
-            " · " +
-            (intent.latencyMs || 0) +
-            "ms → 按默认顺序"
-      );
-    }
+  // 意图分类优先（分类文本带上 OCR，让分类器看到图里内容）
+  const classifyText =
+    ocr.present && ocr.text ? message + "\n" + ocr.text : message;
+  const intent = await classifyIntent(env, classifyText);
+  if (intent.tier) {
+    notes.push(
+      uiLang === "en"
+        ? "Intent → tier" +
+          intent.tier +
+          (intent.web ? " +web" : "") +
+          " · " +
+          intent.latencyMs +
+          "ms" +
+          (intent.raw ? ' · raw "' + intent.raw + '"' : "")
+        : "意图分类 → tier" +
+          intent.tier +
+          (intent.web ? " +web" : "") +
+          " · " +
+          intent.latencyMs +
+          "ms" +
+          (intent.raw ? " · 原文「" + intent.raw + "」" : "")
+    );
   } else {
     notes.push(
       uiLang === "en"
-        ? "Web fast path → skip intent · budget " + budgetMs + "ms"
-        : "联网快路径 → 跳过意图分类 · 墙钟预算 " + budgetMs + "ms"
+        ? "Intent failed (" +
+          (intent.error || "error") +
+          ")" +
+          (intent.raw ? ' · raw "' + intent.raw + '"' : "") +
+          " · " +
+          (intent.latencyMs || 0) +
+          "ms → default order"
+        : "意图分类失败（" +
+          (intent.error || "错误") +
+          "）" +
+          (intent.raw ? " · 原文「" + intent.raw + "」" : "") +
+          " · " +
+          (intent.latencyMs || 0) +
+          "ms → 按默认顺序"
     );
   }
 
-  if (remMs() < 2500) {
-    return jsonResponse(
-      {
-        success: false,
-        error:
-          uiLang === "en"
-            ? "Stopped before Cloudflare timeout (budget exhausted before search/LLM)"
-            : "已在 Cloudflare 超时前中止（搜网/模型前预算用尽）",
-        notes,
-        model: {
-          id: "auto",
-          label: "Auto",
-          modelId: "",
-          tier: 0,
-          via: "auto→budget",
-          ...langInfo,
-        },
-      },
-      504
-    );
-  }
+  notes.push(
+    uiLang === "en"
+      ? "Wall budget " + budgetMs + "ms · left " + remMs() + "ms after intent"
+      : "墙钟预算 " + budgetMs + "ms · 分类后剩余 " + remMs() + "ms"
+  );
 
   const web = await resolveWebContext(env, message, replyLang, {
-    force: forceWeb || !!intent.web || webFast,
+    force: forceWeb || !!intent.web,
     intentWeb: !!intent.web,
     systemSettings: body.systemSettings || body.system_settings || {},
-    timeoutMs: webFast ? Math.min(5000, Math.max(3000, remMs() - 12000)) : 12000,
-    maxResults: webFast ? 3 : undefined,
+    timeoutMs: 12000,
   });
   if (web.note) notes.push(web.note);
   const webCtx = web.webCtx || "";
@@ -652,15 +622,9 @@ async function handleLlmChat(env, body) {
   // 可走 tier2 或无视觉的 tier3；不因「页复杂」强行抬到 3 / 跳过 2。
   let routeTier = intent.tier || 0;
   const routeBits = [];
-  if ((web.used || webFast) && routeTier < 2) {
-    /** 有检索材料时优先用快模型总结；无材料仍抬到 tier2 */
-    if (web.used && webFast) {
-      routeTier = routeTier || 1;
-      routeBits.push(uiLang === "en" ? "web+fast→tier1 prefer" : "联网快路径优先 tier1");
-    } else {
-      routeTier = 2;
-      routeBits.push(uiLang === "en" ? "web floor" : "联网下限");
-    }
+  if (web.used && routeTier < 2) {
+    routeTier = 2;
+    routeBits.push(uiLang === "en" ? "web floor" : "联网下限");
   }
   if (ocr.present && ocr.source !== "pdf" && ocr.floorTier > routeTier) {
     routeTier = ocr.floorTier;
@@ -670,18 +634,17 @@ async function handleLlmChat(env, body) {
         : "排版" + (ocr.reasons.length ? ":" + ocr.reasons.join("、") : "")
     );
   }
-  if (routeTier || webFast) {
+  if (routeTier) {
     notes.push(
       uiLang === "en"
         ? "Route → tier" +
-          (routeTier || 1) +
+          routeTier +
           (routeBits.length ? " (" + routeBits.join("; ") + ")" : "")
         : "路由 → tier" +
-          (routeTier || 1) +
+          routeTier +
           (routeBits.length ? "（" + routeBits.join("；") + "）" : "")
     );
   }
-  if (webFast && !routeTier) routeTier = 1;
 
   const hasVisionPages = !!(ocr.visionImages && ocr.visionImages.length);
   // 仅当意图落到 tier3 且有整页渲图时，同梯队内优先带视觉的模型；
@@ -701,18 +664,13 @@ async function handleLlmChat(env, body) {
   }
 
   // 有附件或已搜网时不预热 tier1：上下文已变，预热会答非所问
-  const primary = ocr.present || webCtx || webFast ? null : tier1Cands[0] || null;
+  const primary = ocr.present || webCtx ? null : tier1Cands[0] || null;
   const primaryPromise = primary
     ? callModel(env, primary.target, message, replyLang, ocr, false, "")
     : null;
 
   let queue;
-  if (webFast) {
-    /** 有检索材料：tier1→2；无材料：tier2→1，都只试 1 个 */
-    queue = web.used
-      ? registryCandidates(env, models, [1, 2], false)
-      : registryCandidates(env, models, [2, 1], false);
-  } else if (routeTier === 2) {
+  if (routeTier === 2) {
     queue = registryCandidates(env, models, [2, 3, 1], preferVision);
   } else if (routeTier === 3) {
     queue = registryCandidates(env, models, [3, 2, 1], preferVision);
@@ -738,8 +696,8 @@ async function handleLlmChat(env, body) {
   if (remMs() < 3000) {
     notes.push(
       uiLang === "en"
-        ? "Budget left " + remMs() + "ms → skip LLM to avoid CF 502 HTML"
-        : "剩余预算 " + remMs() + "ms → 跳过 LLM，避免 Cloudflare HTML 502"
+        ? "Budget left " + remMs() + "ms → skip LLM (return JSON before CF HTML 502)"
+        : "剩余预算 " + remMs() + "ms → 跳过 LLM（先回 JSON，避免 Cloudflare HTML 502）"
     );
     return jsonResponse(
       {
@@ -765,25 +723,12 @@ async function handleLlmChat(env, body) {
   }
 
   let lastFail = null;
-  /** 联网快路径只试 1 次；其它联网最多 2 次 */
-  const maxAttempts = webFast ? 1 : webCtx ? 2 : 4;
-  const callOpts = webFast
-    ? { fastWeb: true, budgetMs: Math.max(4000, remMs() - 500) }
-    : null;
+  const maxAttempts = webCtx ? 2 : 4;
   for (const { target, via } of queue.slice(0, maxAttempts)) {
     const result =
       primaryPromise && primary && target.id === primary.target.id
         ? await primaryPromise
-        : await callModel(
-            env,
-            target,
-            message,
-            replyLang,
-            ocr,
-            useVision,
-            webCtx,
-            callOpts
-          );
+        : await callModel(env, target, message, replyLang, ocr, useVision, webCtx);
     const attempt = {
       label: target.label,
       modelId: target.modelId,
