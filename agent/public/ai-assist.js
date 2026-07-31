@@ -7,14 +7,14 @@
   var STORAGE_KEY = "hzdv_ai_assist_model";
 
   var PROMPTS_ZH = [
-    "AI助手能为我做什么？",
-    "AI助手能带来什么结果？",
-    "AI助手能与我的系统集成吗？",
+    "迪微是干什么的？",
+    "迪微有什么产品？",
+    "迪微能帮我进行系统集成吗？",
   ];
   var PROMPTS_EN = [
-    "What can the AI assistant do for me?",
-    "What results can it bring?",
-    "Can it integrate with my systems?",
+    "What does Diwei do?",
+    "What products does Diwei offer?",
+    "Can Diwei help with system integration?",
   ];
 
   /** id 会随请求传给后端；Auto 由服务端自行选模 */
