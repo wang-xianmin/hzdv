@@ -331,9 +331,13 @@ async function callModel(env, target, message, replyLang, ocr, useVision, webCtx
       { role: "user", content: userContent },
     ],
     temperature: 0.3,
-    max_tokens: wantVision ? 2048 : fast ? 700 : 1024,
+    max_tokens: wantVision ? 2048 : fast ? 500 : 1024,
     /** 联网快路径压进 Pages 墙钟；普通对话略宽裕 */
-    timeoutMs: wantVision ? 55000 : fast ? 18000 : 28000,
+    timeoutMs: wantVision
+      ? 55000
+      : fast
+        ? Math.min(12000, Math.max(4000, (opts && opts.budgetMs) || 12000))
+        : 28000,
   });
   const reply = extractAssistantText(result.data) || "";
   if (result.ok && !String(reply).trim()) {
@@ -382,7 +386,10 @@ async function resolveWebContext(env, message, replyLang, opts) {
       ? "advanced"
       : "basic";
   const pack = await searchTavily(env, message, {
-    maxResults: maxResults,
+    maxResults:
+      opts && opts.maxResults != null
+        ? opts.maxResults
+        : maxResults,
     searchDepth: searchDepth,
     timeoutMs: (opts && opts.timeoutMs) || undefined,
   });
@@ -545,6 +552,12 @@ async function handleLlmChat(env, body) {
 
   const attempts = [];
   const notes = [];
+  /** 整请求墙钟预算：先于 Cloudflare HTML 502 返回 JSON */
+  const budgetMs = 22000;
+  const t0 = Date.now();
+  function remMs() {
+    return budgetMs - (Date.now() - t0);
+  }
 
   const tier1Cands = registryCandidates(env, models, [1]);
   const forceWeb = body.webSearch === true || body.forceWeb === true;
@@ -597,8 +610,30 @@ async function handleLlmChat(env, body) {
   } else {
     notes.push(
       uiLang === "en"
-        ? "Web fast path → skip intent classifier"
-        : "联网快路径 → 跳过意图分类"
+        ? "Web fast path → skip intent · budget " + budgetMs + "ms"
+        : "联网快路径 → 跳过意图分类 · 墙钟预算 " + budgetMs + "ms"
+    );
+  }
+
+  if (remMs() < 2500) {
+    return jsonResponse(
+      {
+        success: false,
+        error:
+          uiLang === "en"
+            ? "Stopped before Cloudflare timeout (budget exhausted before search/LLM)"
+            : "已在 Cloudflare 超时前中止（搜网/模型前预算用尽）",
+        notes,
+        model: {
+          id: "auto",
+          label: "Auto",
+          modelId: "",
+          tier: 0,
+          via: "auto→budget",
+          ...langInfo,
+        },
+      },
+      504
     );
   }
 
@@ -606,7 +641,8 @@ async function handleLlmChat(env, body) {
     force: forceWeb || !!intent.web || webFast,
     intentWeb: !!intent.web,
     systemSettings: body.systemSettings || body.system_settings || {},
-    timeoutMs: webFast ? 8000 : 12000,
+    timeoutMs: webFast ? Math.min(5000, Math.max(3000, remMs() - 12000)) : 12000,
+    maxResults: webFast ? 3 : undefined,
   });
   if (web.note) notes.push(web.note);
   const webCtx = web.webCtx || "";
@@ -617,8 +653,14 @@ async function handleLlmChat(env, body) {
   let routeTier = intent.tier || 0;
   const routeBits = [];
   if ((web.used || webFast) && routeTier < 2) {
-    routeTier = 2;
-    routeBits.push(uiLang === "en" ? "web floor" : "联网下限");
+    /** 有检索材料时优先用快模型总结；无材料仍抬到 tier2 */
+    if (web.used && webFast) {
+      routeTier = routeTier || 1;
+      routeBits.push(uiLang === "en" ? "web+fast→tier1 prefer" : "联网快路径优先 tier1");
+    } else {
+      routeTier = 2;
+      routeBits.push(uiLang === "en" ? "web floor" : "联网下限");
+    }
   }
   if (ocr.present && ocr.source !== "pdf" && ocr.floorTier > routeTier) {
     routeTier = ocr.floorTier;
@@ -628,17 +670,19 @@ async function handleLlmChat(env, body) {
         : "排版" + (ocr.reasons.length ? ":" + ocr.reasons.join("、") : "")
     );
   }
-  if (routeTier) {
+  if (routeTier || webFast) {
     notes.push(
       uiLang === "en"
         ? "Route → tier" +
-          routeTier +
+          (routeTier || 1) +
           (routeBits.length ? " (" + routeBits.join("; ") + ")" : "")
         : "路由 → tier" +
-          routeTier +
+          (routeTier || 1) +
           (routeBits.length ? "（" + routeBits.join("；") + "）" : "")
     );
   }
+  if (webFast && !routeTier) routeTier = 1;
+
   const hasVisionPages = !!(ocr.visionImages && ocr.visionImages.length);
   // 仅当意图落到 tier3 且有整页渲图时，同梯队内优先带视觉的模型；
   // tier2 / 无视觉的 tier3（如 deepseek-v4-pro）照常可用，callModel 会按 caps.vision 决定是否附图。
@@ -663,7 +707,12 @@ async function handleLlmChat(env, body) {
     : null;
 
   let queue;
-  if (routeTier === 2) {
+  if (webFast) {
+    /** 有检索材料：tier1→2；无材料：tier2→1，都只试 1 个 */
+    queue = web.used
+      ? registryCandidates(env, models, [1, 2], false)
+      : registryCandidates(env, models, [2, 1], false);
+  } else if (routeTier === 2) {
     queue = registryCandidates(env, models, [2, 3, 1], preferVision);
   } else if (routeTier === 3) {
     queue = registryCandidates(env, models, [3, 2, 1], preferVision);
@@ -686,10 +735,41 @@ async function handleLlmChat(env, body) {
       }
     : null;
 
+  if (remMs() < 3000) {
+    notes.push(
+      uiLang === "en"
+        ? "Budget left " + remMs() + "ms → skip LLM to avoid CF 502 HTML"
+        : "剩余预算 " + remMs() + "ms → 跳过 LLM，避免 Cloudflare HTML 502"
+    );
+    return jsonResponse(
+      {
+        success: false,
+        error:
+          uiLang === "en"
+            ? "Stopped before Cloudflare timeout (not enough time left for LLM)"
+            : "已在 Cloudflare 超时前中止（剩余时间不够调模型）",
+        notes,
+        attempts,
+        webSearch: webMeta,
+        model: {
+          id: "auto",
+          label: "Auto",
+          modelId: "",
+          tier: routeTier || 0,
+          via: "auto→budget",
+          ...langInfo,
+        },
+      },
+      504
+    );
+  }
+
   let lastFail = null;
   /** 联网快路径只试 1 次；其它联网最多 2 次 */
   const maxAttempts = webFast ? 1 : webCtx ? 2 : 4;
-  const callOpts = webFast ? { fastWeb: true } : null;
+  const callOpts = webFast
+    ? { fastWeb: true, budgetMs: Math.max(4000, remMs() - 500) }
+    : null;
   for (const { target, via } of queue.slice(0, maxAttempts)) {
     const result =
       primaryPromise && primary && target.id === primary.target.id

@@ -2146,14 +2146,27 @@
               j = JSON.parse(text);
             } catch (eParse) {
               var snip = String(text).replace(/\s+/g, " ").trim().slice(0, 180);
+              var cfHint =
+                /<!DOCTYPE|cloudflare|attention required/i.test(text) ||
+                r.status === 502 ||
+                r.status === 504 ||
+                r.status === 524;
               return {
                 ok: false,
                 j: {
                   success: false,
-                  error:
-                    t("服务返回非 JSON（HTTP ", "Non-JSON response (HTTP ") +
-                    r.status +
-                    (snip ? "）：" + snip : "）"),
+                  error: cfHint
+                    ? t(
+                        "Cloudflare 网关超时/失败（HTTP " +
+                          r.status +
+                          "）。跟踪开关开了也看不到步骤——Worker 没返回 JSON。请再试或问非实时问题。",
+                        "Cloudflare gateway timeout/fail (HTTP " +
+                          r.status +
+                          "). Pipeline trace needs a JSON response. Retry or ask a non-realtime question."
+                      )
+                    : t("服务返回非 JSON（HTTP ", "Non-JSON response (HTTP ") +
+                      r.status +
+                      (snip ? "）：" + snip : "）"),
                 },
               };
             }
