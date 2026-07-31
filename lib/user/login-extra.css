@@ -103,6 +103,19 @@
   margin-top: 6px;
 }
 
+.lreg-root .register-turnstile-inline {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  min-height: 66px;
+  margin: 4px 0 12px;
+  /* 留给 Cloudflare Turnstile 自带勾选框与品牌标识 */
+}
+
+.lreg-root .register-turnstile-inline[hidden] {
+  display: none !important;
+}
+
 .lreg-root .turnstile-overlay {
   display: none;
   position: fixed;
@@ -117,6 +130,15 @@
 
 .lreg-root .turnstile-overlay.show {
   display: flex;
+}
+
+.lreg-root .turnstile-overlay.turnstile-overlay--force {
+  /* 强制验证：无取消入口，只能完成勾选 */
+  cursor: default;
+}
+
+.lreg-root .turnstile-overlay.turnstile-overlay--force .turnstile-cancel-btn {
+  display: none !important;
 }
 
 .lreg-root .turnstile-card {

@@ -179,3 +179,160 @@ export function extractAssistantText(data) {
     return "";
   }
 }
+
+/**
+ * OpenAI 兼容流式 chat/completions。
+ * onDelta(fullTextSoFar, piece) 每有新 token 调用；返回最终全文。
+ */
+export async function chatCompletionsStream({
+  baseUrl,
+  apiKey,
+  model,
+  messages,
+  temperature = 0.2,
+  max_tokens = 512,
+  timeoutMs = 60000,
+  onDelta = null,
+}) {
+  const base = normalizeBaseUrl(baseUrl);
+  if (!base) {
+    return { ok: false, status: 0, text: "", error: "缺少 baseUrl" };
+  }
+  if (!apiKey) {
+    return { ok: false, status: 0, text: "", error: "缺少 API Key" };
+  }
+  if (!model) {
+    return { ok: false, status: 0, text: "", error: "缺少 model" };
+  }
+
+  const url = base + "/chat/completions";
+  const started = Date.now();
+  const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+  let timer = null;
+  if (ctrl && timeoutMs > 0) {
+    timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  }
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer " + apiKey,
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      },
+      body: JSON.stringify({
+        model,
+        messages: messages || [],
+        temperature,
+        max_tokens,
+        stream: true,
+      }),
+      signal: ctrl ? ctrl.signal : undefined,
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      let data = null;
+      try {
+        data = text ? JSON.parse(text) : null;
+      } catch (e) {
+        data = { raw: String(text).slice(0, 800) };
+      }
+      return {
+        ok: false,
+        status: res.status,
+        text: "",
+        latencyMs: Date.now() - started,
+        error: extractUpstreamError(data, res.status) || "HTTP " + res.status,
+      };
+    }
+
+    if (!res.body || typeof res.body.getReader !== "function") {
+      // 少数网关忽略 stream：退回整包
+      const text = await res.text();
+      let data = null;
+      try {
+        data = text ? JSON.parse(text) : null;
+      } catch (e) {
+        return {
+          ok: false,
+          status: res.status,
+          text: "",
+          latencyMs: Date.now() - started,
+          error: "非流式响应无法解析",
+        };
+      }
+      const full = extractAssistantText(data).trim();
+      if (onDelta && full) onDelta(full, full);
+      return {
+        ok: !!full,
+        status: res.status,
+        text: full,
+        latencyMs: Date.now() - started,
+        error: full ? undefined : "empty",
+      };
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
+    let full = "";
+    let done = false;
+
+    while (!done) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      buffer += decoder.decode(chunk.value, { stream: true });
+      const parts = buffer.split("\n");
+      buffer = parts.pop() || "";
+      for (const rawLine of parts) {
+        const line = rawLine.replace(/\r$/, "");
+        if (!line || line.startsWith(":")) continue;
+        if (!line.startsWith("data:")) continue;
+        const payload = line.slice(5).trim();
+        if (!payload) continue;
+        if (payload === "[DONE]") {
+          done = true;
+          break;
+        }
+        let obj;
+        try {
+          obj = JSON.parse(payload);
+        } catch (e) {
+          continue;
+        }
+        const delta =
+          obj &&
+          obj.choices &&
+          obj.choices[0] &&
+          obj.choices[0].delta &&
+          obj.choices[0].delta.content;
+        if (delta == null || delta === "") continue;
+        const piece = String(delta);
+        full += piece;
+        if (typeof onDelta === "function") onDelta(full, piece);
+      }
+    }
+
+    return {
+      ok: !!String(full).trim(),
+      status: res.status,
+      text: String(full).trim(),
+      latencyMs: Date.now() - started,
+      error: String(full).trim() ? undefined : "empty stream",
+    };
+  } catch (e) {
+    const msg =
+      e && e.name === "AbortError" ? "请求超时" : String((e && e.message) || e);
+    return {
+      ok: false,
+      status: 0,
+      text: "",
+      latencyMs: Date.now() - started,
+      error: msg,
+    };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}

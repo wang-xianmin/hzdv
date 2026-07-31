@@ -86,16 +86,124 @@
     applyDisplay();
   }
 
-  function speakText(text, lang) {
-    if (!el.speakOn || !el.speakOn.checked) return;
-    if (!window.speechSynthesis || !text) return;
+  function showSourceOnly(pack) {
+    var srcLang = pack.sourceLang || "zh";
+    var dstLang = pack.targetLang || "en";
+    if (el.srcLabel) {
+      el.srcLabel.textContent = srcLang === "zh" ? "原文 · 中文" : "原文 · English";
+    }
+    if (el.dstLabel) {
+      el.dstLabel.textContent = dstLang === "zh" ? "译文 · 中文" : "译文 · English";
+    }
+    if (el.src) el.src.dataset.lang = srcLang;
+    if (el.dst) el.dst.dataset.lang = dstLang;
+    if (el.srcText) el.srcText.textContent = pack.sourceText || "";
+    if (el.dstText) el.dstText.textContent = "";
+    applyDisplay();
+  }
+
+  function showTranslatedPartial(text, targetLang) {
+    if (el.dstLabel) {
+      el.dstLabel.textContent =
+        targetLang === "zh" ? "译文 · 中文" : "译文 · English";
+    }
+    if (el.dst) el.dst.dataset.lang = targetLang || "en";
+    if (el.dstText) el.dstText.textContent = text || "";
+    applyDisplay();
+  }
+
+  /** 朗读队列：按整句播，避免 token 级结巴 */
+  var speakQ = [];
+  var speakBusy = false;
+  var speakCursor = 0;
+  var speakLang = "en";
+  var speakTurn = 0;
+
+  function resetSpeakQueue() {
+    speakTurn += 1;
+    speakQ = [];
+    speakBusy = false;
+    speakCursor = 0;
     try {
-      window.speechSynthesis.cancel();
+      if (window.speechSynthesis) window.speechSynthesis.cancel();
     } catch (e) {}
-    var u = new SpeechSynthesisUtterance(String(text));
-    u.lang = lang === "zh" ? "zh-CN" : "en-US";
-    u.rate = 1.02;
+  }
+
+  function pickVoice(lang) {
+    try {
+      var voices = window.speechSynthesis.getVoices() || [];
+      var want = lang === "zh" ? "zh" : "en";
+      var hit =
+        voices.find(function (v) {
+          return (v.lang || "").toLowerCase().indexOf(want) === 0 && v.localService;
+        }) ||
+        voices.find(function (v) {
+          return (v.lang || "").toLowerCase().indexOf(want) === 0;
+        });
+      return hit || null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function drainSpeak() {
+    if (speakBusy || !speakQ.length) return;
+    if (!el.speakOn || !el.speakOn.checked) {
+      speakQ = [];
+      return;
+    }
+    if (!window.speechSynthesis) return;
+    var item = speakQ.shift();
+    speakBusy = true;
+    var turn = speakTurn;
+    var u = new SpeechSynthesisUtterance(String(item.text));
+    u.lang = item.lang === "zh" ? "zh-CN" : "en-US";
+    u.rate = item.lang === "en" ? 1.05 : 1.02;
+    var voice = pickVoice(item.lang);
+    if (voice) u.voice = voice;
+    u.onend = function () {
+      if (turn !== speakTurn) return;
+      speakBusy = false;
+      drainSpeak();
+    };
+    u.onerror = function () {
+      if (turn !== speakTurn) return;
+      speakBusy = false;
+      drainSpeak();
+    };
     window.speechSynthesis.speak(u);
+  }
+
+  function enqueueSpeak(text, lang) {
+    var t = String(text || "").trim();
+    if (!t) return;
+    if (!el.speakOn || !el.speakOn.checked) return;
+    speakQ.push({ text: t, lang: lang || "en" });
+    drainSpeak();
+  }
+
+  /** 从累计译文里切出已完成的句子去朗读 */
+  function flushSpeakableSentences(full, lang, finalFlush) {
+    var s = String(full || "");
+    if (!s) return;
+    speakLang = lang || speakLang;
+    var re = /[.!?…。！？]+["')\]]*\s*/g;
+    var m;
+    var last = speakCursor;
+    while ((m = re.exec(s))) {
+      var end = m.index + m[0].length;
+      if (end <= speakCursor) continue;
+      var piece = s.slice(speakCursor, end).trim();
+      if (piece) enqueueSpeak(piece, lang);
+      speakCursor = end;
+      last = end;
+    }
+    if (finalFlush && speakCursor < s.length) {
+      var rest = s.slice(speakCursor).trim();
+      if (rest) enqueueSpeak(rest, lang);
+      speakCursor = s.length;
+    }
+    void last;
   }
 
   function encodeWavMono(floatSamples, sampleRate) {
@@ -224,6 +332,111 @@
     } catch (e) {}
   }
 
+  async function consumeTranslateStream(res, direction) {
+    var fallbackSrcLang = direction === "them" ? "en" : "zh";
+    var fallbackDstLang = direction === "them" ? "zh" : "en";
+    var targetLang = fallbackDstLang;
+    var gotAsr = false;
+    var finalPack = null;
+
+    var ctype = (res.headers.get("content-type") || "").toLowerCase();
+    if (ctype.indexOf("text/event-stream") < 0) {
+      var data = await res.json().catch(function () {
+        return {};
+      });
+      if (!res.ok || data.success === false) {
+        if (data.sourceText) {
+          showResult({
+            sourceText: data.sourceText,
+            translatedText: "",
+            sourceLang: data.sourceLang || fallbackSrcLang,
+            targetLang: data.targetLang || fallbackDstLang,
+          });
+        }
+        throw new Error(data.error || "请求失败");
+      }
+      showResult(data);
+      resetSpeakQueue();
+      flushSpeakableSentences(data.speakText || data.translatedText, data.targetLang, true);
+      return data;
+    }
+
+    if (!res.body || !res.body.getReader) {
+      throw new Error("浏览器不支持流式响应");
+    }
+
+    var reader = res.body.getReader();
+    var decoder = new TextDecoder("utf-8");
+    var buf = "";
+    resetSpeakQueue();
+
+    function handleEvent(obj) {
+      if (!obj || !obj.type) return;
+      if (obj.type === "asr") {
+        gotAsr = true;
+        targetLang = obj.targetLang || fallbackDstLang;
+        showSourceOnly(obj);
+        setStatus("原文已出，正在翻译…", "busy");
+        return;
+      }
+      if (obj.type === "delta") {
+        targetLang = targetLang || fallbackDstLang;
+        showTranslatedPartial(obj.text || "", targetLang);
+        flushSpeakableSentences(obj.text || "", targetLang, false);
+        if (gotAsr) setStatus("译文生成中…", "busy");
+        return;
+      }
+      if (obj.type === "done") {
+        finalPack = obj;
+        targetLang = obj.targetLang || targetLang;
+        showResult(obj);
+        flushSpeakableSentences(
+          obj.speakText || obj.translatedText || "",
+          targetLang,
+          true
+        );
+        var ms = obj.latencyMs != null ? " · " + obj.latencyMs + "ms" : "";
+        setStatus("完成" + ms);
+        return;
+      }
+      if (obj.type === "error") {
+        if (obj.sourceText) {
+          showResult({
+            sourceText: obj.sourceText,
+            translatedText: (el.dstText && el.dstText.textContent) || "",
+            sourceLang: obj.sourceLang || fallbackSrcLang,
+            targetLang: obj.targetLang || fallbackDstLang,
+          });
+        }
+        throw new Error(obj.error || "失败");
+      }
+    }
+
+    while (true) {
+      var chunk = await reader.read();
+      if (chunk.done) break;
+      buf += decoder.decode(chunk.value, { stream: true });
+      var parts = buf.split("\n");
+      buf = parts.pop() || "";
+      var i;
+      for (i = 0; i < parts.length; i++) {
+        var line = parts[i].replace(/\r$/, "");
+        if (!line || line.charAt(0) === ":") continue;
+        if (line.indexOf("data:") !== 0) continue;
+        var payload = line.slice(5).trim();
+        if (!payload || payload === "[DONE]") continue;
+        var obj;
+        try {
+          obj = JSON.parse(payload);
+        } catch (e) {
+          continue;
+        }
+        handleEvent(obj);
+      }
+    }
+    return finalPack;
+  }
+
   async function endHold() {
     if (!session) return;
     var s = session;
@@ -236,6 +449,7 @@
         s.processor.disconnect();
       }
       if (s.source) s.source.disconnect();
+      if (s.mute) s.mute.disconnect();
     } catch (e) {}
     stopTracks(s.stream);
     try {
@@ -259,39 +473,33 @@
 
     busy = true;
     setButtonsDisabled(true);
-    setStatus("识别并翻译中…", "busy");
+    resetSpeakQueue();
+    if (el.dstText) el.dstText.textContent = "";
+    setStatus("识别中…", "busy");
     try {
       var b64 = await blobToBase64(wav);
       var res = await fetch("/api/translate-turn", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "text/event-stream",
+        },
         body: JSON.stringify({
           phone: getPhone(),
           direction: s.direction,
           audio: b64,
+          stream: true,
         }),
       });
-      var data = await res.json().catch(function () {
-        return {};
-      });
-      if (!res.ok || data.success === false) {
-        if (data.sourceText) {
-          showResult({
-            sourceText: data.sourceText,
-            translatedText: "",
-            sourceLang: data.sourceLang || (s.direction === "them" ? "en" : "zh"),
-            targetLang: data.targetLang || (s.direction === "them" ? "zh" : "en"),
-          });
-        }
-        setStatus(String(data.error || "请求失败"), "err");
-        return;
+      if (!res.ok && (res.headers.get("content-type") || "").indexOf("json") >= 0) {
+        var errBody = await res.json().catch(function () {
+          return {};
+        });
+        throw new Error(errBody.error || "HTTP " + res.status);
       }
-      showResult(data);
-      var ms = data.latencyMs != null ? " · " + data.latencyMs + "ms" : "";
-      setStatus("完成" + ms);
-      speakText(data.speakText || data.translatedText, data.targetLang || "en");
+      await consumeTranslateStream(res, s.direction);
     } catch (err) {
-      setStatus("网络错误：" + String((err && err.message) || err), "err");
+      setStatus(String((err && err.message) || err), "err");
     } finally {
       busy = false;
       setButtonsDisabled(false);
@@ -345,6 +553,14 @@
     initDisplayToggles();
     bindPtt(el.me, "me");
     bindPtt(el.them, "them");
+    try {
+      if (window.speechSynthesis) {
+        window.speechSynthesis.getVoices();
+        window.speechSynthesis.onvoiceschanged = function () {
+          window.speechSynthesis.getVoices();
+        };
+      }
+    } catch (eVoices) {}
 
     if (!canUseTranslator()) {
       if (el.gate) el.gate.hidden = false;

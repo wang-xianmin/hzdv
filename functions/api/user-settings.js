@@ -29,6 +29,10 @@ const DEFAULT_SETTINGS = {
   ocrSendToLlm: 1,
   /** 0整段离线 SenseVoice / 1客户端VAD+SenseVoice / 2服务端 SenseVoice+VAD 模拟流式 */
   asrMicMode: 1,
+  /** Tavily 返回条数 1–10 */
+  tavilyMaxResults: 5,
+  /** Tavily：0=basic，1=advanced */
+  tavilySearchDepth: 0,
 };
 
 function mergeSettings(saved) {
@@ -91,6 +95,18 @@ function sanitizeIncoming(incoming) {
       base.ocrShowDevPreview
     ),
     ocrSendToLlm: clampInt(incoming.ocrSendToLlm, 0, 1, base.ocrSendToLlm),
+    tavilyMaxResults: clampInt(
+      incoming.tavilyMaxResults,
+      1,
+      10,
+      base.tavilyMaxResults
+    ),
+    tavilySearchDepth: clampInt(
+      incoming.tavilySearchDepth,
+      0,
+      1,
+      base.tavilySearchDepth
+    ),
     asrMicMode: clampInt(
       incoming.asrMicMode != null
         ? incoming.asrMicMode

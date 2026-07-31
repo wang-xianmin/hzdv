@@ -8,8 +8,9 @@
  * Auto：先用 VPS 上的 Qwen2.5-1.5B 分类器给消息定级（见 lib/intent.js），
  * 再按模型库（KV）里对应梯队的排序依次尝试：
  *   tier1 → [1,2,3]，tier2 → [2,3,1]，tier3 → [3,2,1]
+ * 分类器标 web、关键词启发式或 body.webSearch=true 时先 Tavily 搜网再注入 system。
  * 分类器未配置或失败时从第一梯队开始。梯队内顺序即模型库里的排序，与菜单语言无关。
- * 回复语言只看提问语言。
+ * 回复语言只看提问语言。需要联网时配 TAVILY_API_KEY。
  *
  * 带附件时：body.ocr 传入 /api/ocr 的结果（含 layout 排版硬校验），
  * text_llm + 用户问题一并送意图分类；复杂 PDF 页可带 image_base64。
@@ -27,6 +28,12 @@ import {
 } from "../lib/openai-compat.js";
 import { detectTextLang, normalizeUiLang } from "../lib/tier1.js";
 import { classifyIntent } from "../lib/intent.js";
+import {
+  formatWebContext,
+  heuristicNeedsWeb,
+  searchTavily,
+  tavilyConfigured,
+} from "../lib/tavily.js";
 
 /** 可调默认值；运行时可由 body.systemSettings（D1 系统参数）覆盖 */
 const OCR_TEXT_MAX_PDF = 14000;
@@ -228,14 +235,22 @@ function ocrPromptBlock(ocr, replyLang) {
   );
 }
 
-function systemPrompt(replyLang, ocr) {
+function systemPrompt(replyLang, ocr, webCtx) {
+  const webBlock =
+    webCtx && String(webCtx).trim()
+      ? (replyLang === "en" ? "\n\n" : "\n\n") + String(webCtx).trim()
+      : "";
   if (replyLang === "en") {
     return (
       "You are the HZDV site assistant. Be concise and direct. " +
       "Always answer in the same language the user wrote in. " +
       "The user wrote in English, so answer in English. " +
       "Ignore the site menu language." +
-      ocrPromptBlock(ocr, "en")
+      (webBlock
+        ? " When web search results are provided, ground factual claims in them and cite URLs."
+        : "") +
+      ocrPromptBlock(ocr, "en") +
+      webBlock
     );
   }
   return (
@@ -243,7 +258,9 @@ function systemPrompt(replyLang, ocr) {
     "始终使用与用户提问相同的语言回答。" +
     "本次用户用中文提问，请用中文回答。" +
     "不要参考站点菜单语言。" +
-    ocrPromptBlock(ocr, "zh")
+    (webBlock ? "若提供了联网检索结果，事实性内容请依据材料并注明来源链接。" : "") +
+    ocrPromptBlock(ocr, "zh") +
+    webBlock
   );
 }
 
@@ -271,7 +288,7 @@ function buildUserContent(message, ocr, useVision) {
   return parts;
 }
 
-async function callModel(env, target, message, replyLang, ocr, useVision) {
+async function callModel(env, target, message, replyLang, ocr, useVision, webCtx) {
   const apiKey = resolveApiKey(env, target.apiKeyEnv);
   if (!apiKey) {
     return {
@@ -304,7 +321,7 @@ async function callModel(env, target, message, replyLang, ocr, useVision) {
     apiKey,
     model: target.modelId,
     messages: [
-      { role: "system", content: systemPrompt(replyLang, ocr) },
+      { role: "system", content: systemPrompt(replyLang, ocr, webCtx) },
       { role: "user", content: userContent },
     ],
     temperature: 0.3,
@@ -324,6 +341,78 @@ async function callModel(env, target, message, replyLang, ocr, useVision) {
     };
   }
   return { ...result, reply, usedVision: wantVision };
+}
+
+/**
+ * 决定是否搜网并拉取 Tavily 材料。
+ * force：body.webSearch / body.forceWeb
+ * intentWeb：分类器标了 web
+ */
+async function resolveWebContext(env, message, replyLang, opts) {
+  const force = !!(opts && (opts.force || opts.intentWeb));
+  const heuristic = heuristicNeedsWeb(message);
+  const want = force || heuristic;
+  if (!want) {
+    return { webCtx: "", pack: null, used: false, skipped: "not_needed" };
+  }
+  if (!tavilyConfigured(env)) {
+    return {
+      webCtx: "",
+      pack: null,
+      used: false,
+      skipped: "no_key",
+      note:
+        replyLang === "en"
+          ? "Web search needed but TAVILY_API_KEY is not set"
+          : "问题可能需要联网，但未配置 TAVILY_API_KEY",
+    };
+  }
+  const ss = (opts && opts.systemSettings) || {};
+  const maxResults = ss.tavilyMaxResults;
+  const depthFlag = ss.tavilySearchDepth;
+  const searchDepth =
+    depthFlag === 1 || depthFlag === "1" || depthFlag === true
+      ? "advanced"
+      : "basic";
+  const pack = await searchTavily(env, message, {
+    maxResults: maxResults,
+    searchDepth: searchDepth,
+  });
+  if (!pack.ok) {
+    return {
+      webCtx: "",
+      pack,
+      used: false,
+      skipped: "search_failed",
+      note:
+        replyLang === "en"
+          ? "Tavily failed: " + (pack.error || "error") + " (" + pack.latencyMs + "ms)"
+          : "Tavily 检索失败：" + (pack.error || "错误") + "（" + pack.latencyMs + "ms）",
+    };
+  }
+  const webCtx = formatWebContext(pack, replyLang);
+  return {
+    webCtx,
+    pack,
+    used: true,
+    skipped: null,
+    note:
+      replyLang === "en"
+        ? "Tavily: " +
+          pack.results.length +
+          " sources · " +
+          searchDepth +
+          " (" +
+          pack.latencyMs +
+          "ms)"
+        : "联网检索 Tavily：" +
+          pack.results.length +
+          " 条 · " +
+          searchDepth +
+          "（" +
+          pack.latencyMs +
+          "ms）",
+  };
 }
 
 function packChatResult(result, model, via, langInfo, extras) {
@@ -393,8 +482,23 @@ export async function onRequest(context) {
       return jsonResponse({ success: false, error: "模型不存在：" + wantId }, 404);
     }
     const useVision = !!(ocr.needsVision && ocr.visionImages && ocr.visionImages.length);
-    const result = await callModel(env, hit, message, replyLang, ocr, useVision);
+    const forceWeb = body.webSearch === true || body.forceWeb === true;
+    const web = await resolveWebContext(env, message, replyLang, {
+      force: forceWeb,
+      intentWeb: false,
+      systemSettings: body.systemSettings || body.system_settings || {},
+    });
     const notes = [];
+    if (web.note) notes.push(web.note);
+    const result = await callModel(
+      env,
+      hit,
+      message,
+      replyLang,
+      ocr,
+      useVision,
+      web.webCtx || ""
+    );
     if (result.usedVision) {
       notes.push(
         uiLang === "en"
@@ -402,7 +506,16 @@ export async function onRequest(context) {
           : "视觉：" + (ocr.visionPages || []).join("、") + " 页整页渲图"
       );
     }
-    const bodyOut = packChatResult(result, hit, "manual", langInfo, { notes });
+    const bodyOut = packChatResult(result, hit, "manual", langInfo, {
+      notes,
+      webSearch: web.used
+        ? {
+            query: web.pack && web.pack.query,
+            count: web.pack && web.pack.results ? web.pack.results.length : 0,
+            latencyMs: web.pack && web.pack.latencyMs,
+          }
+        : null,
+    });
     return jsonResponse(bodyOut, bodyOut.success ? 200 : 502);
   }
 
@@ -411,20 +524,24 @@ export async function onRequest(context) {
 
   const tier1Cands = registryCandidates(env, models, [1]);
 
-  // 有附件时不并行预热：OCR/PDF 场景常被硬校验抬到更高梯队，预热就是纯浪费
-  const primary = ocr.present ? null : tier1Cands[0] || null;
-  const primaryPromise = primary
-    ? callModel(env, primary.target, message, replyLang, ocr, false)
-    : null;
-
   // 意图分类：分类文本带上 OCR 结果，让分类器看到图里的内容而不只是提问那句话
   const classifyText = ocr.present && ocr.text ? message + "\n" + ocr.text : message;
   const intent = await classifyIntent(env, classifyText);
   if (intent.tier) {
     notes.unshift(
       uiLang === "en"
-        ? "Intent: tier" + intent.tier + " (" + intent.latencyMs + "ms)"
-        : "意图分类：tier" + intent.tier + "（" + intent.latencyMs + "ms）"
+        ? "Intent: tier" +
+          intent.tier +
+          (intent.web ? "+web" : "") +
+          " (" +
+          intent.latencyMs +
+          "ms)"
+        : "意图分类：tier" +
+          intent.tier +
+          (intent.web ? "+web" : "") +
+          "（" +
+          intent.latencyMs +
+          "ms）"
     );
   } else if (String(env.INTENT_SERVICE_URL || "").trim()) {
     notes.unshift(
@@ -434,10 +551,27 @@ export async function onRequest(context) {
     );
   }
 
+  const forceWeb = body.webSearch === true || body.forceWeb === true;
+  const web = await resolveWebContext(env, message, replyLang, {
+    force: forceWeb || !!intent.web,
+    intentWeb: !!intent.web,
+    systemSettings: body.systemSettings || body.system_settings || {},
+  });
+  if (web.note) notes.push(web.note);
+  const webCtx = web.webCtx || "";
+
   // 图片 OCR：排版硬校验只做下限（不降级）。
   // PDF：提取已准备文本/渲图，对话梯队交给意图分类（文档+用户问题），
   // 可走 tier2 或无视觉的 tier3；不因「页复杂」强行抬到 3 / 跳过 2。
   let routeTier = intent.tier || 0;
+  if (web.used && routeTier < 2) {
+    routeTier = 2;
+    notes.push(
+      uiLang === "en"
+        ? "Web search raised routing floor to tier2"
+        : "联网检索将路由下限抬到 tier2"
+    );
+  }
   if (ocr.present && ocr.source !== "pdf" && ocr.floorTier > routeTier) {
     routeTier = ocr.floorTier;
     notes.push(
@@ -467,6 +601,12 @@ export async function onRequest(context) {
     );
   }
 
+  // 有附件或已搜网时不预热 tier1：上下文已变，预热会答非所问
+  const primary = ocr.present || webCtx ? null : tier1Cands[0] || null;
+  const primaryPromise = primary
+    ? callModel(env, primary.target, message, replyLang, ocr, false, "")
+    : null;
+
   let queue;
   if (routeTier === 2) {
     queue = registryCandidates(env, models, [2, 3, 1], preferVision);
@@ -483,12 +623,20 @@ export async function onRequest(context) {
     );
   }
 
+  const webMeta = web.used
+    ? {
+        query: web.pack && web.pack.query,
+        count: web.pack && web.pack.results ? web.pack.results.length : 0,
+        latencyMs: web.pack && web.pack.latencyMs,
+      }
+    : null;
+
   let lastFail = null;
   for (const { target, via } of queue.slice(0, 4)) {
     const result =
       primaryPromise && primary && target.id === primary.target.id
         ? await primaryPromise
-        : await callModel(env, target, message, replyLang, ocr, useVision);
+        : await callModel(env, target, message, replyLang, ocr, useVision, webCtx);
     const attempt = {
       label: target.label,
       modelId: target.modelId,
@@ -508,7 +656,11 @@ export async function onRequest(context) {
         );
       }
       return jsonResponse(
-        packChatResult(result, target, via, langInfo, { attempts, notes })
+        packChatResult(result, target, via, langInfo, {
+          attempts,
+          notes,
+          webSearch: webMeta,
+        })
       );
     }
     if (result.ok && !result.error) attempt.error = "上游返回空内容";
@@ -520,6 +672,7 @@ export async function onRequest(context) {
     const bodyOut = packChatResult(lastFail.result, lastFail.target, lastFail.via, langInfo, {
       attempts,
       notes,
+      webSearch: webMeta,
     });
     return jsonResponse(bodyOut, 502);
   }
@@ -534,6 +687,7 @@ export async function onRequest(context) {
       model: { id: "auto", label: "Auto", modelId: "", tier: 0, via: "auto→none", ...langInfo },
       attempts,
       notes,
+      webSearch: webMeta,
     },
     400
   );

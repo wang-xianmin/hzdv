@@ -58,6 +58,7 @@ agent/
 | `DEEPSEEK_API_KEY` | DeepSeek 官方 |
 | `OCR_SERVICE_URL` / `OCR_API_KEY` | OCR 代理 |
 | `ASR_SERVICE_URL` / `ASR_API_KEY` | ASR（sherpa-onnx）代理 |
+| `TAVILY_API_KEY` | 联网检索密钥（Secret）。条数/深度在**系统设置 → 联网检索**调，也可被 env `TAVILY_MAX_RESULTS` / `TAVILY_SEARCH_DEPTH` 兜底 |
 | 各模型 `apiKeyEnv` 指向的 Secret | 第二/三梯队 |
 
 5. 绑定 KV（模型库存在键 `hzdv:llm_models_v1`，可按项目改 store 内常量）

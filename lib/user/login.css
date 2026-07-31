@@ -637,6 +637,25 @@
     opacity: 0.92;
 }
 
+/* 密码登录「登录」、扫码「继续」：黑底白字 */
+.lreg-root #registerSubmitBtn.register-primary-btn,
+.lreg-root #registerCodeContinueBtn.register-primary-btn {
+    background: #161823;
+    color: #fff;
+}
+
+.lreg-root #registerSubmitBtn.register-primary-btn:hover,
+.lreg-root #registerCodeContinueBtn.register-primary-btn:hover {
+    opacity: 0.88;
+    background: #000;
+}
+
+.lreg-root #registerSubmitBtn.register-primary-btn:disabled,
+.lreg-root #registerCodeContinueBtn.register-primary-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
 .lreg-root .register-kv-preview {
     display: none;
     width: min(550px, 94vw);

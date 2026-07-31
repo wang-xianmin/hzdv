@@ -290,6 +290,42 @@ UI_ICON_CATALOG: list[dict[str, Any]] = [
         "file": "external_link.png",
         "threshold": 0.55,
     },
+    {
+        "id": "refresh",
+        "char": "↻",
+        "file": "refresh.png",
+        "threshold": 0.55,
+    },
+    {
+        "id": "more_horiz",
+        "char": "⋯",
+        "file": "more_horiz.png",
+        "threshold": 0.55,
+    },
+    {
+        "id": "search",
+        "char": "🔍",
+        "file": "search.png",
+        "threshold": 0.55,
+    },
+    {
+        "id": "settings",
+        "char": "⚙",
+        "file": "settings.png",
+        "threshold": 0.55,
+    },
+    {
+        "id": "chevron_left",
+        "char": "<",
+        "file": "chevron_left.png",
+        "threshold": 0.65,
+    },
+    {
+        "id": "chevron_right",
+        "char": ">",
+        "file": "chevron_right.png",
+        "threshold": 0.65,
+    },
 ]
 _ICON_TEMPLATE_CACHE: dict[str, Any] | None = None
 
@@ -345,7 +381,7 @@ def _image_ink_mask(arr: Any) -> Any:
 
 
 def detect_ui_icons(arr: Any) -> list[dict[str, Any]]:
-    """多尺度模板匹配：检出 UI 线框图标并映射为 Unicode（🔱 / ⧉ …）。"""
+    """多尺度模板匹配：检出 UI 线框图标并映射为 Unicode（🔱 / ⧉ / ↻ / ⋯ …）。"""
     import cv2
     import numpy as np
 
@@ -362,6 +398,8 @@ def detect_ui_icons(arr: Any) -> list[dict[str, Any]]:
     ink = _image_ink_mask(arr)
     # 尺度：相对模板原尺寸；整页截图上图标常 0.7x–3x
     scales = (0.55, 0.7, 0.85, 1.0, 1.15, 1.35, 1.6, 1.9, 2.3, 2.8, 3.3)
+    # 整页图标占比很小；若输入本身是图标裁切，允许更大占比
+    max_area_frac = 0.6 if min(h_img, w_img) < 220 else 0.25
     candidates: list[dict[str, Any]] = []
 
     for _tid, pack in templates.items():
@@ -374,7 +412,7 @@ def detect_ui_icons(arr: Any) -> list[dict[str, Any]]:
             rw = max(10, int(round(tw0 * scale)))
             if rh >= h_img or rw >= w_img:
                 continue
-            if rh * rw > h_img * w_img * 0.25:
+            if rh * rw > h_img * w_img * max_area_frac:
                 continue
             resized = cv2.resize(tmpl, (rw, rh), interpolation=cv2.INTER_AREA)
             if cv2.countNonZero(resized) < 8:
@@ -459,7 +497,7 @@ def _merge_symbol_lines(
     if not symbols:
         return lines
 
-    KNOWN_SYMBOL_CHARS = ("✅", "❎", "❌", "🔱", "⧉")
+    KNOWN_SYMBOL_CHARS = ("✅", "❎", "❌", "🔱", "⧉", "↻", "⋯", "🔍", "⚙", "<", ">")
 
     sym_rects: list[tuple[float, float, float, float]] = []
     for s in symbols:
@@ -2341,7 +2379,7 @@ def run_ocr_bytes(data: bytes) -> dict[str, Any]:
                 }
             )
 
-    # OpenCV：状态色标 ✅/❎/❌ + UI 线框图标 🔱/⧉…（可贴邻文字，并清掉 ° 等误识）
+    # OpenCV：状态色标 ✅/❎/❌ + UI 线框图标 🔱/⧉/↻/⋯…（可贴邻文字，并清掉 °/C 等误识）
     symbols: list[dict[str, Any]] = []
     try:
         symbols = detect_status_marks(arr)
