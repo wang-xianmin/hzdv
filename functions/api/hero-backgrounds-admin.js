@@ -11,7 +11,7 @@
  */
 
 import { ensureAllD1Tables } from "../lib/d1-schema.js";
-import { assertOpsAccess, opsAuthErrorResponse } from "../lib/ops-auth.js";
+import { assertHeroOpsAccess, opsAuthErrorResponse } from "../lib/ops-auth.js";
 import { pickR2Binding } from "../lib/cloudflare-bindings.js";
 import {
   buildHeroUploadKey,
@@ -94,7 +94,7 @@ export async function onRequest(context) {
 
   if (request.method === "GET") {
     try {
-      await assertOpsAccess(env, phoneFromUrl(request));
+      await assertHeroOpsAccess(env, phoneFromUrl(request));
       const config = await getHeroBackgroundConfig(d1);
       const items = await listAllHeroBackgroundItems(d1, env);
       return jsonResponse({ success: true, config, items });
@@ -107,7 +107,7 @@ export async function onRequest(context) {
     const body = await readJsonBody(request);
     if (!body) return jsonResponse({ success: false, error: "Invalid JSON" }, 400);
     try {
-      await assertOpsAccess(env, body.phone);
+      await assertHeroOpsAccess(env, body.phone);
       const config = await saveHeroBackgroundConfig(d1, body.config || {});
       return jsonResponse({ success: true, config });
     } catch (e) {
@@ -121,7 +121,7 @@ export async function onRequest(context) {
     const id = Number(body.id);
     if (!id) return jsonResponse({ success: false, error: "Missing id" }, 400);
     try {
-      await assertOpsAccess(env, body.phone);
+      await assertHeroOpsAccess(env, body.phone);
       const item = await updateHeroBackgroundItem(d1, env, id, body);
       if (!item) return jsonResponse({ success: false, error: "Not found" }, 404);
       return jsonResponse({ success: true, item });
@@ -136,7 +136,7 @@ export async function onRequest(context) {
     const id = Number(body.id);
     if (!id) return jsonResponse({ success: false, error: "Missing id" }, 400);
     try {
-      await assertOpsAccess(env, body.phone);
+      await assertHeroOpsAccess(env, body.phone);
       const r2Del = pickR2Binding(env);
       const ok = await deleteHeroBackgroundItem(d1, id, r2Del);
       return jsonResponse({ success: ok });
@@ -155,7 +155,7 @@ export async function onRequest(context) {
       const body = await readJsonBody(request);
       if (!body) return jsonResponse({ success: false, error: "Invalid JSON" }, 400);
       try {
-        const auth = await assertOpsAccess(env, body.phone);
+        const auth = await assertHeroOpsAccess(env, body.phone);
         if (body.action === "move") {
           const moveId = Number(body.id);
           if (!moveId) {
@@ -214,7 +214,7 @@ export async function onRequest(context) {
       if (!file || typeof file === "string") {
         return jsonResponse({ success: false, error: "Missing file" }, 400);
       }
-      await assertOpsAccess(env, phone);
+      await assertHeroOpsAccess(env, phone);
       const filename = file.name || "upload.bin";
       const mediaType =
         String(form.get("media_type") || "").trim() || guessHeroMediaType(filename);

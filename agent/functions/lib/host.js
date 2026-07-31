@@ -12,6 +12,7 @@ export {
 
 export {
   assertOpsAccess,
+  assertHeroOpsAccess,
   opsAuthErrorResponse,
 } from "../../../functions/lib/ops-auth.js";
 

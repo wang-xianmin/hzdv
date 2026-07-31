@@ -1,16 +1,16 @@
 /**
- * 口译器鉴权：按用户 type 掩码开放。
- * TRANSLATOR_TEMP_OPEN_TO_ANY_LOGIN=true 时：只要 KV 有该登录用户即可（Mac 联调）。
+ * 口译器鉴权：超管 | 技术调试员 | 各组组长（value.g_role === 1）
  */
 
 import { readKvUser } from "./kv-secure.js";
 import { pickKvBinding } from "./kv-binding.js";
 
-/** 正式：超管 | A类 | B类（可按业务改） */
-const TRANSLATOR_TYPE_MASK = 0x01 | 0x10 | 0x20;
+const MASK_SUPER = 0x01;
+const MASK_DBG = 0x02;
+const TRANSLATOR_STAFF_MASK = MASK_SUPER | MASK_DBG;
 
-/** 临时：登录用户均可；正式收紧时改 false */
-const TRANSLATOR_TEMP_OPEN_TO_ANY_LOGIN = true;
+/** 正式收紧：不再对任意登录开放 */
+const TRANSLATOR_TEMP_OPEN_TO_ANY_LOGIN = false;
 
 function parseTypeMask(raw) {
   const text = String(raw == null ? "" : raw).trim();
@@ -43,8 +43,20 @@ export async function assertTranslatorAccess(env, phone) {
     err.status = 404;
     throw err;
   }
+  if (TRANSLATOR_TEMP_OPEN_TO_ANY_LOGIN) {
+    return {
+      phone: digits,
+      metadata: row.metadata,
+      value: row.value,
+      typeMask: parseTypeMask(row.metadata.type),
+    };
+  }
   const mask = parseTypeMask(row.metadata.type);
-  if (!TRANSLATOR_TEMP_OPEN_TO_ANY_LOGIN && (mask & TRANSLATOR_TYPE_MASK) === 0) {
+  const gRole =
+    row.value && row.value.g_role != null && Number(row.value.g_role) === 1
+      ? 1
+      : 0;
+  if ((mask & TRANSLATOR_STAFF_MASK) === 0 && gRole !== 1) {
     const err = new Error("Forbidden");
     err.status = 403;
     throw err;
@@ -54,6 +66,7 @@ export async function assertTranslatorAccess(env, phone) {
     metadata: row.metadata,
     value: row.value,
     typeMask: mask,
+    gRole,
   };
 }
 
