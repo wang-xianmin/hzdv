@@ -472,12 +472,23 @@
 }
 
 .profile-modal-sheet.user-list-modal-sheet {
-  width: min(1280px, 98vw);
+  /* 默认（窄屏）：略留边，避免贴边 */
+  width: min(96vw, 100%);
+  max-width: 96vw;
   max-height: 92vh;
   height: min(760px, 92vh);
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  box-sizing: border-box;
+}
+
+/* ≥769px：横向尽量拉满，并随浏览器拉宽同步变宽（不再卡 1280） */
+@media (min-width: 769px) {
+  .profile-modal-sheet.user-list-modal-sheet {
+    width: calc(100vw - 32px);
+    max-width: calc(100vw - 32px);
+  }
 }
 
 .user-list-modal-sheet .user-list-modal-head,

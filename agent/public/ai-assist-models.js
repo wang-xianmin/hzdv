@@ -5,8 +5,8 @@
  * 第一/二/三梯队全部存 KV，可增删改、排序、试通。
  * 密钥只填环境变量名（如 ARK_API_KEY），真实 Key 配在 Cloudflare Pages。
  *
- * 开发调试阶段：任意已登录用户可打开/编辑（与 OPS_TEMP_OPEN_TO_ANY_LOGIN 一致）。
- * 正式收紧时改为仅超级用户。
+ * 管理入口在「系统运维」→「AI 模型库」，写接口走 assertOpsAccess（超管/技术员）。
+ * 对话接口 /api/llm-chat 与运维解耦，任意已注册用户可用。
  */
 (function (global) {
   "use strict";

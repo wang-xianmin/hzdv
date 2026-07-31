@@ -19,7 +19,12 @@
  * 或无视觉的 tier3，如 deepseek-v4-pro）；有图且模型 caps.vision 时才附图。
  */
 
-import { assertOpsAccess, opsAuthErrorResponse, pickKvBinding, kvBindingHint } from "../lib/host.js";
+import {
+  assertAnyLoginAccess,
+  opsAuthErrorResponse,
+  pickKvBinding,
+  kvBindingHint,
+} from "../lib/host.js";
 import { loadLlmModels } from "../lib/llm-models-store.js";
 import {
   chatCompletions,
@@ -452,8 +457,9 @@ export async function onRequest(context) {
     return jsonResponse({ success: false, error: "Invalid JSON" }, 400);
   }
 
+  /** 与「系统运维」解耦：任意已注册用户即可对话（暂不按 type 收紧） */
   try {
-    await assertOpsAccess(env, body.phone || "");
+    await assertAnyLoginAccess(env, body.phone || "");
   } catch (err) {
     return opsAuthErrorResponse(err);
   }

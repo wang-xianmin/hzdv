@@ -1,7 +1,8 @@
 /**
  * 运维接口鉴权。
- * - assertOpsAccess：超管 | 技术调试员（AI 模型库、系统设置、llm-chat 等）
+ * - assertOpsAccess：超管 | 技术调试员（AI 模型库、系统设置等）
  * - assertHeroOpsAccess：超管 | 技术调试员 | 内容审核总负责 | 内容审核员（网站背景）
+ * - assertAnyLoginAccess：任意已注册用户（KV 有记录即可；AI 对话等，不与运维绑定）
  */
 
 import { readKvUser } from "./kv-secure.js";
@@ -85,6 +86,14 @@ export async function assertOpsAccess(env, phone) {
 export async function assertHeroOpsAccess(env, phone) {
   const user = await loadOpsUser(env, phone);
   return denyIfNeeded(user, OPS_HERO_MASK);
+}
+
+/**
+ * 任意已登录/已注册用户（不查 type / g_role）。
+ * 用于 AI 助手对话等与「系统运维」解耦的接口。
+ */
+export async function assertAnyLoginAccess(env, phone) {
+  return loadOpsUser(env, phone);
 }
 
 export function opsAuthErrorResponse(err) {
