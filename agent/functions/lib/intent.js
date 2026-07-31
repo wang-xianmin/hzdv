@@ -60,7 +60,13 @@ function parseClassify(text) {
 }
 
 /**
- * @returns {Promise<{ tier: 1|2|3|null, web: boolean, latencyMs: number, error: string|null }>}
+ * @returns {Promise<{
+ *   tier: 1|2|3|null,
+ *   web: boolean,
+ *   latencyMs: number,
+ *   error: string|null,
+ *   raw?: string,
+ * }>}
  */
 export async function classifyIntent(env, message) {
   const target = intentTarget(env);
@@ -70,6 +76,7 @@ export async function classifyIntent(env, message) {
       web: false,
       latencyMs: 0,
       error: "分类器未配置（INTENT_SERVICE_URL / INTENT_API_KEY）",
+      raw: "",
     };
   }
   const result = await chatCompletions({
@@ -95,15 +102,18 @@ export async function classifyIntent(env, message) {
       web: false,
       latencyMs: result.latencyMs,
       error: result.error || "分类器调用失败",
+      raw: "",
     };
   }
-  const parsed = parseClassify(extractAssistantText(result.data));
+  const raw = String(extractAssistantText(result.data) || "").trim();
+  const parsed = parseClassify(raw);
   if (!parsed.tier) {
     return {
       tier: null,
       web: false,
       latencyMs: result.latencyMs,
       error: "分类器输出无法解析",
+      raw,
     };
   }
   return {
@@ -111,5 +121,6 @@ export async function classifyIntent(env, message) {
     web: parsed.web,
     latencyMs: result.latencyMs,
     error: null,
+    raw,
   };
 }

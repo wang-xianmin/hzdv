@@ -1983,6 +1983,42 @@
     }
   }
 
+  function wantPipelineTrace() {
+    try {
+      var ss =
+        (typeof window.getHzdvSystemSettings === "function" &&
+          window.getHzdvSystemSettings()) ||
+        window.__HZDV_SYSTEM_SETTINGS ||
+        null;
+      return !!(ss && Number(ss.llmShowPipelineTrace) === 1);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function formatPipelineNote(j) {
+    if (!wantPipelineTrace()) return "";
+    var lines = [];
+    var notes = Array.isArray(j && j.notes) ? j.notes : [];
+    notes.forEach(function (n, i) {
+      if (!n) return;
+      lines.push(i + 1 + ". " + String(n));
+    });
+    var attempts = Array.isArray(j && j.attempts) ? j.attempts : [];
+    attempts.forEach(function (a) {
+      if (!a) return;
+      var mark = a.ok ? "✓" : "✗";
+      var label = a.label || a.modelId || "?";
+      var ms = a.latencyMs != null ? a.latencyMs + "ms" : "";
+      var err = !a.ok && a.error ? " — " + a.error : "";
+      var vision = a.usedVision ? t(" · 视觉", " · vision") : "";
+      lines.push(
+        "→ " + mark + " " + label + (ms ? " · " + ms : "") + vision + err
+      );
+    });
+    return lines.join("\n");
+  }
+
   function formatModelBadge(meta, selectedId) {
     if (!meta) {
       var sel = findModel(selectedId || selectedModelId);
@@ -2140,7 +2176,7 @@
         var badge = formatModelBadge(j.model, want);
         var latency =
           j.latencyMs != null ? " · " + j.latencyMs + "ms" : "";
-        var note = (j.notes || []).join("；") || "";
+        var note = formatPipelineNote(j);
         if (j.success && j.reply) {
           messages[thinkingIdx] = {
             role: "assistant",

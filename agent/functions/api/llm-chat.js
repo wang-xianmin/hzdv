@@ -293,7 +293,7 @@ function buildUserContent(message, ocr, useVision) {
   return parts;
 }
 
-async function callModel(env, target, message, replyLang, ocr, useVision, webCtx) {
+async function callModel(env, target, message, replyLang, ocr, useVision, webCtx, opts) {
   const apiKey = resolveApiKey(env, target.apiKeyEnv);
   if (!apiKey) {
     return {
@@ -321,6 +321,7 @@ async function callModel(env, target, message, replyLang, ocr, useVision, webCtx
     !!(ocr && ocr.visionImages && ocr.visionImages.length) &&
     !!(target.caps && target.caps.vision);
   const userContent = buildUserContent(message, ocr, wantVision);
+  const fast = !!(opts && opts.fastWeb);
   const result = await chatCompletions({
     baseUrl: target.baseUrl,
     apiKey,
@@ -330,8 +331,9 @@ async function callModel(env, target, message, replyLang, ocr, useVision, webCtx
       { role: "user", content: userContent },
     ],
     temperature: 0.3,
-    max_tokens: wantVision ? 2048 : 1024,
-    timeoutMs: wantVision ? 55000 : 28000,
+    max_tokens: wantVision ? 2048 : fast ? 700 : 1024,
+    /** 联网快路径压进 Pages 墙钟；普通对话略宽裕 */
+    timeoutMs: wantVision ? 55000 : fast ? 18000 : 28000,
   });
   const reply = extractAssistantText(result.data) || "";
   if (result.ok && !String(reply).trim()) {
@@ -382,6 +384,7 @@ async function resolveWebContext(env, message, replyLang, opts) {
   const pack = await searchTavily(env, message, {
     maxResults: maxResults,
     searchDepth: searchDepth,
+    timeoutMs: (opts && opts.timeoutMs) || undefined,
   });
   if (!pack.ok) {
     return {
@@ -544,39 +547,66 @@ async function handleLlmChat(env, body) {
   const notes = [];
 
   const tier1Cands = registryCandidates(env, models, [1]);
+  const forceWeb = body.webSearch === true || body.forceWeb === true;
+  /** 新闻/实时类：跳过分类器，搜网+单次 LLM，压进 CF 墙钟避免 HTML 502 */
+  const webFast =
+    !ocr.present && (forceWeb || heuristicNeedsWeb(message));
 
-  // 意图分类：分类文本带上 OCR 结果，让分类器看到图里的内容而不只是提问那句话
-  const classifyText = ocr.present && ocr.text ? message + "\n" + ocr.text : message;
-  const intent = await classifyIntent(env, classifyText);
-  if (intent.tier) {
-    notes.unshift(
+  let intent = { tier: null, web: false, latencyMs: 0, error: null, raw: "" };
+  if (!webFast) {
+    const classifyText =
+      ocr.present && ocr.text ? message + "\n" + ocr.text : message;
+    intent = await classifyIntent(env, classifyText);
+    if (intent.tier) {
+      notes.push(
+        uiLang === "en"
+          ? "Intent → tier" +
+            intent.tier +
+            (intent.web ? " +web" : "") +
+            " · " +
+            intent.latencyMs +
+            "ms" +
+            (intent.raw ? ' · raw "' + intent.raw + '"' : "")
+          : "意图分类 → tier" +
+            intent.tier +
+            (intent.web ? " +web" : "") +
+            " · " +
+            intent.latencyMs +
+            "ms" +
+            (intent.raw ? " · 原文「" + intent.raw + "」" : "")
+      );
+    } else {
+      notes.push(
+        uiLang === "en"
+          ? "Intent failed (" +
+            (intent.error || "error") +
+            ")" +
+            (intent.raw ? ' · raw "' + intent.raw + '"' : "") +
+            " · " +
+            (intent.latencyMs || 0) +
+            "ms → default order"
+          : "意图分类失败（" +
+            (intent.error || "错误") +
+            "）" +
+            (intent.raw ? " · 原文「" + intent.raw + "」" : "") +
+            " · " +
+            (intent.latencyMs || 0) +
+            "ms → 按默认顺序"
+      );
+    }
+  } else {
+    notes.push(
       uiLang === "en"
-        ? "Intent: tier" +
-          intent.tier +
-          (intent.web ? "+web" : "") +
-          " (" +
-          intent.latencyMs +
-          "ms)"
-        : "意图分类：tier" +
-          intent.tier +
-          (intent.web ? "+web" : "") +
-          "（" +
-          intent.latencyMs +
-          "ms）"
-    );
-  } else if (String(env.INTENT_SERVICE_URL || "").trim()) {
-    notes.unshift(
-      uiLang === "en"
-        ? "Intent classifier unavailable (" + (intent.error || "error") + "), default order"
-        : "分类器不可用（" + (intent.error || "错误") + "），按默认顺序"
+        ? "Web fast path → skip intent classifier"
+        : "联网快路径 → 跳过意图分类"
     );
   }
 
-  const forceWeb = body.webSearch === true || body.forceWeb === true;
   const web = await resolveWebContext(env, message, replyLang, {
-    force: forceWeb || !!intent.web,
+    force: forceWeb || !!intent.web || webFast,
     intentWeb: !!intent.web,
     systemSettings: body.systemSettings || body.system_settings || {},
+    timeoutMs: webFast ? 8000 : 12000,
   });
   if (web.note) notes.push(web.note);
   const webCtx = web.webCtx || "";
@@ -585,24 +615,28 @@ async function handleLlmChat(env, body) {
   // PDF：提取已准备文本/渲图，对话梯队交给意图分类（文档+用户问题），
   // 可走 tier2 或无视觉的 tier3；不因「页复杂」强行抬到 3 / 跳过 2。
   let routeTier = intent.tier || 0;
-  if (web.used && routeTier < 2) {
+  const routeBits = [];
+  if ((web.used || webFast) && routeTier < 2) {
     routeTier = 2;
-    notes.push(
-      uiLang === "en"
-        ? "Web search raised routing floor to tier2"
-        : "联网检索将路由下限抬到 tier2"
-    );
+    routeBits.push(uiLang === "en" ? "web floor" : "联网下限");
   }
   if (ocr.present && ocr.source !== "pdf" && ocr.floorTier > routeTier) {
     routeTier = ocr.floorTier;
+    routeBits.push(
+      uiLang === "en"
+        ? "layout" + (ocr.reasons.length ? ":" + ocr.reasons.join(",") : "")
+        : "排版" + (ocr.reasons.length ? ":" + ocr.reasons.join("、") : "")
+    );
+  }
+  if (routeTier) {
     notes.push(
       uiLang === "en"
-        ? "Layout check raised routing to tier" +
+        ? "Route → tier" +
           routeTier +
-          (ocr.reasons.length ? " (" + ocr.reasons.join(", ") + ")" : "")
-        : "排版硬校验抬到 tier" +
+          (routeBits.length ? " (" + routeBits.join("; ") + ")" : "")
+        : "路由 → tier" +
           routeTier +
-          (ocr.reasons.length ? "（" + ocr.reasons.join("、") + "）" : "")
+          (routeBits.length ? "（" + routeBits.join("；") + "）" : "")
     );
   }
   const hasVisionPages = !!(ocr.visionImages && ocr.visionImages.length);
@@ -623,7 +657,7 @@ async function handleLlmChat(env, body) {
   }
 
   // 有附件或已搜网时不预热 tier1：上下文已变，预热会答非所问
-  const primary = ocr.present || webCtx ? null : tier1Cands[0] || null;
+  const primary = ocr.present || webCtx || webFast ? null : tier1Cands[0] || null;
   const primaryPromise = primary
     ? callModel(env, primary.target, message, replyLang, ocr, false, "")
     : null;
@@ -653,13 +687,23 @@ async function handleLlmChat(env, body) {
     : null;
 
   let lastFail = null;
-  /** 联网场景少试几次，避免拖垮 Pages Function 墙钟上限 */
-  const maxAttempts = webCtx ? 2 : 4;
+  /** 联网快路径只试 1 次；其它联网最多 2 次 */
+  const maxAttempts = webFast ? 1 : webCtx ? 2 : 4;
+  const callOpts = webFast ? { fastWeb: true } : null;
   for (const { target, via } of queue.slice(0, maxAttempts)) {
     const result =
       primaryPromise && primary && target.id === primary.target.id
         ? await primaryPromise
-        : await callModel(env, target, message, replyLang, ocr, useVision, webCtx);
+        : await callModel(
+            env,
+            target,
+            message,
+            replyLang,
+            ocr,
+            useVision,
+            webCtx,
+            callOpts
+          );
     const attempt = {
       label: target.label,
       modelId: target.modelId,

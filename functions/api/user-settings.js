@@ -33,6 +33,8 @@ const DEFAULT_SETTINGS = {
   tavilyMaxResults: 5,
   /** Tavily：0=basic，1=advanced */
   tavilySearchDepth: 0,
+  /** 1=AI 助手气泡显示意图/调用跟踪；0=不显示 */
+  llmShowPipelineTrace: 0,
 };
 
 function mergeSettings(saved) {
@@ -106,6 +108,12 @@ function sanitizeIncoming(incoming) {
       0,
       1,
       base.tavilySearchDepth
+    ),
+    llmShowPipelineTrace: clampInt(
+      incoming.llmShowPipelineTrace,
+      0,
+      1,
+      base.llmShowPipelineTrace
     ),
     asrMicMode: clampInt(
       incoming.asrMicMode != null

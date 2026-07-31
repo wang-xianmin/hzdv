@@ -73,7 +73,12 @@ export async function searchTavily(env, query, opts) {
 
   const started = Date.now();
   const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
-  const timer = ctrl ? setTimeout(() => ctrl.abort(), 12000) : null;
+  const timer = ctrl
+    ? setTimeout(
+        () => ctrl.abort(),
+        clampInt((opts && opts.timeoutMs) || 8000, 3000, 20000, 8000)
+      )
+    : null;
 
   try {
     const res = await fetch("https://api.tavily.com/search", {
