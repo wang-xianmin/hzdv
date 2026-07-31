@@ -558,7 +558,7 @@ async function handleLlmChat(env, body) {
    */
   const budgetMs =
     body.webProvided === true || Object.prototype.hasOwnProperty.call(body, "intent")
-      ? 28000
+      ? 22000
       : 45000;
   const t0 = Date.now();
   function remMs() {
@@ -727,8 +727,30 @@ async function handleLlmChat(env, body) {
     ? callModel(env, primary.target, message, replyLang, ocr, false, "")
     : null;
 
+  const phased =
+    Object.prototype.hasOwnProperty.call(body, "intent") ||
+    body.webProvided === true;
+
+  /** 分阶段且已有检索材料：优先快模型总结，并截断上下文，避免 CF 墙钟 HTML 502 */
+  let webCtxForCall = webCtx;
+  if (phased && webCtxForCall && webCtxForCall.length > 3500) {
+    webCtxForCall = webCtxForCall.slice(0, 3500) + "\n…(truncated)";
+    notes.push(
+      uiLang === "en"
+        ? "Web context truncated to 3500 chars for generate phase"
+        : "生成阶段将联网材料截断至 3500 字"
+    );
+  }
+
   let queue;
-  if (routeTier === 2) {
+  if (phased && webCtxForCall) {
+    queue = registryCandidates(env, models, [1, 2], false);
+    notes.push(
+      uiLang === "en"
+        ? "Generate phase → prefer tier1 then tier2 (web summarize)"
+        : "生成阶段 → 优先 tier1 再 tier2（总结检索）"
+    );
+  } else if (routeTier === 2) {
     queue = registryCandidates(env, models, [2, 3, 1], preferVision);
   } else if (routeTier === 3) {
     queue = registryCandidates(env, models, [3, 2, 1], preferVision);
@@ -749,9 +771,11 @@ async function handleLlmChat(env, body) {
         count: web.pack && web.pack.results ? web.pack.results.length : 0,
         latencyMs: web.pack && web.pack.latencyMs,
       }
-    : null;
+    : body.webSearch && typeof body.webSearch === "object"
+      ? body.webSearch
+      : null;
 
-  if (remMs() < 3000) {
+  if (remMs() < 2500) {
     notes.push(
       uiLang === "en"
         ? "Budget left " + remMs() + "ms → skip LLM (return JSON before CF HTML 502)"
@@ -781,26 +805,76 @@ async function handleLlmChat(env, body) {
   }
 
   let lastFail = null;
-  /** 分阶段调用时只试 1 次，避免生成阶段再叠多模型超时 */
-  const phased =
-    Object.prototype.hasOwnProperty.call(body, "intent") ||
-    body.webProvided === true;
-  const maxAttempts = phased ? 1 : webCtx ? 2 : 4;
-  const callOpts = phased ? { timeoutMs: 20000, maxTokens: 800 } : null;
+  /** 分阶段：单次快调；超时必须短于 CF 墙钟，确保返回 JSON 而非 HTML 502 */
+  const maxAttempts = phased ? 1 : webCtxForCall ? 2 : 4;
+  const callOpts = phased
+    ? { timeoutMs: Math.min(12000, Math.max(5000, remMs() - 2000)), maxTokens: 500 }
+    : null;
+  notes.push(
+    uiLang === "en"
+      ? "LLM timeout budget " +
+        ((callOpts && callOpts.timeoutMs) || 28000) +
+        "ms · attempts " +
+        maxAttempts
+      : "LLM 超时预算 " +
+        ((callOpts && callOpts.timeoutMs) || 28000) +
+        "ms · 尝试 " +
+        maxAttempts +
+        " 次"
+  );
+
+  function hardTimeoutResult(ms) {
+    return new Promise(function (resolve) {
+      setTimeout(function () {
+        resolve({
+          ok: false,
+          status: 0,
+          data: null,
+          latencyMs: ms,
+          error:
+            uiLang === "en"
+              ? "Hard timeout " + ms + "ms (avoid CF HTML 502)"
+              : "生成硬超时 " + ms + "ms（避免 CF HTML 502）",
+          reply: "",
+        });
+      }, ms);
+    });
+  }
+
   for (const { target, via } of queue.slice(0, maxAttempts)) {
-    const result =
+    const tCall = Date.now();
+    const hardMs = phased
+      ? Math.min(14000, Math.max(6000, remMs() - 1000))
+      : 60000;
+    const modelPromise =
       primaryPromise && primary && target.id === primary.target.id
-        ? await primaryPromise
-        : await callModel(
+        ? primaryPromise
+        : callModel(
             env,
             target,
             message,
             replyLang,
             ocr,
             useVision,
-            webCtx,
+            webCtxForCall,
             callOpts
           );
+    const result = phased
+      ? await Promise.race([modelPromise, hardTimeoutResult(hardMs)])
+      : await modelPromise;
+    notes.push(
+      uiLang === "en"
+        ? "Tried " +
+          (target.label || target.modelId) +
+          " · " +
+          (Date.now() - tCall) +
+          "ms"
+        : "尝试 " +
+          (target.label || target.modelId) +
+          " · " +
+          (Date.now() - tCall) +
+          "ms"
+    );
     const attempt = {
       label: target.label,
       modelId: target.modelId,

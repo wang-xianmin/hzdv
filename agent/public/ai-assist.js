@@ -2153,10 +2153,10 @@
                   ? t(
                       "Cloudflare 网关超时/失败（HTTP " +
                         r.status +
-                        "）。本段 Worker 未返回 JSON。若意图阶段已成功，跟踪里应仍保留分类结果。",
+                        "）。本段是生成阶段（LLM）；意图/搜网若已成功会留在跟踪里。",
                       "Cloudflare gateway timeout/fail (HTTP " +
                         r.status +
-                        "). This Worker returned no JSON. If intent phase succeeded, its notes should remain."
+                        "). This is the generate (LLM) phase; prior intent/web notes should remain."
                     )
                   : t("服务返回非 JSON（HTTP ", "Non-JSON response (HTTP ") +
                     r.status +
@@ -2344,6 +2344,7 @@
                 webProvided: true,
                 webCtx: webInfo.webCtx || "",
                 webSkipped: webInfo.webSkipped || null,
+                webSearch: webInfo.webSearch || null,
               });
               return postJson("/api/llm-chat", chatBody).then(function (chatPack) {
                 var cj = chatPack.j || {};
