@@ -274,11 +274,35 @@
   }
 
   function readCard(card) {
+    var baseUrl = card.querySelector('[data-f="baseUrl"]').value.trim();
+    var apiKeyEnv = card.querySelector('[data-f="apiKeyEnv"]').value.trim();
+    // 纠错：密钥栏误贴 URL / 与 Base URL 对调
+    if (/^https?:\/\//i.test(apiKeyEnv) || apiKeyEnv.indexOf("://") >= 0) {
+      if (!baseUrl || /^[A-Z][A-Z0-9_]*$/.test(baseUrl)) {
+        var prev = baseUrl;
+        baseUrl = apiKeyEnv.replace(/\/+$/, "");
+        apiKeyEnv = /^[A-Z][A-Z0-9_]*$/.test(prev) ? prev : "";
+      } else {
+        apiKeyEnv = "";
+      }
+    }
+    if (!apiKeyEnv && baseUrl) {
+      var u = baseUrl.toLowerCase();
+      if (u.indexOf("aliyuncs.com") >= 0 || u.indexOf("dashscope") >= 0) {
+        apiKeyEnv = "ALIYUN_MAAS_API_KEY";
+      } else if (u.indexOf("siliconflow") >= 0) {
+        apiKeyEnv = "SILICONFLOW_API_KEY";
+      } else if (u.indexOf("deepseek") >= 0) {
+        apiKeyEnv = "DEEPSEEK_API_KEY";
+      } else if (u.indexOf("volces.com") >= 0 || u.indexOf("ark.") >= 0) {
+        apiKeyEnv = "ARK_API_KEY";
+      }
+    }
     return {
       label: card.querySelector('[data-f="label"]').value.trim(),
       modelId: card.querySelector('[data-f="modelId"]').value.trim(),
-      baseUrl: card.querySelector('[data-f="baseUrl"]').value.trim(),
-      apiKeyEnv: card.querySelector('[data-f="apiKeyEnv"]').value.trim(),
+      baseUrl: baseUrl,
+      apiKeyEnv: apiKeyEnv,
       enabled: card.querySelector('[data-c="enabled"]').checked,
       caps: {
         text: true,

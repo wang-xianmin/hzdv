@@ -133,16 +133,71 @@ export function normalizeCaps(raw) {
   };
 }
 
+function looksLikeEnvName(s) {
+  return /^[A-Z][A-Z0-9_]*$/.test(String(s || "").trim());
+}
+
+function looksLikeUrl(s) {
+  const t = String(s || "").trim();
+  return /^https?:\/\//i.test(t) || t.includes("://");
+}
+
+/** 根据 baseUrl 猜密钥环境变量名（纠错用，不覆盖已正确填写的） */
+export function inferApiKeyEnvFromBaseUrl(baseUrl) {
+  const u = String(baseUrl || "").toLowerCase();
+  if (!u) return "";
+  if (u.includes("aliyuncs.com") || u.includes("dashscope")) {
+    return "ALIYUN_MAAS_API_KEY";
+  }
+  if (u.includes("siliconflow")) return "SILICONFLOW_API_KEY";
+  if (u.includes("deepseek.com")) return "DEEPSEEK_API_KEY";
+  if (u.includes("volces.com") || u.includes("ark.cn-")) return "ARK_API_KEY";
+  if (u.includes("deepseek")) return "DEEPSEEK_API_KEY";
+  return "";
+}
+
+/**
+ * 纠错：有人把 Base URL 填进「密钥环境变量」栏（或两栏对调）。
+ * 在内存里修好，避免总结阶段误报「缺密钥 https://…」。
+ */
+export function healModelKeyUrlFields(baseUrl, apiKeyEnv) {
+  let base = String(baseUrl || "")
+    .trim()
+    .replace(/\/+$/, "");
+  let keyEnv = String(apiKeyEnv || "").trim();
+
+  if (looksLikeUrl(keyEnv)) {
+    if (!base || looksLikeEnvName(base)) {
+      const prevBase = base;
+      base = keyEnv.replace(/\/+$/, "");
+      keyEnv = looksLikeEnvName(prevBase)
+        ? prevBase
+        : inferApiKeyEnvFromBaseUrl(base);
+    } else {
+      // baseUrl 已是 URL，apiKeyEnv 误贴了另一份 URL → 按 base 推断密钥名
+      keyEnv = inferApiKeyEnvFromBaseUrl(base) || inferApiKeyEnvFromBaseUrl(keyEnv);
+    }
+  } else if (!keyEnv && base) {
+    keyEnv = inferApiKeyEnvFromBaseUrl(base);
+  }
+
+  return { baseUrl: base, apiKeyEnv: keyEnv };
+}
+
 export function normalizeModel(raw) {
   const rawTier = Number(raw && raw.tier);
   const tier = rawTier === 1 ? 1 : rawTier === 3 ? 3 : 2;
   const order = Math.max(0, Math.floor(Number(raw && raw.order) || 0));
+  const healed = healModelKeyUrlFields(
+    raw && raw.baseUrl,
+    raw && raw.apiKeyEnv
+  );
   return {
     id: String((raw && raw.id) || uid()),
     label: String((raw && (raw.label || raw.name || raw.modelId)) || "").trim() || "unnamed",
     modelId: String((raw && (raw.modelId || raw.model)) || "").trim(),
-    baseUrl: String((raw && raw.baseUrl) || "").trim().replace(/\/+$/, ""),
-    apiKeyEnv: String((raw && raw.apiKeyEnv) || "").trim(),
+    baseUrl: healed.baseUrl,
+    apiKeyEnv: healed.apiKeyEnv,
     tier,
     order,
     enabled: raw && raw.enabled === false ? false : true,

@@ -992,21 +992,23 @@ async function handleLlmChat(env, body) {
         continue;
       }
       if (!resolveApiKey(env, m.apiKeyEnv)) {
+        const keyField = String(m.apiKeyEnv || "");
+        const misUrl = /^https?:\/\//i.test(keyField) || keyField.includes("://");
         slotNotes.push(
           uiLang === "en"
             ? tag +
               " " +
               name +
-              " missing env " +
-              (m.apiKeyEnv || "?") +
-              " → skip"
+              (misUrl
+                ? " apiKeyEnv is a URL (should be env name like ALIYUN_MAAS_API_KEY) → skip"
+                : " missing env " + (keyField || "?") + " → skip")
             : "第" +
               n +
               "位 " +
               name +
-              " 缺密钥 " +
-              (m.apiKeyEnv || "?") +
-              " → 跳过"
+              (misUrl
+                ? " 的「密钥环境变量」误填成了 URL（应填 ALIYUN_MAAS_API_KEY 这类名字）→ 跳过"
+                : " 缺密钥 " + (keyField || "?") + " → 跳过")
         );
         continue;
       }
