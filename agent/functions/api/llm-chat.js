@@ -244,18 +244,22 @@ function ocrPromptBlock(ocr, replyLang) {
 }
 
 function systemPrompt(replyLang, ocr, webCtx) {
-  const webBlock =
-    webCtx && String(webCtx).trim()
-      ? (replyLang === "en" ? "\n\n" : "\n\n") + String(webCtx).trim()
-      : "";
+  const hasWeb = !!(webCtx && String(webCtx).trim());
+  const webBlock = hasWeb
+    ? (replyLang === "en" ? "\n\n" : "\n\n") + String(webCtx).trim()
+    : "";
   if (replyLang === "en") {
     return (
       "You are the HZDV site assistant. Be concise and direct. " +
       "Always answer in the same language the user wrote in. " +
       "The user wrote in English, so answer in English. " +
       "Ignore the site menu language." +
-      (webBlock
-        ? " When web search results are provided, ground factual claims in them and cite URLs."
+      (hasWeb
+        ? " WEB MATERIALS RULES (mandatory): " +
+          "1) Use ONLY the web search materials below for time-sensitive or factual claims. " +
+          "2) Do NOT invent titles, sites, headlines, or URLs. Every URL you cite must appear verbatim in the materials. " +
+          "3) If the materials do not contain what the user asked for, say clearly that it is not in the materials — do not fabricate examples. " +
+          "4) Prefer listing items that appear in the materials; short quotes/titles + real URLs only."
         : "") +
       ocrPromptBlock(ocr, "en") +
       webBlock
@@ -266,7 +270,13 @@ function systemPrompt(replyLang, ocr, webCtx) {
     "始终使用与用户提问相同的语言回答。" +
     "本次用户用中文提问，请用中文回答。" +
     "不要参考站点菜单语言。" +
-    (webBlock ? "若提供了联网检索结果，事实性内容请依据材料并注明来源链接。" : "") +
+    (hasWeb
+      ? "【联网材料硬性规则】" +
+        "1）涉及新闻/实时/事实的内容，只能依据下方联网检索材料作答；" +
+        "2）禁止捏造标题、网站名或链接；凡写出的 URL 必须在材料中原样出现；" +
+        "3）若材料里没有用户要的内容，请明确说「材料里没有…」，不要编造示例或假新闻；" +
+        "4）优先列出材料中真实出现的条目，可用短标题 + 材料中的真实链接。"
+      : "") +
     ocrPromptBlock(ocr, "zh") +
     webBlock
   );

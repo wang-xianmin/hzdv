@@ -120,8 +120,8 @@ function fallbackSteps(message, hasWebCtx, uiLang) {
         op: "generate",
         focus:
           uiLang === "en"
-            ? "Using the search material already gathered, answer briefly."
-            : "利用已有联网材料，简要回答用户问题。",
+            ? "Using ONLY the search material already gathered, answer briefly. If not in the materials, say so; do not invent URLs."
+            : "严格只用已有联网材料简要作答；材料里没有就直说，禁止编造链接。",
       },
     ];
   }
@@ -135,8 +135,8 @@ function fallbackSteps(message, hasWebCtx, uiLang) {
         op: "generate",
         focus:
           uiLang === "en"
-            ? "Summarize search results and answer briefly."
-            : "根据检索结果简要作答。",
+            ? "Summarize search results and answer briefly. Cite only real URLs from results; never invent links."
+            : "根据检索结果简要作答；只引用材料中的真实链接，禁止编造。",
       },
     ];
   }

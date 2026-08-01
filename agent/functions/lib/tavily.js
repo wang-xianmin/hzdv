@@ -162,8 +162,8 @@ export function formatWebContext(pack, replyLang) {
   const en = replyLang === "en";
   lines.push(
     en
-      ? "Web search results (via Tavily). Use them when relevant; cite URLs. If results conflict or are thin, say so."
-      : "以下为联网检索结果（Tavily）。相关时请引用；若材料不足或互相矛盾请说明。"
+      ? "Web search results (via Tavily). Cite only URLs that appear below. If the answer is not supported by these results, say the materials do not contain it — never invent headlines or links."
+      : "以下为联网检索结果（Tavily）。只能引用下方出现的 URL；若材料不足以回答，请说「材料里没有」，禁止编造标题或链接。"
   );
   lines.push("Query: " + (pack.query || ""));
   pack.results.forEach((r, i) => {
