@@ -38,10 +38,9 @@ const DEFAULT_SETTINGS = {
   /** 1=强制模拟③生成墙钟失败（测失败恢复）；0=正常 */
   llmForceFailGenerate: 0,
   /**
-   * Auto 路由：0=方案一 vps（意图 VPS 1.5B；生成可经 llm-proxy）
-   * 1=方案二 cf（意图云端 7B；生成 CF 直调云端）
+   * Auto 路由：0=强制 VPS / 1=强制 CF / 2=自动（中国大陆→CF，其它→VPS）
    */
-  llmRouteMode: 0,
+  llmRouteMode: 2,
 };
 
 function mergeSettings(saved) {
@@ -128,7 +127,7 @@ function sanitizeIncoming(incoming) {
       1,
       base.llmForceFailGenerate
     ),
-    llmRouteMode: clampInt(incoming.llmRouteMode, 0, 1, base.llmRouteMode),
+    llmRouteMode: clampInt(incoming.llmRouteMode, 0, 2, base.llmRouteMode),
     asrMicMode: clampInt(
       incoming.asrMicMode != null
         ? incoming.asrMicMode

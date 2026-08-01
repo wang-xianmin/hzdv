@@ -13,7 +13,11 @@ import {
 } from "../lib/host.js";
 import { detectTextLang, normalizeUiLang } from "../lib/tier1.js";
 import { classifyIntent } from "../lib/intent.js";
-import { resolveRouteMode } from "../lib/route-mode.js";
+import {
+  clientCountryFromRequest,
+  formatRouteModeNote,
+  resolveRouteDecision,
+} from "../lib/route-mode.js";
 import { loadLlmModels } from "../lib/llm-models-store.js";
 
 function jsonResponse(body, status = 200) {
@@ -61,7 +65,9 @@ export async function onRequest(context) {
   const ocr = normalizeOcrForClassify(body.ocr);
   const classifyText = ocr.present ? message + "\n" + ocr.text : message;
   const systemSettings = body.systemSettings || body.system_settings || {};
-  const routeMode = resolveRouteMode(systemSettings, env);
+  const country = clientCountryFromRequest(request);
+  const routeDecision = resolveRouteDecision(systemSettings, env, { country });
+  const routeMode = routeDecision.mode;
 
   let models = [];
   if (routeMode === "cf") {
@@ -81,13 +87,10 @@ export async function onRequest(context) {
       routeMode,
       systemSettings,
       models,
+      country,
     });
     const notes = [];
-    notes.push(
-      uiLang === "en"
-        ? "① Route mode → " + routeMode
-        : "① 路由模式 → " + (routeMode === "cf" ? "cf（国内/直调）" : "vps")
-    );
+    notes.push("① " + formatRouteModeNote(routeDecision, uiLang));
     if (intent.via || intent.label) {
       notes.push(
         uiLang === "en"
@@ -146,6 +149,7 @@ export async function onRequest(context) {
       success: true,
       phase: "intent",
       routeMode,
+      routeDecision,
       intent: {
         tier: intent.tier,
         web: !!intent.web,

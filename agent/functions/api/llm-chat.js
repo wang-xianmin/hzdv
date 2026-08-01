@@ -35,7 +35,12 @@ import {
 } from "../lib/openai-compat.js";
 import { detectTextLang, normalizeUiLang } from "../lib/tier1.js";
 import { classifyIntent } from "../lib/intent.js";
-import { resolveGenerateProxy, resolveRouteMode } from "../lib/route-mode.js";
+import {
+  clientCountryFromRequest,
+  formatRouteModeNote,
+  resolveGenerateProxy,
+  resolveRouteDecision,
+} from "../lib/route-mode.js";
 import {
   formatWebContext,
   heuristicNeedsWeb,
@@ -402,7 +407,9 @@ async function callModel(env, target, message, replyLang, ocr, useVision, webCtx
     }
   }
   const systemSettings = (opts && opts.systemSettings) || {};
-  const proxy = resolveGenerateProxy(env, systemSettings);
+  const proxy = resolveGenerateProxy(env, systemSettings, {
+    country: opts && opts.country,
+  });
   const timeoutMs =
     (opts && opts.timeoutMs) ||
     (proxy ? (wantVision ? 90000 : 60000) : wantVision ? 55000 : 28000);
@@ -581,7 +588,9 @@ export async function onRequest(context) {
   }
 
   try {
-    return await handleLlmChat(env, body);
+    return await handleLlmChat(env, body, {
+      country: clientCountryFromRequest(request),
+    });
   } catch (e) {
     console.error("llm-chat:", e);
     return jsonResponse(
@@ -594,7 +603,7 @@ export async function onRequest(context) {
   }
 }
 
-async function handleLlmChat(env, body) {
+async function handleLlmChat(env, body, reqOpts) {
   const message = String(body.message || body.prompt || "").trim();
   if (!message) {
     return jsonResponse({ success: false, error: "缺少 message" }, 400);
@@ -606,6 +615,8 @@ async function handleLlmChat(env, body) {
   const wantId = String(body.modelId || body.model || "auto").trim() || "auto";
   const ocrLimits = resolveOcrLimits(body.systemSettings || body.system_settings);
   const ocr = normalizeOcrContext(body.ocr, ocrLimits);
+  const country = String((reqOpts && reqOpts.country) || "").trim().toUpperCase();
+  const routeOpts = { country };
 
   const kv = pickKvBinding(env);
   if (!kv) {
@@ -613,7 +624,8 @@ async function handleLlmChat(env, body) {
   }
   const { models } = await loadLlmModels(kv, env);
   const systemSettings = body.systemSettings || body.system_settings || {};
-  const routeMode = resolveRouteMode(systemSettings, env);
+  const routeDecision = resolveRouteDecision(systemSettings, env, routeOpts);
+  const routeMode = routeDecision.mode;
 
   if (wantId !== "auto") {
     const hit = (models || []).find((m) => m.id === wantId);
@@ -629,13 +641,7 @@ async function handleLlmChat(env, body) {
     });
     const notes = [];
     if (web.note) notes.push(web.note);
-    if (routeMode === "cf") {
-      notes.push(
-        uiLang === "en"
-          ? "Route mode → cf (CF → cloud LLM)"
-          : "路由模式 → cf（CF 直调云端）"
-      );
-    }
+    notes.push(formatRouteModeNote(routeDecision, uiLang));
     const result = await callModel(
       env,
       hit,
@@ -644,7 +650,7 @@ async function handleLlmChat(env, body) {
       ocr,
       useVision,
       web.webCtx || "",
-      { systemSettings }
+      { systemSettings, country }
     );
     if (result.usedVision) {
       notes.push(
@@ -668,7 +674,7 @@ async function handleLlmChat(env, body) {
 
   const attempts = [];
   const notes = [];
-  const proxy = resolveGenerateProxy(env, systemSettings);
+  const proxy = resolveGenerateProxy(env, systemSettings, routeOpts);
   /**
    * 墙钟预算：仅用于在 Cloudflare 掐断前尽量返回 JSON。
    * 经 VPS llm-proxy 时放宽（上游慢活在 VPS，路径更稳）；否则分阶段收紧。
@@ -687,12 +693,7 @@ async function handleLlmChat(env, body) {
     return budgetMs - (Date.now() - t0);
   }
 
-  notes.push(
-    uiLang === "en"
-      ? "③ Route mode → " + routeMode
-      : "③ 路由模式 → " +
-        (routeMode === "cf" ? "cf（国内/直调）" : "vps")
-  );
+  notes.push("③ " + formatRouteModeNote(routeDecision, uiLang));
   if (proxy) {
     notes.push(
       uiLang === "en"
@@ -743,6 +744,7 @@ async function handleLlmChat(env, body) {
       routeMode,
       systemSettings,
       models,
+      country,
     });
     if (intent.tier) {
       notes.push(
@@ -898,6 +900,7 @@ async function handleLlmChat(env, body) {
   const primaryPromise = primary
     ? callModel(env, primary.target, message, replyLang, ocr, false, "", {
         systemSettings,
+        country,
       })
     : null;
 
@@ -1117,7 +1120,7 @@ async function handleLlmChat(env, body) {
       ? 2
       : 4;
   const callOpts = Object.assign(
-    { systemSettings },
+    { systemSettings, country },
     phased
       ? {
           timeoutMs: proxy

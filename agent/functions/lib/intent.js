@@ -116,7 +116,9 @@ function parseClassify(text) {
 export async function classifyIntent(env, message, opts) {
   const routeMode =
     (opts && opts.routeMode) ||
-    resolveRouteMode(opts && opts.systemSettings, env);
+    resolveRouteMode(opts && opts.systemSettings, env, {
+      country: opts && opts.country,
+    });
 
   let target = null;
   let apiKey = "";

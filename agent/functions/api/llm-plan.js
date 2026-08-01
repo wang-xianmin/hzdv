@@ -25,7 +25,12 @@ import {
   resolveApiKey,
 } from "../lib/openai-compat.js";
 import { normalizeUiLang } from "../lib/tier1.js";
-import { resolveGenerateProxy, resolveRouteMode } from "../lib/route-mode.js";
+import {
+  clientCountryFromRequest,
+  formatRouteModeNote,
+  resolveGenerateProxy,
+  resolveRouteDecision,
+} from "../lib/route-mode.js";
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -207,8 +212,10 @@ export async function onRequest(context) {
   const target = cands[0];
   const apiKey = resolveApiKey(env, target.apiKeyEnv);
   const systemSettings = body.systemSettings || body.system_settings || {};
-  const routeMode = resolveRouteMode(systemSettings, env);
-  const proxy = resolveGenerateProxy(env, systemSettings);
+  const country = clientCountryFromRequest(request);
+  const routeDecision = resolveRouteDecision(systemSettings, env, { country });
+  const routeMode = routeDecision.mode;
+  const proxy = resolveGenerateProxy(env, systemSettings, { country });
 
   const sys =
     uiLang === "en"
@@ -276,9 +283,11 @@ export async function onRequest(context) {
   steps = pruneStepsForContext(steps, hasWebCtx, uiLang, notes);
   notes.push(
     uiLang === "en"
-      ? "Plan route mode → " + routeMode
-      : "规划路由模式 → " +
-        (routeMode === "cf" ? "cf（直调）" : "vps")
+      ? "Plan " + formatRouteModeNote(routeDecision, uiLang)
+      : formatRouteModeNote(routeDecision, uiLang).replace(
+          /^路由模式/,
+          "规划路由模式"
+        )
   );
   if (proxy) {
     notes.push(

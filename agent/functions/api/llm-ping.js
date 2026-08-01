@@ -17,7 +17,10 @@ import {
 } from "../lib/openai-compat.js";
 import { describeDoubao, describeQwen } from "../lib/tier1.js";
 import { intentTarget } from "../lib/intent.js";
-import { resolveGenerateProxy } from "../lib/route-mode.js";
+import {
+  clientCountryFromRequest,
+  resolveGenerateProxy,
+} from "../lib/route-mode.js";
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -144,7 +147,8 @@ export async function onRequest(context) {
     ? null
     : resolveGenerateProxy(
         env,
-        body.systemSettings || body.system_settings || {}
+        body.systemSettings || body.system_settings || {},
+        { country: clientCountryFromRequest(request) }
       );
 
   const result = await chatCompletions({
