@@ -59,12 +59,10 @@ agent/
 | `SILICONFLOW_API_KEY` / `QWEN_BASE_URL` / `QWEN_LITE_MODEL` | 第一梯队 Qwen（英文首选 / 中文备选；默认 `Qwen/Qwen2.5-7B-Instruct`） |
 | `ALIYUN_MAAS_API_KEY` | 阿里 MaaS（二/三梯队多数模型） |
 | `DEEPSEEK_API_KEY` | DeepSeek 官方 |
-| `OCR_SERVICE_URL` / `OCR_API_KEY` | OCR 代理 |
-| `ASR_SERVICE_URL` / `ASR_API_KEY` | ASR（sherpa-onnx）代理 |
-| `INTENT_SERVICE_URL` / `INTENT_API_KEY` | 意图分类（方案一：VPS llama.cpp 1.5B）。推荐 Tunnel：`https://intent.hzdv.net/v1` |
-| `LLM_PROXY_SERVICE_URL` / `LLM_PROXY_API_KEY` | **可选**。方案一：③ 生成经 VPS 长超时转发。推荐 `https://llm.hzdv.net/v1`。方案二强制不走代理 |
-| `OCR_SERVICE_URL` / `OCR_API_KEY` | OCR。推荐 `https://ocr.hzdv.net` |
+| `OCR_SERVICE_URL` / `OCR_API_KEY` | OCR。推荐 Tunnel：`https://ocr.hzdv.net` |
 | `ASR_SERVICE_URL` / `ASR_API_KEY` | ASR。推荐 `https://asr.hzdv.net` |
+| `INTENT_SERVICE_URL` / `INTENT_API_KEY` | 意图分类（方案一）。推荐 `https://intent.hzdv.net/v1` |
+| `LLM_PROXY_SERVICE_URL` / `LLM_PROXY_API_KEY` | **可选**。方案一长超时转发。推荐 `https://llm.hzdv.net/v1`。方案二强制不走代理 |
 | `LLM_ROUTE_MODE` | **可选**。`vps` / `cf` / `auto`。系统设置 `llmRouteMode`：`0=强制VPS` / `1=强制CF` / `2=自动`（默认；中国大陆→CF，其它→VPS） |
 | `TAVILY_API_KEY` | 联网检索密钥（Secret）。条数/深度在**系统设置 → 联网检索**调，也可被 env `TAVILY_MAX_RESULTS` / `TAVILY_SEARCH_DEPTH` 兜底 |
 | 各模型 `apiKeyEnv` 指向的 Secret | 第二/三梯队 |
@@ -103,10 +101,11 @@ Python + sherpa-onnx（Next-gen Kaldi ONNX）跑在仓库 `services/asr/`（Dock
 ③ 生成：若配置了 `LLM_PROXY_*`：
 
 ```text
-浏览器 → CF /api/llm-chat → VPS :8092/v1 → 云端 LLM
+浏览器 → CF /api/llm-chat → https://llm.hzdv.net/v1（Tunnel）→ 云端 LLM
 ```
 
-- 仓库：`services/llm-proxy/`（Docker，默认 `8092`）
+- 仓库：`services/llm-proxy/`（Docker，默认本机 `8092`）
+- **加固**：`services/tunnel/`（Cloudflare Tunnel，公网可不开放 8089–8092）
 - 云厂商密钥仍在 CF Secrets；VPS 用 `X-Upstream-*` 头转发，上游超时默认 120s
 - 意图分类器（`INTENT_*`）不走本代理
 
