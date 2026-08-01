@@ -1,0 +1,19 @@
+# 本地 ingress 示例（可选）。
+# 若在 Zero Trust 控制台用 Token 托管 Public Hostname，可不挂此文件，
+# 以控制台配置为准；两边不要重复冲突。
+#
+# 凭证目录由 cloudflared 容器在首次用 token 连接时管理。
+
+tunnel: hzdv-vps
+credentials-file: /etc/cloudflared/creds/credentials.json
+
+ingress:
+  - hostname: ocr.hzdv.net
+    service: http://127.0.0.1:8089
+  - hostname: intent.hzdv.net
+    service: http://127.0.0.1:8090
+  - hostname: asr.hzdv.net
+    service: http://127.0.0.1:8091
+  - hostname: llm.hzdv.net
+    service: http://127.0.0.1:8092
+  - service: http_status:404

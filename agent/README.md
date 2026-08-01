@@ -61,8 +61,10 @@ agent/
 | `DEEPSEEK_API_KEY` | DeepSeek 官方 |
 | `OCR_SERVICE_URL` / `OCR_API_KEY` | OCR 代理 |
 | `ASR_SERVICE_URL` / `ASR_API_KEY` | ASR（sherpa-onnx）代理 |
-| `INTENT_SERVICE_URL` / `INTENT_API_KEY` | 意图分类（方案一：VPS llama.cpp 1.5B） |
-| `LLM_PROXY_SERVICE_URL` / `LLM_PROXY_API_KEY` | **可选**。方案一：③ 生成经 VPS 长超时转发云端 LLM（见 `services/llm-proxy/`）。方案二强制不走代理 |
+| `INTENT_SERVICE_URL` / `INTENT_API_KEY` | 意图分类（方案一：VPS llama.cpp 1.5B）。推荐 Tunnel：`https://intent.hzdv.net/v1` |
+| `LLM_PROXY_SERVICE_URL` / `LLM_PROXY_API_KEY` | **可选**。方案一：③ 生成经 VPS 长超时转发。推荐 `https://llm.hzdv.net/v1`。方案二强制不走代理 |
+| `OCR_SERVICE_URL` / `OCR_API_KEY` | OCR。推荐 `https://ocr.hzdv.net` |
+| `ASR_SERVICE_URL` / `ASR_API_KEY` | ASR。推荐 `https://asr.hzdv.net` |
 | `LLM_ROUTE_MODE` | **可选**。`vps` / `cf` / `auto`。系统设置 `llmRouteMode`：`0=强制VPS` / `1=强制CF` / `2=自动`（默认；中国大陆→CF，其它→VPS） |
 | `TAVILY_API_KEY` | 联网检索密钥（Secret）。条数/深度在**系统设置 → 联网检索**调，也可被 env `TAVILY_MAX_RESULTS` / `TAVILY_SEARCH_DEPTH` 兜底 |
 | 各模型 `apiKeyEnv` 指向的 Secret | 第二/三梯队 |
@@ -71,7 +73,7 @@ agent/
 
 ## 与 OCR 服务的关系
 
-Python + RapidOCR + ONNX Runtime 跑在仓库 `services/ocr/`（Docker，VPS `ocr.hzdv.net:8089`）。
+Python + RapidOCR + ONNX Runtime 跑在仓库 `services/ocr/`（Docker）。加固见 `services/tunnel/`（`https://ocr.hzdv.net`）。
 
 当前链路（先看原文，再接 LLM）：
 

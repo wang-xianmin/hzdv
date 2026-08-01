@@ -12,7 +12,8 @@ services:
     image: hzdv-asr:latest
     container_name: hzdv-asr
     ports:
-      - "${ASR_PUBLISH_PORT:-8091}:8091"
+      # 加固 Tunnel 后改为：ASR_PUBLISH=127.0.0.1:8091
+      - "${ASR_PUBLISH:-8091}:8091"
     environment:
       ASR_API_KEY: "${ASR_API_KEY:-}"
       ASR_CORS_ORIGINS: "${ASR_CORS_ORIGINS:-*}"

@@ -34,6 +34,8 @@ curl http://127.0.0.1:8089/health
 
 VPS 若启用了 UFW，需放行发布端口（默认 `8089/tcp`），否则 Cloudflare 调不到。
 
+**加固（推荐）**：用 Cloudflare Tunnel，公网可关掉 8089，Pages 改 `https://ocr.hzdv.net`。见 [`../tunnel/README.md`](../tunnel/README.md)。
+
 识别示例：
 
 ```bash

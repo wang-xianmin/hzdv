@@ -44,6 +44,8 @@ curl http://127.0.0.1:8091/health
 ufw allow 8091/tcp comment hzdv-asr
 ```
 
+**加固**：见 [`../tunnel/README.md`](../tunnel/README.md)（`ASR_SERVICE_URL=https://asr.hzdv.net`，端口可只绑 `127.0.0.1`）。
+
 识别示例：
 
 ```bash

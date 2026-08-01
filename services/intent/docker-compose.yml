@@ -30,7 +30,8 @@ services:
       - "${INTENT_API_KEY:?INTENT_API_KEY required}"
       - "--no-webui"
     ports:
-      - "${INTENT_PUBLISH_PORT:-8090}:8090"
+      # 加固 Tunnel 后改为：INTENT_PUBLISH=127.0.0.1:8090
+      - "${INTENT_PUBLISH:-8090}:8090"
     volumes:
       - ./models:/models:ro
     restart: unless-stopped

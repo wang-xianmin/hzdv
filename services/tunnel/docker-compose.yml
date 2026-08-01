@@ -1,0 +1,30 @@
+# hzdv Cloudflare Tunnel
+# 用法：
+#   cd services/tunnel
+#   cp .env.example .env   # 填 TUNNEL_TOKEN
+#   docker compose up -d
+#   docker compose logs -f cloudflared
+#
+# 推荐：在 Zero Trust 控制台配置 Public Hostname，用 token 模式即可。
+# 若要用本地 config.yml，取消下面 volumes 注释，并先 cp config.yml.example config.yml
+
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: hzdv-cloudflared
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      TUNNEL_TOKEN: "${TUNNEL_TOKEN}"
+    command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN}
+    # volumes:
+    #   - ./config.yml:/etc/cloudflared/config.yml:ro
+    #   - cloudflared-creds:/etc/cloudflared/creds
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# volumes:
+#   cloudflared-creds:
