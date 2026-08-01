@@ -104,6 +104,13 @@ function registryCandidates(env, models, tierOrder, preferVision) {
   return out;
 }
 
+/** 联网总结时跳过易崩的小模型（如 Qwen2.5-7B 易重复乱码） */
+function isWeakWebSummarizer(m) {
+  const id = String((m && m.modelId) || "").toLowerCase();
+  const label = String((m && m.label) || "").toLowerCase();
+  return /qwen2\.5-7b/.test(id) || /qwen2\.5-7b/.test(label);
+}
+
 /**
  * 归一化前端传来的 OCR/PDF 上下文（来自 /api/ocr 的 layout 硬校验结果）。
  * PDF 可含 pages[].image_base64（复杂页整页渲图），供 tier3 视觉。
@@ -257,8 +264,9 @@ function systemPrompt(replyLang, ocr, hasWeb) {
           "2) Do NOT invent titles, sites, headlines, or URLs. Every URL you cite must appear verbatim in the materials. " +
           "3) Say “not in the materials” ONLY if the materials are empty or clearly unrelated. " +
           "If the materials already contain numbered items [1][2]… and the user asks for news/front page/HN/hot topics, you MUST list those items — never refuse with “no news today”. " +
-          "4) Copy titles and URLs exactly; do not translate English titles. " +
-          "5) A Hacker News / hot-list feed is current front-page news; treat it as today’s topics."
+          "4) Copy each URL exactly from the materials (character-for-character). " +
+          "5) A Hacker News / hot-list feed is current front-page news; treat it as today’s topics. " +
+          "6) When answering in English, you may keep original titles."
         : "") +
       ocrPromptBlock(ocr, "en")
     );
@@ -271,11 +279,12 @@ function systemPrompt(replyLang, ocr, hasWeb) {
     (hasWeb
       ? "【联网材料硬性规则】" +
         "1）涉及新闻/实时/事实，只能依据用户消息中附带的联网材料作答；" +
-        "2）禁止捏造标题、网站名或链接；URL 必须在材料中原样出现；" +
+        "2）禁止捏造标题、网站名或链接；URL 必须从材料中逐字符原样复制，不得改写、补全或拼接；" +
         "3）仅当材料为空或与问题完全无关时，才说「材料里没有」。" +
         "若材料已有 [1][2]… 编号条目，且用户在问新闻/热门/HN/今日，必须逐条列出，禁止用「没有今天的新闻」拒绝；" +
-        "4）标题与 URL 逐字复制，不要翻译英文标题；" +
-        "5）Hacker News / 热门列表即为当前最新热帖，可当作「今天」的新闻汇报。"
+        "4）每条格式：中文译名（可简短）+ 原文标题 + 原样 URL；英文标题不要擅自改写，URL 不要翻译；" +
+        "5）Hacker News / 热门列表即为当前最新热帖，可当作「今天」的新闻汇报；" +
+        "6）用户用中文提问时，必须提供中文译名，不要只贴英文标题。"
       : "") +
     ocrPromptBlock(ocr, "zh")
   );
@@ -338,8 +347,10 @@ async function callModel(env, target, message, replyLang, ocr, useVision, webCtx
   if (hasWeb) {
     const bridge =
       replyLang === "en"
-        ? "\n\nUse the materials below. If they contain numbered items, list them — do not say the materials are empty or that there is no news today.\n\n"
-        : "\n\n请根据下列材料回答。若已有编号条目，必须逐条汇报；禁止说「材料里没有」或「没有今天的新闻」。\n\n";
+        ? "\n\nUse the materials below. If they contain numbered items, list them — do not say the materials are empty or that there is no news today. Copy URLs exactly.\n\n"
+        : "\n\n请根据下列材料用中文回答。若已有编号条目，必须逐条汇报：" +
+          "每条给出【中文译名】、原文标题、以及材料中的原样 URL（禁止改 URL）。" +
+          "禁止说「材料里没有」或「没有今天的新闻」。\n\n";
     const block = bridge + String(webCtx).trim();
     if (typeof userContent === "string") {
       userContent = userContent + block;

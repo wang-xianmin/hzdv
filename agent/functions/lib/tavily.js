@@ -429,7 +429,8 @@ export function formatWebContext(pack, replyLang) {
         "). These ARE the latest/front-page items to report. Copy each title and URL verbatim. Do not say materials are empty."
       : "【当前联网材料·来源：" +
         via +
-        "】下列即为最新/首页热门条目，请逐条汇报。标题与 URL 逐字复制。禁止说材料为空或没有今天的新闻。"
+        "】下列即为最新/首页热门。请用中文汇报：中文译名 + 原文标题 + 原样 URL。" +
+        "URL 必须逐字符复制。禁止说材料为空或没有今天的新闻。"
   );
   lines.push("Query: " + (pack.query || ""));
   pack.results.forEach((r, i) => {
