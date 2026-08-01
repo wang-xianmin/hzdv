@@ -9,6 +9,7 @@
 import {
   assertAnyLoginAccess,
   opsAuthErrorResponse,
+  pickKvBinding,
 } from "../lib/host.js";
 import { detectTextLang, normalizeUiLang } from "../lib/tier1.js";
 import {
@@ -17,6 +18,7 @@ import {
   searchTavily,
   tavilyConfigured,
 } from "../lib/tavily.js";
+import { loadWebsearchRefineRules } from "../lib/websearch-refine-store.js";
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -106,10 +108,22 @@ export async function onRequest(context) {
       : "basic";
 
   try {
+    let refineRules = null;
+    try {
+      const kv = pickKvBinding(env);
+      if (kv) {
+        const loaded = await loadWebsearchRefineRules(kv);
+        refineRules = loaded.rules || null;
+      }
+    } catch (eRules) {
+      refineRules = null;
+    }
+
     const pack = await searchTavily(env, message, {
       maxResults: Math.min(maxResults, 5),
       searchDepth,
       timeoutMs: 10000,
+      rules: refineRules,
     });
     if (!pack.ok) {
       notes.push(
@@ -133,6 +147,19 @@ export async function onRequest(context) {
     }
 
     const webCtx = formatWebContext(pack, replyLang);
+    if (pack.refine && pack.refine.refined) {
+      notes.push(
+        uiLang === "en"
+          ? "② Query refined → \"" +
+            pack.query +
+            "\"" +
+            (pack.refine.hint ? " (" + pack.refine.hint + ")" : "")
+          : "② 检索式改写 → 「" +
+            pack.query +
+            "」" +
+            (pack.refine.hint ? "（" + pack.refine.hint + "）" : "")
+      );
+    }
     notes.push(
       uiLang === "en"
         ? "② Tavily: " +

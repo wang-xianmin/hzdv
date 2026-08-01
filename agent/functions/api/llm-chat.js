@@ -42,6 +42,7 @@ import {
   searchTavily,
   tavilyConfigured,
 } from "../lib/tavily.js";
+import { loadWebsearchRefineRules } from "../lib/websearch-refine-store.js";
 
 /** 可调默认值；运行时可由 body.systemSettings（D1 系统参数）覆盖 */
 const OCR_TEXT_MAX_PDF = 14000;
@@ -258,7 +259,7 @@ function systemPrompt(replyLang, ocr, webCtx) {
         ? " WEB MATERIALS RULES (mandatory): " +
           "1) Use ONLY the web search materials below for time-sensitive or factual claims. " +
           "2) Do NOT invent titles, sites, headlines, or URLs. Every URL you cite must appear verbatim in the materials. " +
-          "3) If the materials do not contain what the user asked for, say clearly that it is not in the materials — do not fabricate examples. " +
+          "3) If the materials do not contain what the user asked for, say clearly that it is not in the materials — do not fabricate examples or tell users to browse other sites instead. " +
           "4) Prefer listing items that appear in the materials; short quotes/titles + real URLs only."
         : "") +
       ocrPromptBlock(ocr, "en") +
@@ -274,7 +275,7 @@ function systemPrompt(replyLang, ocr, webCtx) {
       ? "【联网材料硬性规则】" +
         "1）涉及新闻/实时/事实的内容，只能依据下方联网检索材料作答；" +
         "2）禁止捏造标题、网站名或链接；凡写出的 URL 必须在材料中原样出现；" +
-        "3）若材料里没有用户要的内容，请明确说「材料里没有…」，不要编造示例或假新闻；" +
+        "3）若材料里没有用户要的内容，请明确说「材料里没有…」，不要编造示例或假新闻，也不要用「请自行打开某某网站」代替作答；" +
         "4）优先列出材料中真实出现的条目，可用短标题 + 材料中的真实链接。"
       : "") +
     ocrPromptBlock(ocr, "zh") +
@@ -406,6 +407,16 @@ async function resolveWebContext(env, message, replyLang, opts) {
     depthFlag === 1 || depthFlag === "1" || depthFlag === true
       ? "advanced"
       : "basic";
+  let refineRules = null;
+  try {
+    const kv = pickKvBinding(env);
+    if (kv) {
+      const loaded = await loadWebsearchRefineRules(kv);
+      refineRules = loaded.rules || null;
+    }
+  } catch (eRules) {
+    refineRules = null;
+  }
   const pack = await searchTavily(env, message, {
     maxResults:
       opts && opts.maxResults != null
@@ -413,6 +424,7 @@ async function resolveWebContext(env, message, replyLang, opts) {
         : maxResults,
     searchDepth: searchDepth,
     timeoutMs: (opts && opts.timeoutMs) || undefined,
+    rules: refineRules,
   });
   if (!pack.ok) {
     return {

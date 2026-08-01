@@ -31,6 +31,7 @@ agent/
 - `functions/api/asr.js` → re-export `agent/functions/api/asr.js`
 - `functions/api/llm-plan.js` → re-export `agent/functions/api/llm-plan.js`（失败恢复规划）
 - `functions/api/llm-recover-log.js` → re-export `agent/functions/api/llm-recover-log.js`（恢复打点）
+- `functions/api/llm-websearch-refine.js` → re-export（运维：联网检索改写规则）
 - `functions/api/translate-turn.js` → re-export `agent/translator/functions/api/translate-turn.js`
 
 面对面口译（按住说话）见独立包：[`translator/README.md`](./translator/README.md)。

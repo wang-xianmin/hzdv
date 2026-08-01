@@ -895,6 +895,13 @@
   line-height: 1.45;
 }
 
+.ai-models-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
 .ai-models-actions {
   display: flex;
   flex-wrap: wrap;
