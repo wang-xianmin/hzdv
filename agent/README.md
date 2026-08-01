@@ -29,6 +29,8 @@ agent/
 - `functions/api/llm-chat.js` → re-export `agent/functions/api/llm-chat.js`
 - `functions/api/ocr.js` → re-export `agent/functions/api/ocr.js`
 - `functions/api/asr.js` → re-export `agent/functions/api/asr.js`
+- `functions/api/llm-plan.js` → re-export `agent/functions/api/llm-plan.js`（失败恢复规划）
+- `functions/api/llm-recover-log.js` → re-export `agent/functions/api/llm-recover-log.js`（恢复打点）
 - `functions/api/translate-turn.js` → re-export `agent/translator/functions/api/translate-turn.js`
 
 面对面口译（按住说话）见独立包：[`translator/README.md`](./translator/README.md)。
@@ -100,6 +102,17 @@ Python + sherpa-onnx（Next-gen Kaldi ONNX）跑在仓库 `services/asr/`（Dock
 - 仓库：`services/llm-proxy/`（Docker，默认 `8092`）
 - 云厂商密钥仍在 CF Secrets；VPS 用 `X-Upstream-*` 头转发，上游超时默认 120s
 - 意图分类器（`INTENT_*`）不走本代理
+
+## 失败恢复编排（Auto）
+
+现有 ①意图 → ②搜网 → ③生成 不变。若 ③ 出现 HTML 502 / 软超时：
+
+1. 前端识别墙钟失败  
+2. `POST /api/llm-recover-log`（短打点，可失败忽略）  
+3. `POST /api/llm-plan`：tier2（否则 tier1）输出最多 4 步 JSON（`websearch` / `generate`）  
+4. 按步骤逐个短请求执行；**每轮对话最多自动恢复一次**
+
+系统参数 → AI助手 → `llmForceFailGenerate=1`：跳过真实③，直接模拟墙钟失败以测恢复（测完改回 0）。
 
 ## Auto 选模与回复语言
 

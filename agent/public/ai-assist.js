@@ -1996,6 +1996,19 @@
     }
   }
 
+  function wantForceFailGenerate() {
+    try {
+      var ss =
+        (typeof window.getHzdvSystemSettings === "function" &&
+          window.getHzdvSystemSettings()) ||
+        window.__HZDV_SYSTEM_SETTINGS ||
+        null;
+      return !!(ss && Number(ss.llmForceFailGenerate) === 1);
+    } catch (e) {
+      return false;
+    }
+  }
+
   function formatPipelineNote(j) {
     if (!wantPipelineTrace()) return "";
     var lines = [];
@@ -2135,6 +2148,7 @@
     function parseLlmResponse(r) {
       return r.text().then(function (text) {
         var j = null;
+        var status = r.status || 0;
         if (text) {
           try {
             j = JSON.parse(text);
@@ -2142,39 +2156,71 @@
             var snip = String(text).replace(/\s+/g, " ").trim().slice(0, 180);
             var cfHint =
               /<!DOCTYPE|cloudflare|attention required/i.test(text) ||
-              r.status === 502 ||
-              r.status === 504 ||
-              r.status === 524;
+              status === 502 ||
+              status === 504 ||
+              status === 524;
             return {
               ok: false,
+              status: status,
               j: {
                 success: false,
                 error: cfHint
                   ? t(
                       "Cloudflare 网关超时/失败（HTTP " +
-                        r.status +
+                        status +
                         "）。本段是生成阶段（LLM）；意图/搜网若已成功会留在跟踪里。",
                       "Cloudflare gateway timeout/fail (HTTP " +
-                        r.status +
+                        status +
                         "). This is the generate (LLM) phase; prior intent/web notes should remain."
                     )
                   : t("服务返回非 JSON（HTTP ", "Non-JSON response (HTTP ") +
-                    r.status +
+                    status +
                     (snip ? "）：" + snip : "）"),
+                wallClockFail: !!cfHint,
               },
             };
           }
-        } else if (!r.ok || r.status === 204) {
+        } else if (!r.ok || status === 204) {
           return {
             ok: false,
+            status: status,
             j: {
               success: false,
-              error: t("空响应 HTTP ", "Empty response HTTP ") + r.status,
+              error: t("空响应 HTTP ", "Empty response HTTP ") + status,
+              wallClockFail: status === 502 || status === 504 || status === 524,
             },
           };
         }
-        return { ok: r.ok, j: j || {} };
+        if (j && typeof j === "object") {
+          var err = String(j.error || "");
+          if (
+            !j.wallClockFail &&
+            (/Cloudflare|HTML 502|剩余时间不够|Stopped before Cloudflare|gateway timeout|硬超时|Hard timeout/i.test(
+              err
+            ) ||
+              status === 502 ||
+              status === 504 ||
+              status === 524)
+          ) {
+            j.wallClockFail = true;
+          }
+        }
+        return { ok: r.ok, status: status, j: j || {} };
       });
+    }
+
+    /** 是否触发失败恢复编排（502 / 软超时）；每轮对话最多自动恢复一次 */
+    function isWallClockFail(pack) {
+      if (!pack) return false;
+      var j = pack.j || {};
+      if (pack.ok && j.success && j.reply) return false;
+      if (j.wallClockFail) return true;
+      var st = pack.status || 0;
+      if (st === 502 || st === 504 || st === 524) return true;
+      var err = String(j.error || "");
+      return /Cloudflare|HTML 502|剩余时间不够|Stopped before Cloudflare|gateway timeout|硬超时|Hard timeout/i.test(
+        err
+      );
     }
 
     function applyAssistantPack(pack, notePrefix) {
@@ -2229,7 +2275,7 @@
       }).then(parseLlmResponse);
     }
 
-    /** Auto：intent →（如需）websearch → llm-chat，三段短请求避免 CF HTML 502 */
+    /** Auto：intent →（如需）websearch → llm-chat；墙钟失败则恢复编排一次 */
     function mergeNotes() {
       var out = [];
       for (var i = 0; i < arguments.length; i++) {
@@ -2240,6 +2286,196 @@
         });
       }
       return out;
+    }
+
+    function runRecoverPlan(ctx) {
+      var intentObj = ctx.intentObj || null;
+      var webCtx = ctx.webCtx || "";
+      var allNotes = ctx.allNotes || [];
+      var failReason = ctx.failReason || "";
+      var failStatus = ctx.failStatus || 0;
+
+      messages[thinkingIdx].text = t(
+        "检测到超时，正在失败恢复编排…",
+        "Timeout detected — recovery orchestration…"
+      );
+      messages[thinkingIdx].modelBadge = "Auto · 恢复";
+      renderThread();
+
+      // 打点可失败忽略
+      var logP = postJson("/api/llm-recover-log", {
+        phone: reqBody.phone,
+        reason: failReason,
+        phase: "generate",
+        status: failStatus,
+        messageSnippet: String(reqBody.message || "").slice(0, 120),
+      }).catch(function () {
+        return null;
+      });
+
+      return logP
+        .then(function () {
+          messages[thinkingIdx].text = t(
+            "恢复：正在规划分步…",
+            "Recovery: planning steps…"
+          );
+          messages[thinkingIdx].modelBadge = "Auto · 规划";
+          renderThread();
+          return postJson("/api/llm-plan", {
+            phone: reqBody.phone,
+            message: reqBody.message,
+            lang: reqBody.lang,
+            failReason: failReason,
+            hasWebCtx: !!webCtx,
+            webCtx: webCtx ? String(webCtx).slice(0, 500) : "",
+            intent: intentObj,
+            systemSettings: reqBody.systemSettings,
+          });
+        })
+        .then(function (planPack) {
+          var pj = (planPack && planPack.j) || {};
+          allNotes = mergeNotes(allNotes, pj.notes);
+          allNotes.push(
+            t(
+              "⟳ 失败恢复编排（最多自动一次）",
+              "⟳ Recovery orchestration (once per turn)"
+            )
+          );
+          if (wantPipelineTrace()) {
+            messages[thinkingIdx].modelNote = formatPipelineNote({
+              notes: allNotes,
+            });
+          }
+          var steps = Array.isArray(pj.steps) ? pj.steps : [];
+          if (!planPack || !planPack.ok || pj.success === false || !steps.length) {
+            applyAssistantPack(
+              {
+                ok: false,
+                j: {
+                  success: false,
+                  error:
+                    (pj && pj.error) ||
+                    failReason ||
+                    t("恢复规划失败", "Recovery plan failed"),
+                  notes: allNotes,
+                },
+              },
+              ""
+            );
+            return null;
+          }
+
+          var i = 0;
+          function nextStep() {
+            if (i >= steps.length) {
+              applyAssistantPack(
+                {
+                  ok: false,
+                  j: {
+                    success: false,
+                    error: t(
+                      "恢复分步已执行完毕但仍无有效回答",
+                      "Recovery steps finished without a usable answer"
+                    ),
+                    notes: allNotes,
+                  },
+                },
+                ""
+              );
+              return null;
+            }
+            var step = steps[i] || {};
+            var op = String(step.op || "").toLowerCase();
+            var stepNo = i + 1;
+            i += 1;
+
+            if (op === "websearch") {
+              messages[thinkingIdx].text = t(
+                "恢复 " + stepNo + "/" + steps.length + "：联网检索…",
+                "Recovery " + stepNo + "/" + steps.length + ": web search…"
+              );
+              messages[thinkingIdx].modelBadge = "Auto · 恢复搜网";
+              renderThread();
+              return postJson("/api/llm-websearch", {
+                phone: reqBody.phone,
+                message: step.query || reqBody.message,
+                lang: reqBody.lang,
+                intent: intentObj || { tier: 2, web: true },
+                forceWeb: true,
+                systemSettings: reqBody.systemSettings,
+              }).then(function (webPack) {
+                var wj = (webPack && webPack.j) || {};
+                allNotes = mergeNotes(allNotes, wj.notes);
+                if (wj.webCtx) webCtx = wj.webCtx;
+                if (wantPipelineTrace()) {
+                  messages[thinkingIdx].modelNote = formatPipelineNote({
+                    notes: allNotes,
+                  });
+                  renderThread();
+                }
+                return nextStep();
+              });
+            }
+
+            if (op === "generate") {
+              messages[thinkingIdx].text = t(
+                "恢复 " + stepNo + "/" + steps.length + "：生成…",
+                "Recovery " + stepNo + "/" + steps.length + ": generate…"
+              );
+              messages[thinkingIdx].modelBadge = "Auto · 恢复生成";
+              if (wantPipelineTrace()) {
+                messages[thinkingIdx].modelNote = formatPipelineNote({
+                  notes: allNotes,
+                });
+              }
+              renderThread();
+              var chatMsg = reqBody.message;
+              if (step.focus) {
+                chatMsg =
+                  String(reqBody.message || "") +
+                  "\n\n" +
+                  t("【本步焦点】", "[Step focus] ") +
+                  step.focus;
+              }
+              return postJson("/api/llm-chat", {
+                phone: reqBody.phone,
+                message: chatMsg,
+                modelId: "auto",
+                lang: reqBody.lang,
+                ocr: reqBody.ocr,
+                systemSettings: reqBody.systemSettings,
+                intent: intentObj || { tier: 1, web: !!webCtx },
+                webProvided: true,
+                webCtx: webCtx || "",
+              }).then(function (chatPack) {
+                var cj = (chatPack && chatPack.j) || {};
+                cj.notes = mergeNotes(allNotes, cj.notes);
+                chatPack.j = cj;
+                if (cj.success && cj.reply) {
+                  applyAssistantPack(chatPack, "");
+                  return null;
+                }
+                // 本步生成仍失败：若还是墙钟且还有后续步骤则继续；否则结束
+                allNotes.push(
+                  t(
+                    "恢复生成失败：" + (cj.error || "error"),
+                    "Recovery generate failed: " + (cj.error || "error")
+                  )
+                );
+                if (i < steps.length) return nextStep();
+                applyAssistantPack(chatPack, "");
+                return null;
+              });
+            }
+
+            allNotes.push(
+              t("跳过未知步骤 op=" + op, "Skip unknown step op=" + op)
+            );
+            return nextStep();
+          }
+
+          return nextStep();
+        });
     }
 
     var chain =
@@ -2346,11 +2582,51 @@
                 webSkipped: webInfo.webSkipped || null,
                 webSearch: webInfo.webSearch || null,
               });
-              return postJson("/api/llm-chat", chatBody).then(function (chatPack) {
+
+              var afterChat;
+              if (wantForceFailGenerate()) {
+                allNotes.push(
+                  t(
+                    "③ 调试：强制模拟生成墙钟失败（llmForceFailGenerate=1）",
+                    "③ Debug: force-simulate generate wall-clock fail (llmForceFailGenerate=1)"
+                  )
+                );
+                afterChat = Promise.resolve({
+                  ok: false,
+                  status: 502,
+                  j: {
+                    success: false,
+                    wallClockFail: true,
+                    error: t(
+                      "（调试）强制模拟 Cloudflare HTML 502，用于测试失败恢复编排",
+                      "(debug) Forced Cloudflare HTML 502 to test recovery orchestration"
+                    ),
+                    notes: allNotes.slice(),
+                  },
+                });
+              } else {
+                afterChat = postJson("/api/llm-chat", chatBody);
+              }
+
+              return afterChat.then(function (chatPack) {
                 var cj = chatPack.j || {};
                 cj.notes = mergeNotes(allNotes, cj.notes);
                 chatPack.j = cj;
+                if (cj.success && cj.reply) {
+                  applyAssistantPack(chatPack, "");
+                  return null;
+                }
+                if (isWallClockFail(chatPack)) {
+                  return runRecoverPlan({
+                    intentObj: intentObj,
+                    webCtx: webInfo.webCtx || "",
+                    allNotes: cj.notes || allNotes,
+                    failReason: cj.error || "",
+                    failStatus: chatPack.status || 0,
+                  });
+                }
                 applyAssistantPack(chatPack, "");
+                return null;
               });
             });
           })

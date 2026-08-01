@@ -35,6 +35,8 @@ const DEFAULT_SETTINGS = {
   tavilySearchDepth: 0,
   /** 1=AI 助手气泡显示意图/调用跟踪；0=不显示 */
   llmShowPipelineTrace: 0,
+  /** 1=强制模拟③生成墙钟失败（测失败恢复）；0=正常 */
+  llmForceFailGenerate: 0,
 };
 
 function mergeSettings(saved) {
@@ -114,6 +116,12 @@ function sanitizeIncoming(incoming) {
       0,
       1,
       base.llmShowPipelineTrace
+    ),
+    llmForceFailGenerate: clampInt(
+      incoming.llmForceFailGenerate,
+      0,
+      1,
+      base.llmForceFailGenerate
     ),
     asrMicMode: clampInt(
       incoming.asrMicMode != null
