@@ -424,12 +424,12 @@ export function formatWebContext(pack, replyLang) {
   const via = pack.source === "hn" ? "Hacker News API" : "Tavily";
   lines.push(
     en
-      ? "Web materials (via " +
+      ? "CURRENT materials (via " +
         via +
-        "). List ONLY items below. Copy each title and URL verbatim — do not translate titles, do not invent, do not paraphrase into fake headlines. If asked for news and the list is present, answer by enumerating these items."
-      : "以下为联网材料（来源：" +
+        "). These ARE the latest/front-page items to report. Copy each title and URL verbatim. Do not say materials are empty."
+      : "【当前联网材料·来源：" +
         via +
-        "）。请只根据下列条目作答：标题与 URL 必须逐字复制，不要翻译标题、不要改写、不要编造。若用户问新闻/热门且下列有条目，请直接按列表逐条汇报。"
+        "】下列即为最新/首页热门条目，请逐条汇报。标题与 URL 逐字复制。禁止说材料为空或没有今天的新闻。"
   );
   lines.push("Query: " + (pack.query || ""));
   pack.results.forEach((r, i) => {

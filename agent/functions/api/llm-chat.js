@@ -244,11 +244,7 @@ function ocrPromptBlock(ocr, replyLang) {
   );
 }
 
-function systemPrompt(replyLang, ocr, webCtx) {
-  const hasWeb = !!(webCtx && String(webCtx).trim());
-  const webBlock = hasWeb
-    ? (replyLang === "en" ? "\n\n" : "\n\n") + String(webCtx).trim()
-    : "";
+function systemPrompt(replyLang, ocr, hasWeb) {
   if (replyLang === "en") {
     return (
       "You are the HZDV site assistant. Be concise and direct. " +
@@ -257,13 +253,14 @@ function systemPrompt(replyLang, ocr, webCtx) {
       "Ignore the site menu language." +
       (hasWeb
         ? " WEB MATERIALS RULES (mandatory): " +
-          "1) Use ONLY the web search materials below for time-sensitive or factual claims. " +
+          "1) Use ONLY the materials provided in the user message for time-sensitive or factual claims. " +
           "2) Do NOT invent titles, sites, headlines, or URLs. Every URL you cite must appear verbatim in the materials. " +
-          "3) If the materials do not contain what the user asked for, say clearly that it is not in the materials — do not fabricate examples or tell users to browse other sites instead. " +
-          "4) Prefer listing items that appear in the materials; copy titles and URLs exactly; do not translate titles."
+          "3) Say “not in the materials” ONLY if the materials are empty or clearly unrelated. " +
+          "If the materials already contain numbered items [1][2]… and the user asks for news/front page/HN/hot topics, you MUST list those items — never refuse with “no news today”. " +
+          "4) Copy titles and URLs exactly; do not translate English titles. " +
+          "5) A Hacker News / hot-list feed is current front-page news; treat it as today’s topics."
         : "") +
-      ocrPromptBlock(ocr, "en") +
-      webBlock
+      ocrPromptBlock(ocr, "en")
     );
   }
   return (
@@ -273,13 +270,14 @@ function systemPrompt(replyLang, ocr, webCtx) {
     "不要参考站点菜单语言。" +
     (hasWeb
       ? "【联网材料硬性规则】" +
-        "1）涉及新闻/实时/事实的内容，只能依据下方联网检索材料作答；" +
-        "2）禁止捏造标题、网站名或链接；凡写出的 URL 必须在材料中原样出现；" +
-        "3）若材料里没有用户要的内容，请明确说「材料里没有…」，不要编造示例或假新闻，也不要用「请自行打开某某网站」代替作答；" +
-        "4）有条目时请直接逐条列出：标题与 URL 逐字复制，不要翻译或改写英文标题。"
+        "1）涉及新闻/实时/事实，只能依据用户消息中附带的联网材料作答；" +
+        "2）禁止捏造标题、网站名或链接；URL 必须在材料中原样出现；" +
+        "3）仅当材料为空或与问题完全无关时，才说「材料里没有」。" +
+        "若材料已有 [1][2]… 编号条目，且用户在问新闻/热门/HN/今日，必须逐条列出，禁止用「没有今天的新闻」拒绝；" +
+        "4）标题与 URL 逐字复制，不要翻译英文标题；" +
+        "5）Hacker News / 热门列表即为当前最新热帖，可当作「今天」的新闻汇报。"
       : "") +
-    ocrPromptBlock(ocr, "zh") +
-    webBlock
+    ocrPromptBlock(ocr, "zh")
   );
 }
 
@@ -334,7 +332,21 @@ async function callModel(env, target, message, replyLang, ocr, useVision, webCtx
     !!useVision &&
     !!(ocr && ocr.visionImages && ocr.visionImages.length) &&
     !!(target.caps && target.caps.vision);
-  const userContent = buildUserContent(message, ocr, wantVision);
+  const hasWeb = !!(webCtx && String(webCtx).trim());
+  let userContent = buildUserContent(message, ocr, wantVision);
+  // 小模型对 user 里的材料更听话；有列表时避免误报「材料里没有」
+  if (hasWeb) {
+    const bridge =
+      replyLang === "en"
+        ? "\n\nUse the materials below. If they contain numbered items, list them — do not say the materials are empty or that there is no news today.\n\n"
+        : "\n\n请根据下列材料回答。若已有编号条目，必须逐条汇报；禁止说「材料里没有」或「没有今天的新闻」。\n\n";
+    const block = bridge + String(webCtx).trim();
+    if (typeof userContent === "string") {
+      userContent = userContent + block;
+    } else if (Array.isArray(userContent)) {
+      userContent = userContent.concat([{ type: "text", text: block }]);
+    }
+  }
   const proxy = llmProxyConfig(env);
   const timeoutMs =
     (opts && opts.timeoutMs) ||
@@ -348,10 +360,10 @@ async function callModel(env, target, message, replyLang, ocr, useVision, webCtx
     upstreamApiKey: proxy ? apiKey : null,
     model: target.modelId,
     messages: [
-      { role: "system", content: systemPrompt(replyLang, ocr, webCtx) },
+      { role: "system", content: systemPrompt(replyLang, ocr, hasWeb) },
       { role: "user", content: userContent },
     ],
-    temperature: 0.3,
+    temperature: hasWeb ? 0.1 : 0.3,
     max_tokens: maxTokens,
     timeoutMs,
   });
