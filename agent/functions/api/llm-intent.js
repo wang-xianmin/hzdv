@@ -64,14 +64,14 @@ export async function onRequest(context) {
     if (intent.tier) {
       notes.push(
         uiLang === "en"
-          ? "Intent → tier" +
+          ? "① Intent → tier" +
             intent.tier +
             (intent.web ? " +web" : "") +
             " · " +
             intent.latencyMs +
             "ms" +
             (intent.raw ? ' · raw "' + intent.raw + '"' : "")
-          : "意图分类 → tier" +
+          : "① 意图 → tier" +
             intent.tier +
             (intent.web ? " +web" : "") +
             " · " +
@@ -82,14 +82,14 @@ export async function onRequest(context) {
     } else {
       notes.push(
         uiLang === "en"
-          ? "Intent failed (" +
+          ? "① Intent failed (" +
             (intent.error || "error") +
             ")" +
             (intent.raw ? ' · raw "' + intent.raw + '"' : "") +
             " · " +
             (intent.latencyMs || 0) +
             "ms"
-          : "意图分类失败（" +
+          : "① 意图失败（" +
             (intent.error || "错误") +
             "）" +
             (intent.raw ? " · 原文「" + intent.raw + "」" : "") +
@@ -99,9 +99,13 @@ export async function onRequest(context) {
       );
     }
     notes.push(
-      uiLang === "en"
-        ? "Phase intent done → client will call /api/llm-chat"
-        : "意图阶段完成 → 前端将继续调用 /api/llm-chat"
+      intent.web
+        ? uiLang === "en"
+          ? "Step 1/3 intent done → next: web search"
+          : "① 意图完成 → 下一步：联网检索"
+        : uiLang === "en"
+          ? "Step 1/2 intent done → next: generate"
+          : "① 意图完成 → 下一步：生成回答"
     );
 
     return jsonResponse({

@@ -2252,17 +2252,17 @@
           }).then(function (intentPack) {
             var ij = intentPack.j || {};
             var allNotes = mergeNotes(ij.notes);
+            messages[thinkingIdx].text = t(
+              "① 意图完成，继续…",
+              "① Intent done…"
+            );
+            messages[thinkingIdx].modelBadge = "Auto · ①意图";
             if (allNotes.length && wantPipelineTrace()) {
-              messages[thinkingIdx].text = t(
-                "已完成意图分类…",
-                "Intent done…"
-              );
               messages[thinkingIdx].modelNote = formatPipelineNote({
                 notes: allNotes,
               });
-              messages[thinkingIdx].modelBadge = "Auto · intent";
-              renderThread();
             }
+            renderThread();
             if (!intentPack.ok || ij.success === false) {
               applyAssistantPack(intentPack, "");
               return null;
@@ -2284,10 +2284,10 @@
 
             if (needWeb) {
               messages[thinkingIdx].text = t(
-                "正在联网检索…",
-                "Searching the web…"
+                "② 正在联网检索…",
+                "② Searching the web…"
               );
-              messages[thinkingIdx].modelBadge = "Auto · web";
+              messages[thinkingIdx].modelBadge = "Auto · ②搜网";
               renderThread();
               afterWeb = postJson("/api/llm-websearch", {
                 phone: reqBody.phone,
@@ -2307,8 +2307,8 @@
                 if (!webPack.ok || wj.success === false) {
                   allNotes.push(
                     t(
-                      "搜网请求失败，将无联网材料继续生成",
-                      "Websearch request failed; continue without web context"
+                      "② 搜网请求失败，将无联网材料继续③生成",
+                      "② Websearch failed; continue to ③ generate without web"
                     )
                   );
                   return {
@@ -2328,10 +2328,10 @@
 
             return afterWeb.then(function (webInfo) {
               messages[thinkingIdx].text = t(
-                "正在生成回答…",
-                "Generating answer…"
+                "③ 正在生成回答…",
+                "③ Generating answer…"
               );
-              messages[thinkingIdx].modelBadge = "Auto · chat";
+              messages[thinkingIdx].modelBadge = "Auto · ③生成";
               if (wantPipelineTrace()) {
                 messages[thinkingIdx].modelNote = formatPipelineNote({
                   notes: allNotes,

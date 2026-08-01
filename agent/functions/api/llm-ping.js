@@ -13,6 +13,7 @@ import { pickKvBinding, kvBindingHint } from "../lib/host.js";
 import {
   chatCompletions,
   extractAssistantText,
+  llmProxyConfig,
   resolveApiKey,
 } from "../lib/openai-compat.js";
 import { describeDoubao, describeQwen } from "../lib/tier1.js";
@@ -134,9 +135,18 @@ export async function onRequest(context) {
     String(body.prompt || "").trim() ||
     "请只回复：pong。不要输出其它内容。";
 
+  /** 意图分类器已在 VPS，勿再套 llm-proxy；云端模型可走代理 */
+  const isIntent =
+    String(body.builtin || "") === "intent" ||
+    String(body.builtin || "") === "classifier" ||
+    String(target.apiKeyEnv || "") === "INTENT_API_KEY";
+  const proxy = isIntent ? null : llmProxyConfig(env);
+
   const result = await chatCompletions({
-    baseUrl: target.baseUrl,
-    apiKey,
+    baseUrl: proxy ? proxy.baseUrl : target.baseUrl,
+    apiKey: proxy ? proxy.apiKey : apiKey,
+    upstreamBaseUrl: proxy ? target.baseUrl : null,
+    upstreamApiKey: proxy ? apiKey : null,
     model: target.modelId,
     messages: [
       { role: "system", content: "你是连通性测试助手。" },
@@ -144,7 +154,7 @@ export async function onRequest(context) {
     ],
     temperature: 0,
     max_tokens: 64,
-    timeoutMs: 45000,
+    timeoutMs: proxy ? 90000 : 45000,
   });
 
   const reply = extractAssistantText(result.data);
@@ -155,6 +165,7 @@ export async function onRequest(context) {
       reply: reply || "",
       upstreamStatus: result.status,
       error: result.error || null,
+      viaProxy: !!proxy,
       target: {
         id: target.id || null,
         label: target.label,

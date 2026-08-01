@@ -1,0 +1,20 @@
+# 在 VPS / Mac 上启动 LLM 云端转发代理
+# 用法：
+#   cd services/llm-proxy
+#   echo 'LLM_PROXY_API_KEY=换成你的密钥' > .env
+#   docker compose up -d --build
+#   curl http://127.0.0.1:8092/health
+
+services:
+  llm-proxy:
+    build: .
+    image: hzdv-llm-proxy:latest
+    container_name: hzdv-llm-proxy
+    ports:
+      - "${LLM_PROXY_PUBLISH_PORT:-8092}:8092"
+    environment:
+      LLM_PROXY_API_KEY: "${LLM_PROXY_API_KEY:-}"
+      LLM_PROXY_CORS_ORIGINS: "${LLM_PROXY_CORS_ORIGINS:-*}"
+      LLM_PROXY_UPSTREAM_TIMEOUT: "${LLM_PROXY_UPSTREAM_TIMEOUT:-120}"
+      LLM_PROXY_CONNECT_TIMEOUT: "${LLM_PROXY_CONNECT_TIMEOUT:-15}"
+    restart: unless-stopped

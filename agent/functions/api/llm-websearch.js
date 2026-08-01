@@ -69,7 +69,7 @@ export async function onRequest(context) {
 
   if (!want) {
     notes.push(
-      uiLang === "en" ? "Web search skipped (not needed)" : "联网检索跳过（不需要）"
+      uiLang === "en" ? "② Web search skipped (not needed)" : "② 联网检索跳过（不需要）"
     );
     return jsonResponse({
       success: true,
@@ -84,8 +84,8 @@ export async function onRequest(context) {
   if (!tavilyConfigured(env)) {
     notes.push(
       uiLang === "en"
-        ? "Web search needed but TAVILY_API_KEY is not set"
-        : "问题可能需要联网，但未配置 TAVILY_API_KEY"
+        ? "② Web search needed but TAVILY_API_KEY is not set"
+        : "② 需要联网，但未配置 TAVILY_API_KEY"
     );
     return jsonResponse({
       success: true,
@@ -114,8 +114,8 @@ export async function onRequest(context) {
     if (!pack.ok) {
       notes.push(
         uiLang === "en"
-          ? "Tavily failed: " + (pack.error || "error") + " (" + pack.latencyMs + "ms)"
-          : "Tavily 检索失败：" + (pack.error || "错误") + "（" + pack.latencyMs + "ms）"
+          ? "② Tavily failed: " + (pack.error || "error") + " (" + pack.latencyMs + "ms)"
+          : "② Tavily 失败：" + (pack.error || "错误") + "（" + pack.latencyMs + "ms）"
       );
       return jsonResponse({
         success: true,
@@ -135,14 +135,14 @@ export async function onRequest(context) {
     const webCtx = formatWebContext(pack, replyLang);
     notes.push(
       uiLang === "en"
-        ? "Tavily: " +
+        ? "② Tavily: " +
           pack.results.length +
           " sources · " +
           searchDepth +
           " (" +
           pack.latencyMs +
           "ms)"
-        : "联网检索 Tavily：" +
+        : "② Tavily：" +
           pack.results.length +
           " 条 · " +
           searchDepth +
@@ -152,8 +152,8 @@ export async function onRequest(context) {
     );
     notes.push(
       uiLang === "en"
-        ? "Phase websearch done → client will call /api/llm-chat"
-        : "搜网阶段完成 → 前端将继续调用 /api/llm-chat"
+        ? "Step 2/3 web search done → next: generate"
+        : "② 搜网完成 → 下一步：生成回答"
     );
 
     return jsonResponse({

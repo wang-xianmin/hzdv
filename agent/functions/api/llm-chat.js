@@ -10,6 +10,7 @@
  *   tier1 → [1,2,3]，tier2 → [2,3,1]，tier3 → [3,2,1]
  * 分类器标 web、关键词启发式或 body.webSearch=true 时先 Tavily 搜网再注入 system。
  * 前端 Auto 推荐：先 POST /api/llm-intent，再本接口并带 body.intent 复用分类结果（缩短单次墙钟）。
+ * 若配置 LLM_PROXY_SERVICE_URL，③ 生成经 VPS llm-proxy 转发云端（意图分类仍走 INTENT_*）。
  * 分类器未配置或失败时从第一梯队开始。梯队内顺序即模型库里的排序，与菜单语言无关。
  * 回复语言只看提问语言。需要联网时配 TAVILY_API_KEY。
  *
@@ -30,6 +31,7 @@ import { loadLlmModels } from "../lib/llm-models-store.js";
 import {
   chatCompletions,
   extractAssistantText,
+  llmProxyConfig,
   resolveApiKey,
 } from "../lib/openai-compat.js";
 import { detectTextLang, normalizeUiLang } from "../lib/tier1.js";
@@ -322,13 +324,17 @@ async function callModel(env, target, message, replyLang, ocr, useVision, webCtx
     !!(ocr && ocr.visionImages && ocr.visionImages.length) &&
     !!(target.caps && target.caps.vision);
   const userContent = buildUserContent(message, ocr, wantVision);
+  const proxy = llmProxyConfig(env);
   const timeoutMs =
-    (opts && opts.timeoutMs) || (wantVision ? 55000 : 28000);
+    (opts && opts.timeoutMs) ||
+    (proxy ? (wantVision ? 90000 : 60000) : wantVision ? 55000 : 28000);
   const maxTokens =
     (opts && opts.maxTokens) || (wantVision ? 2048 : 1024);
   const result = await chatCompletions({
-    baseUrl: target.baseUrl,
-    apiKey,
+    baseUrl: proxy ? proxy.baseUrl : target.baseUrl,
+    apiKey: proxy ? proxy.apiKey : apiKey,
+    upstreamBaseUrl: proxy ? target.baseUrl : null,
+    upstreamApiKey: proxy ? apiKey : null,
     model: target.modelId,
     messages: [
       { role: "system", content: systemPrompt(replyLang, ocr, webCtx) },
@@ -350,7 +356,12 @@ async function callModel(env, target, message, replyLang, ocr, useVision, webCtx
         "」是否已在百炼/方舟开通，以及 ALIYUN_MAAS_API_KEY 是否有权访问该模型）",
     };
   }
-  return { ...result, reply, usedVision: wantVision };
+  return {
+    ...result,
+    reply,
+    usedVision: wantVision,
+    viaProxy: !!proxy,
+  };
 }
 
 /**
@@ -552,17 +563,31 @@ async function handleLlmChat(env, body) {
 
   const attempts = [];
   const notes = [];
+  const proxy = llmProxyConfig(env);
   /**
    * 墙钟预算：仅用于在 Cloudflare 掐断前尽量返回 JSON。
-   * 分阶段（已带 intent / webCtx）时预算更紧，本请求应只剩 LLM。
+   * 经 VPS llm-proxy 时放宽（上游慢活在 VPS，路径更稳）；否则分阶段收紧。
    */
-  const budgetMs =
-    body.webProvided === true || Object.prototype.hasOwnProperty.call(body, "intent")
+  const budgetMs = proxy
+    ? Object.prototype.hasOwnProperty.call(body, "intent") ||
+      body.webProvided === true
+      ? 90000
+      : 95000
+    : body.webProvided === true ||
+        Object.prototype.hasOwnProperty.call(body, "intent")
       ? 22000
       : 45000;
   const t0 = Date.now();
   function remMs() {
     return budgetMs - (Date.now() - t0);
+  }
+
+  if (proxy) {
+    notes.push(
+      uiLang === "en"
+        ? "③ Generate via VPS llm-proxy → cloud LLM"
+        : "③ 生成经 VPS llm-proxy → 云端 LLM"
+    );
   }
 
   const tier1Cands = registryCandidates(env, models, [1]);
@@ -585,16 +610,14 @@ async function handleLlmChat(env, body) {
     };
     notes.push(
       uiLang === "en"
-        ? "Intent (from /api/llm-intent) → " +
+        ? "③ Generate: using intent from step 1 → " +
           (intent.tier
             ? "tier" + intent.tier + (intent.web ? " +web" : "")
-            : "none") +
-          (intent.raw ? ' · raw "' + intent.raw + '"' : "")
-        : "意图分类（复用 /api/llm-intent）→ " +
+            : "none")
+        : "③ 生成：沿用第①步意图 → " +
           (intent.tier
             ? "tier" + intent.tier + (intent.web ? " +web" : "")
-            : "无有效分级") +
-          (intent.raw ? " · 原文「" + intent.raw + "」" : "")
+            : "无有效分级")
     );
   } else {
     const classifyText =
@@ -640,9 +663,14 @@ async function handleLlmChat(env, body) {
   }
 
   notes.push(
-    uiLang === "en"
-      ? "Wall budget " + budgetMs + "ms · left " + remMs() + "ms after intent"
-      : "墙钟预算 " + budgetMs + "ms · 分类后剩余 " + remMs() + "ms"
+    Object.prototype.hasOwnProperty.call(body, "intent") ||
+      body.webProvided === true
+      ? uiLang === "en"
+        ? "③ Generate wall budget " + budgetMs + "ms"
+        : "③ 生成阶段墙钟预算 " + budgetMs + "ms"
+      : uiLang === "en"
+        ? "Wall budget " + budgetMs + "ms · left " + remMs() + "ms after intent"
+        : "墙钟预算 " + budgetMs + "ms · 分类后剩余 " + remMs() + "ms"
   );
 
   /** 前端可先调 /api/llm-websearch，再带 webCtx / webProvided，本请求跳过 Tavily */
@@ -658,11 +686,11 @@ async function handleLlmChat(env, body) {
         body.webNote ||
         (uiLang === "en"
           ? ctx
-            ? "Web context reused from /api/llm-websearch"
-            : "Web search reused (empty) from /api/llm-websearch"
+            ? "③ Generate: using web context from step 2"
+            : "③ Generate: no web context from step 2"
           : ctx
-            ? "联网材料（复用 /api/llm-websearch）"
-            : "联网材料（复用，空）"),
+            ? "③ 生成：沿用第②步联网材料"
+            : "③ 生成：第②步无联网材料"),
     };
   } else {
     web = await resolveWebContext(env, message, replyLang, {
@@ -674,6 +702,10 @@ async function handleLlmChat(env, body) {
   }
   if (web.note) notes.push(web.note);
   const webCtx = web.webCtx || "";
+
+  const phased =
+    Object.prototype.hasOwnProperty.call(body, "intent") ||
+    body.webProvided === true;
 
   // 图片 OCR：排版硬校验只做下限（不降级）。
   // PDF：提取已准备文本/渲图，对话梯队交给意图分类（文档+用户问题），
@@ -695,10 +727,12 @@ async function handleLlmChat(env, body) {
   if (routeTier) {
     notes.push(
       uiLang === "en"
-        ? "Route → tier" +
+        ? (phased ? "③ " : "") +
+          "Route → tier" +
           routeTier +
           (routeBits.length ? " (" + routeBits.join("; ") + ")" : "")
-        : "路由 → tier" +
+        : (phased ? "③ " : "") +
+          "路由 → tier" +
           routeTier +
           (routeBits.length ? "（" + routeBits.join("；") + "）" : "")
     );
@@ -727,18 +761,14 @@ async function handleLlmChat(env, body) {
     ? callModel(env, primary.target, message, replyLang, ocr, false, "")
     : null;
 
-  const phased =
-    Object.prototype.hasOwnProperty.call(body, "intent") ||
-    body.webProvided === true;
-
   /** 分阶段且已有检索材料：优先快模型总结，并截断上下文，避免 CF 墙钟 HTML 502 */
   let webCtxForCall = webCtx;
   if (phased && webCtxForCall && webCtxForCall.length > 3500) {
     webCtxForCall = webCtxForCall.slice(0, 3500) + "\n…(truncated)";
     notes.push(
       uiLang === "en"
-        ? "Web context truncated to 3500 chars for generate phase"
-        : "生成阶段将联网材料截断至 3500 字"
+        ? "③ Generate: web context truncated to 3500 chars"
+        : "③ 生成：联网材料已截断至 3500 字"
     );
   }
 
@@ -747,8 +777,8 @@ async function handleLlmChat(env, body) {
     queue = registryCandidates(env, models, [1, 2], false);
     notes.push(
       uiLang === "en"
-        ? "Generate phase → prefer tier1 then tier2 (web summarize)"
-        : "生成阶段 → 优先 tier1 再 tier2（总结检索）"
+        ? "③ Generate → prefer tier1 then tier2 (summarize search)"
+        : "③ 生成 → 优先 tier1 再 tier2（总结检索）"
     );
   } else if (routeTier === 2) {
     queue = registryCandidates(env, models, [2, 3, 1], preferVision);
@@ -805,19 +835,24 @@ async function handleLlmChat(env, body) {
   }
 
   let lastFail = null;
-  /** 分阶段：单次快调；超时必须短于 CF 墙钟，确保返回 JSON 而非 HTML 502 */
+  /** 分阶段：有代理时可等多一点；无代理仍短超时防 CF HTML 502 */
   const maxAttempts = phased ? 1 : webCtxForCall ? 2 : 4;
   const callOpts = phased
-    ? { timeoutMs: Math.min(12000, Math.max(5000, remMs() - 2000)), maxTokens: 500 }
+    ? {
+        timeoutMs: proxy
+          ? Math.min(75000, Math.max(20000, remMs() - 3000))
+          : Math.min(12000, Math.max(5000, remMs() - 2000)),
+        maxTokens: 500,
+      }
     : null;
   notes.push(
     uiLang === "en"
-      ? "LLM timeout budget " +
-        ((callOpts && callOpts.timeoutMs) || 28000) +
+      ? "③ LLM timeout budget " +
+        ((callOpts && callOpts.timeoutMs) || (proxy ? 60000 : 28000)) +
         "ms · attempts " +
         maxAttempts
-      : "LLM 超时预算 " +
-        ((callOpts && callOpts.timeoutMs) || 28000) +
+      : "③ LLM 超时预算 " +
+        ((callOpts && callOpts.timeoutMs) || (proxy ? 60000 : 28000)) +
         "ms · 尝试 " +
         maxAttempts +
         " 次"
@@ -844,8 +879,12 @@ async function handleLlmChat(env, body) {
   for (const { target, via } of queue.slice(0, maxAttempts)) {
     const tCall = Date.now();
     const hardMs = phased
-      ? Math.min(14000, Math.max(6000, remMs() - 1000))
-      : 60000;
+      ? proxy
+        ? Math.min(80000, Math.max(25000, remMs() - 2000))
+        : Math.min(14000, Math.max(6000, remMs() - 1000))
+      : proxy
+        ? 95000
+        : 60000;
     const modelPromise =
       primaryPromise && primary && target.id === primary.target.id
         ? primaryPromise

@@ -15,6 +15,18 @@ export function normalizeBaseUrl(baseUrl) {
     .replace(/\/+$/, "");
 }
 
+/**
+ * 若配置了 LLM_PROXY_SERVICE_URL + LLM_PROXY_API_KEY，
+ * 云端生成经 VPS 长超时转发（意图分类器仍直连 INTENT_*）。
+ * @returns {{ baseUrl: string, apiKey: string } | null}
+ */
+export function llmProxyConfig(env) {
+  const baseUrl = normalizeBaseUrl(env && env.LLM_PROXY_SERVICE_URL);
+  const apiKey = String((env && env.LLM_PROXY_API_KEY) || "").trim();
+  if (!baseUrl || !apiKey) return null;
+  return { baseUrl, apiKey };
+}
+
 function stringifyErr(v) {
   if (v == null || v === "") return "";
   if (typeof v === "string") return v;
@@ -79,6 +91,10 @@ export async function chatCompletions({
   max_tokens = 256,
   timeoutMs = 45000,
   extraBody = null,
+  /** 经 VPS llm-proxy 时：真实云端 baseUrl */
+  upstreamBaseUrl = null,
+  /** 经 VPS llm-proxy 时：真实云端 API Key */
+  upstreamApiKey = null,
 }) {
   const base = normalizeBaseUrl(baseUrl);
   if (!base) {
@@ -91,6 +107,20 @@ export async function chatCompletions({
     return { ok: false, status: 0, data: null, latencyMs: 0, error: "缺少 model" };
   }
 
+  const viaProxy = !!(upstreamBaseUrl && upstreamApiKey);
+  if (viaProxy) {
+    const up = normalizeBaseUrl(upstreamBaseUrl);
+    if (!up) {
+      return {
+        ok: false,
+        status: 0,
+        data: null,
+        latencyMs: 0,
+        error: "缺少 upstreamBaseUrl",
+      };
+    }
+  }
+
   const url = base + "/chat/completions";
   const started = Date.now();
   const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
@@ -100,12 +130,17 @@ export async function chatCompletions({
   }
 
   try {
+    const headers = {
+      Authorization: "Bearer " + apiKey,
+      "Content-Type": "application/json",
+    };
+    if (viaProxy) {
+      headers["X-Upstream-Base-Url"] = normalizeBaseUrl(upstreamBaseUrl);
+      headers["X-Upstream-Api-Key"] = String(upstreamApiKey);
+    }
     const res = await fetch(url, {
       method: "POST",
-      headers: {
-        Authorization: "Bearer " + apiKey,
-        "Content-Type": "application/json",
-      },
+      headers,
       body: JSON.stringify({
         model,
         messages: messages || [{ role: "user", content: "ping" }],

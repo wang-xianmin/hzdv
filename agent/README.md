@@ -58,6 +58,8 @@ agent/
 | `DEEPSEEK_API_KEY` | DeepSeek 官方 |
 | `OCR_SERVICE_URL` / `OCR_API_KEY` | OCR 代理 |
 | `ASR_SERVICE_URL` / `ASR_API_KEY` | ASR（sherpa-onnx）代理 |
+| `INTENT_SERVICE_URL` / `INTENT_API_KEY` | 意图分类（VPS llama.cpp） |
+| `LLM_PROXY_SERVICE_URL` / `LLM_PROXY_API_KEY` | **可选**。③ 生成经 VPS 长超时转发云端 LLM（见 `services/llm-proxy/`）。未配则 CF 直连云厂商 |
 | `TAVILY_API_KEY` | 联网检索密钥（Secret）。条数/深度在**系统设置 → 联网检索**调，也可被 env `TAVILY_MAX_RESULTS` / `TAVILY_SEARCH_DEPTH` 兜底 |
 | 各模型 `apiKeyEnv` 指向的 Secret | 第二/三梯队 |
 
@@ -86,6 +88,18 @@ Python + sherpa-onnx（Next-gen Kaldi ONNX）跑在仓库 `services/asr/`（Dock
 4. AI 助手麦克风：点一下开始录音（按钮变红脉冲），再点结束 → 识别结果写入输入框；也可上传 wav/mp3 等音频文件  
 
 与 OCR 一样：CF 上只跑代理，模型与推理在 VPS；多个 CF 项目可共用同一 ASR 服务。
+
+## 与 LLM Proxy 的关系
+
+③ 生成默认由 CF 直连 SiliconFlow / 豆包等。若配置了 `LLM_PROXY_*`：
+
+```text
+浏览器 → CF /api/llm-chat → VPS :8092/v1 → 云端 LLM
+```
+
+- 仓库：`services/llm-proxy/`（Docker，默认 `8092`）
+- 云厂商密钥仍在 CF Secrets；VPS 用 `X-Upstream-*` 头转发，上游超时默认 120s
+- 意图分类器（`INTENT_*`）不走本代理
 
 ## Auto 选模与回复语言
 
