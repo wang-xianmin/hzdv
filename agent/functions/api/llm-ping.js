@@ -13,11 +13,11 @@ import { pickKvBinding, kvBindingHint } from "../lib/host.js";
 import {
   chatCompletions,
   extractAssistantText,
-  llmProxyConfig,
   resolveApiKey,
 } from "../lib/openai-compat.js";
 import { describeDoubao, describeQwen } from "../lib/tier1.js";
 import { intentTarget } from "../lib/intent.js";
+import { resolveGenerateProxy } from "../lib/route-mode.js";
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -135,12 +135,17 @@ export async function onRequest(context) {
     String(body.prompt || "").trim() ||
     "请只回复：pong。不要输出其它内容。";
 
-  /** 意图分类器已在 VPS，勿再套 llm-proxy；云端模型可走代理 */
+  /** 意图分类器已在 VPS，勿再套 llm-proxy；方案二 / CF 模式一律直连云端 */
   const isIntent =
     String(body.builtin || "") === "intent" ||
     String(body.builtin || "") === "classifier" ||
     String(target.apiKeyEnv || "") === "INTENT_API_KEY";
-  const proxy = isIntent ? null : llmProxyConfig(env);
+  const proxy = isIntent
+    ? null
+    : resolveGenerateProxy(
+        env,
+        body.systemSettings || body.system_settings || {}
+      );
 
   const result = await chatCompletions({
     baseUrl: proxy ? proxy.baseUrl : target.baseUrl,

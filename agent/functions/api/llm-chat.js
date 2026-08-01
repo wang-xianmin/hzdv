@@ -31,11 +31,11 @@ import { loadLlmModels } from "../lib/llm-models-store.js";
 import {
   chatCompletions,
   extractAssistantText,
-  llmProxyConfig,
   resolveApiKey,
 } from "../lib/openai-compat.js";
 import { detectTextLang, normalizeUiLang } from "../lib/tier1.js";
 import { classifyIntent } from "../lib/intent.js";
+import { resolveGenerateProxy, resolveRouteMode } from "../lib/route-mode.js";
 import {
   formatWebContext,
   heuristicNeedsWeb,
@@ -358,7 +358,8 @@ async function callModel(env, target, message, replyLang, ocr, useVision, webCtx
       userContent = userContent.concat([{ type: "text", text: block }]);
     }
   }
-  const proxy = llmProxyConfig(env);
+  const systemSettings = (opts && opts.systemSettings) || {};
+  const proxy = resolveGenerateProxy(env, systemSettings);
   const timeoutMs =
     (opts && opts.timeoutMs) ||
     (proxy ? (wantVision ? 90000 : 60000) : wantVision ? 55000 : 28000);
@@ -562,6 +563,8 @@ async function handleLlmChat(env, body) {
     return jsonResponse({ success: false, error: "KV not configured", hint: kvBindingHint() }, 503);
   }
   const { models } = await loadLlmModels(kv, env);
+  const systemSettings = body.systemSettings || body.system_settings || {};
+  const routeMode = resolveRouteMode(systemSettings, env);
 
   if (wantId !== "auto") {
     const hit = (models || []).find((m) => m.id === wantId);
@@ -573,10 +576,17 @@ async function handleLlmChat(env, body) {
     const web = await resolveWebContext(env, message, replyLang, {
       force: forceWeb,
       intentWeb: false,
-      systemSettings: body.systemSettings || body.system_settings || {},
+      systemSettings,
     });
     const notes = [];
     if (web.note) notes.push(web.note);
+    if (routeMode === "cf") {
+      notes.push(
+        uiLang === "en"
+          ? "Route mode → cf (CF → cloud LLM)"
+          : "路由模式 → cf（CF 直调云端）"
+      );
+    }
     const result = await callModel(
       env,
       hit,
@@ -584,7 +594,8 @@ async function handleLlmChat(env, body) {
       replyLang,
       ocr,
       useVision,
-      web.webCtx || ""
+      web.webCtx || "",
+      { systemSettings }
     );
     if (result.usedVision) {
       notes.push(
@@ -608,7 +619,7 @@ async function handleLlmChat(env, body) {
 
   const attempts = [];
   const notes = [];
-  const proxy = llmProxyConfig(env);
+  const proxy = resolveGenerateProxy(env, systemSettings);
   /**
    * 墙钟预算：仅用于在 Cloudflare 掐断前尽量返回 JSON。
    * 经 VPS llm-proxy 时放宽（上游慢活在 VPS，路径更稳）；否则分阶段收紧。
@@ -627,11 +638,23 @@ async function handleLlmChat(env, body) {
     return budgetMs - (Date.now() - t0);
   }
 
+  notes.push(
+    uiLang === "en"
+      ? "③ Route mode → " + routeMode
+      : "③ 路由模式 → " +
+        (routeMode === "cf" ? "cf（国内/直调）" : "vps")
+  );
   if (proxy) {
     notes.push(
       uiLang === "en"
         ? "③ Generate via VPS llm-proxy → cloud LLM"
         : "③ 生成经 VPS llm-proxy → 云端 LLM"
+    );
+  } else if (routeMode === "cf") {
+    notes.push(
+      uiLang === "en"
+        ? "③ Generate: CF → cloud LLM (no VPS proxy)"
+        : "③ 生成：CF 直调云端（不经 VPS proxy）"
     );
   }
 
@@ -667,7 +690,11 @@ async function handleLlmChat(env, body) {
   } else {
     const classifyText =
       ocr.present && ocr.text ? message + "\n" + ocr.text : message;
-    intent = await classifyIntent(env, classifyText);
+    intent = await classifyIntent(env, classifyText, {
+      routeMode,
+      systemSettings,
+      models,
+    });
     if (intent.tier) {
       notes.push(
         uiLang === "en"
@@ -741,7 +768,7 @@ async function handleLlmChat(env, body) {
     web = await resolveWebContext(env, message, replyLang, {
       force: forceWeb || !!intent.web,
       intentWeb: !!intent.web,
-      systemSettings: body.systemSettings || body.system_settings || {},
+      systemSettings,
       timeoutMs: 12000,
     });
   }
@@ -803,7 +830,9 @@ async function handleLlmChat(env, body) {
   // 有附件或已搜网时不预热 tier1：上下文已变，预热会答非所问
   const primary = ocr.present || webCtx ? null : tier1Cands[0] || null;
   const primaryPromise = primary
-    ? callModel(env, primary.target, message, replyLang, ocr, false, "")
+    ? callModel(env, primary.target, message, replyLang, ocr, false, "", {
+        systemSettings,
+      })
     : null;
 
   /** 分阶段且已有检索材料：优先快模型总结，并截断上下文，避免 CF 墙钟 HTML 502 */
@@ -888,14 +917,17 @@ async function handleLlmChat(env, body) {
   let lastFail = null;
   /** 分阶段：有代理时可等多一点；无代理仍短超时防 CF HTML 502 */
   const maxAttempts = phased ? 1 : webCtxForCall ? 2 : 4;
-  const callOpts = phased
-    ? {
-        timeoutMs: proxy
-          ? Math.min(75000, Math.max(20000, remMs() - 3000))
-          : Math.min(12000, Math.max(5000, remMs() - 2000)),
-        maxTokens: 500,
-      }
-    : null;
+  const callOpts = Object.assign(
+    { systemSettings },
+    phased
+      ? {
+          timeoutMs: proxy
+            ? Math.min(75000, Math.max(20000, remMs() - 3000))
+            : Math.min(12000, Math.max(5000, remMs() - 2000)),
+          maxTokens: 500,
+        }
+      : {}
+  );
   notes.push(
     uiLang === "en"
       ? "③ LLM timeout budget " +

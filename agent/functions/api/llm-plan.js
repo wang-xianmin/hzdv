@@ -22,10 +22,10 @@ import { loadLlmModels } from "../lib/llm-models-store.js";
 import {
   chatCompletions,
   extractAssistantText,
-  llmProxyConfig,
   resolveApiKey,
 } from "../lib/openai-compat.js";
 import { normalizeUiLang } from "../lib/tier1.js";
+import { resolveGenerateProxy, resolveRouteMode } from "../lib/route-mode.js";
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -206,7 +206,9 @@ export async function onRequest(context) {
 
   const target = cands[0];
   const apiKey = resolveApiKey(env, target.apiKeyEnv);
-  const proxy = llmProxyConfig(env);
+  const systemSettings = body.systemSettings || body.system_settings || {};
+  const routeMode = resolveRouteMode(systemSettings, env);
+  const proxy = resolveGenerateProxy(env, systemSettings);
 
   const sys =
     uiLang === "en"
@@ -272,6 +274,12 @@ export async function onRequest(context) {
   }
   // 再取舍一遍（兜底步骤也统一走规则）
   steps = pruneStepsForContext(steps, hasWebCtx, uiLang, notes);
+  notes.push(
+    uiLang === "en"
+      ? "Plan route mode → " + routeMode
+      : "规划路由模式 → " +
+        (routeMode === "cf" ? "cf（直调）" : "vps")
+  );
   if (proxy) {
     notes.push(
       uiLang === "en" ? "Plan via VPS llm-proxy" : "规划经 VPS llm-proxy"

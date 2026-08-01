@@ -9,9 +9,12 @@
 import {
   assertAnyLoginAccess,
   opsAuthErrorResponse,
+  pickKvBinding,
 } from "../lib/host.js";
 import { detectTextLang, normalizeUiLang } from "../lib/tier1.js";
 import { classifyIntent } from "../lib/intent.js";
+import { resolveRouteMode } from "../lib/route-mode.js";
+import { loadLlmModels } from "../lib/llm-models-store.js";
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -57,10 +60,41 @@ export async function onRequest(context) {
   const replyLang = detectTextLang(message, uiLang);
   const ocr = normalizeOcrForClassify(body.ocr);
   const classifyText = ocr.present ? message + "\n" + ocr.text : message;
+  const systemSettings = body.systemSettings || body.system_settings || {};
+  const routeMode = resolveRouteMode(systemSettings, env);
+
+  let models = [];
+  if (routeMode === "cf") {
+    try {
+      const kv = pickKvBinding(env);
+      if (kv) {
+        const loaded = await loadLlmModels(kv, env);
+        models = loaded.models || [];
+      }
+    } catch (eModels) {
+      models = [];
+    }
+  }
 
   try {
-    const intent = await classifyIntent(env, classifyText);
+    const intent = await classifyIntent(env, classifyText, {
+      routeMode,
+      systemSettings,
+      models,
+    });
     const notes = [];
+    notes.push(
+      uiLang === "en"
+        ? "① Route mode → " + routeMode
+        : "① 路由模式 → " + (routeMode === "cf" ? "cf（国内/直调）" : "vps")
+    );
+    if (intent.via || intent.label) {
+      notes.push(
+        uiLang === "en"
+          ? "① Classifier → " + (intent.label || intent.via || "")
+          : "① 分类器 → " + (intent.label || intent.via || "")
+      );
+    }
     if (intent.tier) {
       notes.push(
         uiLang === "en"
@@ -111,21 +145,23 @@ export async function onRequest(context) {
     return jsonResponse({
       success: true,
       phase: "intent",
+      routeMode,
       intent: {
         tier: intent.tier,
         web: !!intent.web,
         latencyMs: intent.latencyMs || 0,
         raw: intent.raw || "",
         error: intent.error || null,
+        via: intent.via || null,
       },
       notes,
       latencyMs: intent.latencyMs || 0,
       model: {
         id: "auto",
-        label: "Auto",
+        label: intent.label || "Auto",
         modelId: "",
         tier: intent.tier || 0,
-        via: "intent",
+        via: intent.via || "intent",
         uiLang,
         replyLang,
       },

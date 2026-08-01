@@ -61,8 +61,9 @@ agent/
 | `DEEPSEEK_API_KEY` | DeepSeek 官方 |
 | `OCR_SERVICE_URL` / `OCR_API_KEY` | OCR 代理 |
 | `ASR_SERVICE_URL` / `ASR_API_KEY` | ASR（sherpa-onnx）代理 |
-| `INTENT_SERVICE_URL` / `INTENT_API_KEY` | 意图分类（VPS llama.cpp） |
-| `LLM_PROXY_SERVICE_URL` / `LLM_PROXY_API_KEY` | **可选**。③ 生成经 VPS 长超时转发云端 LLM（见 `services/llm-proxy/`）。未配则 CF 直连云厂商 |
+| `INTENT_SERVICE_URL` / `INTENT_API_KEY` | 意图分类（方案一：VPS llama.cpp 1.5B） |
+| `LLM_PROXY_SERVICE_URL` / `LLM_PROXY_API_KEY` | **可选**。方案一：③ 生成经 VPS 长超时转发云端 LLM（见 `services/llm-proxy/`）。方案二强制不走代理 |
+| `LLM_ROUTE_MODE` | **可选**。`vps`（默认）或 `cf`。也可在系统设置 `llmRouteMode`：`0=vps` / `1=cf` |
 | `TAVILY_API_KEY` | 联网检索密钥（Secret）。条数/深度在**系统设置 → 联网检索**调，也可被 env `TAVILY_MAX_RESULTS` / `TAVILY_SEARCH_DEPTH` 兜底 |
 | 各模型 `apiKeyEnv` 指向的 Secret | 第二/三梯队 |
 
@@ -94,7 +95,10 @@ Python + sherpa-onnx（Next-gen Kaldi ONNX）跑在仓库 `services/asr/`（Dock
 
 ## 与 LLM Proxy 的关系
 
-③ 生成默认由 CF 直连 SiliconFlow / 豆包等。若配置了 `LLM_PROXY_*`：
+### 方案一（`llmRouteMode=0` / `LLM_ROUTE_MODE=vps`，默认）
+
+① 意图：CF → VPS `INTENT_*`（1.5B）  
+③ 生成：若配置了 `LLM_PROXY_*`：
 
 ```text
 浏览器 → CF /api/llm-chat → VPS :8092/v1 → 云端 LLM
@@ -103,6 +107,17 @@ Python + sherpa-onnx（Next-gen Kaldi ONNX）跑在仓库 `services/asr/`（Dock
 - 仓库：`services/llm-proxy/`（Docker，默认 `8092`）
 - 云厂商密钥仍在 CF Secrets；VPS 用 `X-Upstream-*` 头转发，上游超时默认 120s
 - 意图分类器（`INTENT_*`）不走本代理
+
+未配 `LLM_PROXY_*` 时，③ 也是 CF 直连云厂商。
+
+### 方案二（`llmRouteMode=1` / `LLM_ROUTE_MODE=cf`，国内友好）
+
+全程不依赖公网可达的 VPS：
+
+① 意图：CF 直调云端 **7B**（优先模型库 Qwen2.5-7B，否则 `SILICONFLOW` + `QWEN_LITE_MODEL`）  
+③ 生成：**强制** CF 直调云端（忽略 `LLM_PROXY_*`）
+
+系统参数 → AI助手 → `llmRouteMode` 可热切换；请求里的 `systemSettings` 优先于 env。
 
 ## 失败恢复编排（Auto）
 
