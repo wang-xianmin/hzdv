@@ -424,6 +424,8 @@ async function callModel(env, target, message, replyLang, ocr, useVision, webCtx
   });
   const reply = extractAssistantText(result.data) || "";
   if (result.ok && !String(reply).trim()) {
+    const keyHint = target.apiKeyEnv || "(未配置 apiKeyEnv)";
+    const host = String(target.baseUrl || "").replace(/^https?:\/\//, "").split("/")[0] || "(无 baseUrl)";
     return {
       ...result,
       ok: false,
@@ -431,7 +433,11 @@ async function callModel(env, target, message, replyLang, ocr, useVision, webCtx
       error:
         "上游返回空内容（检查 Model ID「" +
         (target.modelId || "") +
-        "」是否已在百炼/方舟开通，以及 ALIYUN_MAAS_API_KEY 是否有权访问该模型）",
+        "」、baseUrl「" +
+        host +
+        "」、密钥环境变量「" +
+        keyHint +
+        "」是否匹配该厂商）",
     };
   }
   return {
@@ -913,6 +919,37 @@ async function handleLlmChat(env, body) {
     const t1Sorted = (models || [])
       .filter((m) => m && m.tier === 1)
       .sort((a, b) => (a.order || 0) - (b.order || 0));
+    notes.push(
+      uiLang === "en"
+        ? "③ Tier1 order: " +
+          (t1Sorted.length
+            ? t1Sorted
+                .map(function (m, i) {
+                  return (
+                    "#" +
+                    (i + 1) +
+                    "=" +
+                    (m.label || m.modelId || "?") +
+                    (m.enabled === false ? "(off)" : "")
+                  );
+                })
+                .join(", ")
+            : "(empty)")
+        : "③ 第一梯队顺序：" +
+          (t1Sorted.length
+            ? t1Sorted
+                .map(function (m, i) {
+                  return (
+                    "第" +
+                    (i + 1) +
+                    "位=" +
+                    (m.label || m.modelId || "?") +
+                    (m.enabled === false ? "（关）" : "")
+                  );
+                })
+                .join("，")
+            : "（空）")
+    );
     const slotDefs = [
       { n: 2, m: t1Sorted[1] },
       { n: 3, m: t1Sorted[2] },
