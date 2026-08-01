@@ -909,16 +909,27 @@ async function handleLlmChat(env, body) {
 
   let queue;
   if (phased && webCtxForCall) {
-    // 联网总结：固定第二梯队第一位（按 order）；不占用免费的 tier1 7B
-    const t2 = registryCandidates(env, models, [2], false);
-    queue = t2.slice(0, 1);
-    const pick = queue[0] && queue[0].target;
+    // 联网总结：第一梯队第 2、第 3 位（按 order），哪个可用用哪个；不占用第 1 位免费 7B
+    const t1Sorted = (models || [])
+      .filter((m) => m && m.enabled !== false && m.tier === 1)
+      .sort((a, b) => (a.order || 0) - (b.order || 0));
+    const slotModels = [t1Sorted[1], t1Sorted[2]].filter(Boolean);
+    queue = [];
+    for (const m of slotModels) {
+      if (!m.modelId || !m.baseUrl) continue;
+      if (String(m.baseUrl).includes("{WorkspaceId}")) continue;
+      if (!resolveApiKey(env, m.apiKeyEnv)) continue;
+      queue.push({ target: m, via: "auto→tier1-sum" });
+    }
+    const names = queue
+      .map((c) => c.target.label || c.target.modelId)
+      .join(" → ");
     notes.push(
       uiLang === "en"
-        ? "③ Generate → web summarize via tier2#1" +
-          (pick ? " · " + (pick.label || pick.modelId) : " (none)")
-        : "③ 生成 → 联网总结用第二梯队第一位" +
-          (pick ? " · " + (pick.label || pick.modelId) : "（无）")
+        ? "③ Generate → web summarize via tier1#2 then #3" +
+          (names ? " · " + names : " (none available)")
+        : "③ 生成 → 联网总结用第一梯队第2、第3位" +
+          (names ? " · " + names : "（均不可用）")
     );
   } else if (routeTier === 2) {
     queue = registryCandidates(env, models, [2, 3, 1], preferVision);
