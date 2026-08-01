@@ -2500,6 +2500,7 @@
             message: reqBody.message,
             lang: reqBody.lang,
             ocr: reqBody.ocr,
+            systemSettings: reqBody.systemSettings,
           }).then(function (intentPack) {
             var ij = intentPack.j || {};
             var allNotes = mergeNotes(ij.notes);

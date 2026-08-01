@@ -837,12 +837,13 @@ async function handleLlmChat(env, body) {
 
   /** 分阶段且已有检索材料：优先快模型总结，并截断上下文，避免 CF 墙钟 HTML 502 */
   let webCtxForCall = webCtx;
-  if (phased && webCtxForCall && webCtxForCall.length > 3500) {
-    webCtxForCall = webCtxForCall.slice(0, 3500) + "\n…(truncated)";
+  const webCap = routeMode === "cf" ? 2200 : 3500;
+  if (phased && webCtxForCall && webCtxForCall.length > webCap) {
+    webCtxForCall = webCtxForCall.slice(0, webCap) + "\n…(truncated)";
     notes.push(
       uiLang === "en"
-        ? "③ Generate: web context truncated to 3500 chars"
-        : "③ 生成：联网材料已截断至 3500 字"
+        ? "③ Generate: web context truncated to " + webCap + " chars"
+        : "③ 生成：联网材料已截断至 " + webCap + " 字"
     );
   }
 
@@ -851,15 +852,29 @@ async function handleLlmChat(env, body) {
     const t2 = registryCandidates(env, models, [2], false).filter(
       (c) => !isWeakWebSummarizer(c.target)
     );
-    const t1 = registryCandidates(env, models, [1], false).filter(
-      (c) => !isWeakWebSummarizer(c.target)
-    );
-    queue = t2.length ? t2.concat(t1) : t1.length ? t1 : registryCandidates(env, models, [2, 1], false);
-    notes.push(
-      uiLang === "en"
-        ? "③ Generate → prefer tier2 then tier1 (summarize search)"
-        : "③ 生成 → 优先 tier2 再 tier1（总结检索）"
-    );
+    const t1 = registryCandidates(env, models, [1], false);
+    const t1Strong = t1.filter((c) => !isWeakWebSummarizer(c.target));
+    if (routeMode === "cf") {
+      // CF 直调墙钟紧：先快模型（含 Doubao / 非弱 7B），再 tier2；避免一上来撞 qwen3 长尾 HTML 502
+      queue = (t1Strong.length ? t1Strong : t1).concat(t2);
+      notes.push(
+        uiLang === "en"
+          ? "③ Generate → CF mode: prefer fast tier1 then tier2 (summarize search)"
+          : "③ 生成 → CF 模式：优先快 tier1 再 tier2（总结检索）"
+      );
+    } else {
+      const t1SkipWeak = t1.filter((c) => !isWeakWebSummarizer(c.target));
+      queue = t2.length
+        ? t2.concat(t1SkipWeak)
+        : t1SkipWeak.length
+          ? t1SkipWeak
+          : registryCandidates(env, models, [2, 1], false);
+      notes.push(
+        uiLang === "en"
+          ? "③ Generate → prefer tier2 then tier1 (summarize search)"
+          : "③ 生成 → 优先 tier2 再 tier1（总结检索）"
+      );
+    }
   } else if (routeTier === 2) {
     queue = registryCandidates(env, models, [2, 3, 1], preferVision);
   } else if (routeTier === 3) {
@@ -916,15 +931,24 @@ async function handleLlmChat(env, body) {
 
   let lastFail = null;
   /** 分阶段：有代理时可等多一点；无代理仍短超时防 CF HTML 502 */
-  const maxAttempts = phased ? 1 : webCtxForCall ? 2 : 4;
+  const maxAttempts = phased
+    ? routeMode === "cf"
+      ? 2
+      : 1
+    : webCtxForCall
+      ? 2
+      : 4;
   const callOpts = Object.assign(
     { systemSettings },
     phased
       ? {
           timeoutMs: proxy
             ? Math.min(75000, Math.max(20000, remMs() - 3000))
-            : Math.min(12000, Math.max(5000, remMs() - 2000)),
-          maxTokens: 500,
+            : Math.min(
+                routeMode === "cf" ? 10000 : 12000,
+                Math.max(5000, remMs() - 2000)
+              ),
+          maxTokens: routeMode === "cf" ? 420 : 500,
         }
       : {}
   );
@@ -964,7 +988,10 @@ async function handleLlmChat(env, body) {
     const hardMs = phased
       ? proxy
         ? Math.min(80000, Math.max(25000, remMs() - 2000))
-        : Math.min(14000, Math.max(6000, remMs() - 1000))
+        : Math.min(
+            routeMode === "cf" ? 11000 : 14000,
+            Math.max(6000, remMs() - 1000)
+          )
       : proxy
         ? 95000
         : 60000;
