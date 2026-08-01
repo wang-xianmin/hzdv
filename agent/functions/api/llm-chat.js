@@ -819,11 +819,17 @@ async function handleLlmChat(env, body) {
 
   let queue;
   if (phased && webCtxForCall) {
-    queue = registryCandidates(env, models, [1, 2], false);
+    const t2 = registryCandidates(env, models, [2], false).filter(
+      (c) => !isWeakWebSummarizer(c.target)
+    );
+    const t1 = registryCandidates(env, models, [1], false).filter(
+      (c) => !isWeakWebSummarizer(c.target)
+    );
+    queue = t2.length ? t2.concat(t1) : t1.length ? t1 : registryCandidates(env, models, [2, 1], false);
     notes.push(
       uiLang === "en"
-        ? "③ Generate → prefer tier1 then tier2 (summarize search)"
-        : "③ 生成 → 优先 tier1 再 tier2（总结检索）"
+        ? "③ Generate → prefer tier2 then tier1 (summarize search)"
+        : "③ 生成 → 优先 tier2 再 tier1（总结检索）"
     );
   } else if (routeTier === 2) {
     queue = registryCandidates(env, models, [2, 3, 1], preferVision);
