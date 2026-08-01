@@ -9,7 +9,12 @@
  *   2 = 自动（按访客 Cloudflare 国家码；默认）
  *     中国大陆 CN → cf，其它 → vps
  *
- * 优先级：系统设置 0/1 强制 > 设置 2/缺省自动 > env LLM_ROUTE_MODE
+ * 模拟国内（本机测试，不必真实 CN 流量）：
+ *   llmRouteDebugCountry：0=关 / 1=模拟CN / 2=模拟US
+ *   或 env LLM_ROUTE_DEBUG_COUNTRY=CN|US
+ *   仅在自动模式生效；跟踪里会标「模拟」
+ *
+ * 优先级：系统设置 0/1 强制 > 设置 2/缺省自动（含模拟）> env LLM_ROUTE_MODE
  */
 
 import { llmProxyConfig } from "./openai-compat.js";
@@ -29,25 +34,48 @@ export function clientCountryFromRequest(request) {
 }
 
 /**
+ * 调试用国家码：系统设置或 env，用于本机模拟国内/海外选路。
+ * @returns {{ country: string, simulated: boolean }}
+ */
+export function resolveDebugCountry(systemSettings, env) {
+  const ss = systemSettings || {};
+  const n = Number(ss.llmRouteDebugCountry);
+  if (n === 1) return { country: "CN", simulated: true };
+  if (n === 2) return { country: "US", simulated: true };
+  const e = String((env && env.LLM_ROUTE_DEBUG_COUNTRY) || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z]/g, "")
+    .slice(0, 2);
+  if (e.length === 2) return { country: e, simulated: true };
+  return { country: "", simulated: false };
+}
+
+/**
  * @returns {{
  *   mode: "vps"|"cf",
  *   source: "setting"|"auto"|"env",
  *   country: string,
+ *   realCountry?: string,
+ *   simulated?: boolean,
  *   detail: string,
  * }}
  */
 export function resolveRouteDecision(systemSettings, env, opts) {
   const ss = systemSettings || {};
-  const country = String((opts && opts.country) || "")
+  const realCountry = String((opts && opts.country) || "")
     .trim()
     .toUpperCase();
+  const debug = resolveDebugCountry(ss, env);
   const n = Number(ss.llmRouteMode);
 
   if (n === 0) {
     return {
       mode: "vps",
       source: "setting",
-      country,
+      country: realCountry,
+      realCountry,
+      simulated: false,
       detail: "force-vps",
     };
   }
@@ -55,27 +83,35 @@ export function resolveRouteDecision(systemSettings, env, opts) {
     return {
       mode: "cf",
       source: "setting",
-      country,
+      country: realCountry,
+      realCountry,
+      simulated: false,
       detail: "force-cf",
     };
   }
 
-  // 2 = 自动；未配置 / NaN 也按自动（默认国内友好）
+  // 2 = 自动；未配置 / NaN 也按自动
   const wantAuto =
     n === 2 ||
     ss.llmRouteMode == null ||
     ss.llmRouteMode === "" ||
     Number.isNaN(n);
 
+  const countryForAuto = debug.simulated ? debug.country : realCountry;
+
   if (wantAuto) {
-    const mode = CF_AUTO_COUNTRIES.has(country) ? "cf" : "vps";
+    const mode = CF_AUTO_COUNTRIES.has(countryForAuto) ? "cf" : "vps";
     return {
       mode,
       source: "auto",
-      country,
-      detail: country
-        ? "geo-" + country
-        : "geo-unknown→vps",
+      country: countryForAuto,
+      realCountry,
+      simulated: !!debug.simulated,
+      detail: debug.simulated
+        ? "sim-" + countryForAuto
+        : countryForAuto
+          ? "geo-" + countryForAuto
+          : "geo-unknown→vps",
     };
   }
 
@@ -83,18 +119,38 @@ export function resolveRouteDecision(systemSettings, env, opts) {
     .trim()
     .toLowerCase();
   if (e === "cf" || e === "cloudflare" || e === "china") {
-    return { mode: "cf", source: "env", country, detail: "env-cf" };
+    return {
+      mode: "cf",
+      source: "env",
+      country: realCountry,
+      realCountry,
+      simulated: false,
+      detail: "env-cf",
+    };
   }
   if (e === "auto" || e === "geo") {
-    const mode = CF_AUTO_COUNTRIES.has(country) ? "cf" : "vps";
+    const mode = CF_AUTO_COUNTRIES.has(countryForAuto) ? "cf" : "vps";
     return {
       mode,
       source: "env",
-      country,
-      detail: country ? "env-auto-" + country : "env-auto-unknown→vps",
+      country: countryForAuto,
+      realCountry,
+      simulated: !!debug.simulated,
+      detail: debug.simulated
+        ? "env-sim-" + countryForAuto
+        : countryForAuto
+          ? "env-auto-" + countryForAuto
+          : "env-auto-unknown→vps",
     };
   }
-  return { mode: "vps", source: "env", country, detail: "env-vps" };
+  return {
+    mode: "vps",
+    source: "env",
+    country: realCountry,
+    realCountry,
+    simulated: false,
+    detail: "env-vps",
+  };
 }
 
 export function resolveRouteMode(systemSettings, env, opts) {
@@ -117,10 +173,17 @@ export function formatRouteModeNote(decision, uiLang) {
   const modeZh = mode === "cf" ? "cf（国内/直调）" : "vps";
   let how;
   if (d.source === "auto") {
-    how =
-      uiLang === "en"
-        ? "auto" + (d.country ? "·" + d.country : "·unknown")
-        : "自动" + (d.country ? "·" + d.country : "·未知地区→vps");
+    if (uiLang === "en") {
+      how =
+        "auto" +
+        (d.country ? "·" + d.country : "·unknown") +
+        (d.simulated ? "·sim" : "");
+    } else {
+      how =
+        "自动" +
+        (d.country ? "·" + d.country : "·未知地区→vps") +
+        (d.simulated ? "·模拟" : "");
+    }
   } else if (d.source === "setting") {
     how = uiLang === "en" ? "forced" : "强制";
   } else {

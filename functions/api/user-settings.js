@@ -41,6 +41,8 @@ const DEFAULT_SETTINGS = {
    * Auto 路由：0=强制 VPS / 1=强制 CF / 2=自动（中国大陆→CF，其它→VPS）
    */
   llmRouteMode: 2,
+  /** 0关 / 1模拟CN / 2模拟US（仅自动选路） */
+  llmRouteDebugCountry: 0,
 };
 
 function mergeSettings(saved) {

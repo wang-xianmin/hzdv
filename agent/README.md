@@ -119,6 +119,8 @@ Python + sherpa-onnx（Next-gen Kaldi ONNX）跑在仓库 `services/asr/`（Dock
 
 系统参数 → AI助手 → `llmRouteMode`：`0` 强制 VPS / `1` 强制 CF / `2` 按 Cloudflare `request.cf.country` 自动（默认）。跟踪里会显示如 `cf（自动·CN）`。
 
+本机模拟国内选路（不必真实 CN 访客）：`llmRouteMode=2` 且 `llmRouteDebugCountry=1`（模拟 CN）；测完改回 `0`。也可用 Pages env `LLM_ROUTE_DEBUG_COUNTRY=CN`。
+
 ## 失败恢复编排（Auto）
 
 现有 ①意图 → ②搜网 → ③生成 不变。若 ③ 出现 HTML 502 / 软超时：
