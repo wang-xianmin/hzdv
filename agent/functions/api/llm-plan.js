@@ -66,24 +66,50 @@ function extractJsonObject(text) {
   }
 }
 
-function normalizeSteps(raw) {
+function normalizeSteps(raw, hasWebCtx) {
   const arr = raw && Array.isArray(raw.steps) ? raw.steps : [];
   const out = [];
+  let droppedWeb = 0;
   for (const step of arr) {
     if (!step || typeof step !== "object") continue;
     const op = String(step.op || step.type || "")
       .trim()
       .toLowerCase();
     if (op !== "websearch" && op !== "generate") continue;
+    if (op === "websearch" && hasWebCtx) {
+      droppedWeb += 1;
+      continue;
+    }
     const item = { op };
     const q = String(step.query || step.q || "").trim();
     const focus = String(step.focus || step.prompt || step.message || "").trim();
-    if (op === "websearch" && q) item.query = q.slice(0, 400);
+    if (op === "websearch") {
+      // 无 query 时仍保留步骤，前端会用原用户问题
+      if (q) item.query = q.slice(0, 400);
+    }
     if (op === "generate" && focus) item.focus = focus.slice(0, 800);
     out.push(item);
     if (out.length >= 4) break;
   }
-  return out;
+  // 有材料却只规划了被丢掉的搜网、没有 generate → 补一步生成
+  if (hasWebCtx && !out.some((s) => s.op === "generate")) {
+    out.push({ op: "generate" });
+  }
+  return { steps: out, droppedWeb };
+}
+
+function pruneStepsForContext(steps, hasWebCtx, uiLang, notes) {
+  const norm = normalizeSteps({ steps: steps || [] }, hasWebCtx);
+  if (norm.droppedWeb > 0) {
+    notes.push(
+      uiLang === "en"
+        ? "Plan prune: drop " +
+          norm.droppedWeb +
+          " websearch (web material already present)"
+        : "规划取舍：已有联网材料，去掉 " + norm.droppedWeb + " 步 websearch"
+    );
+  }
+  return norm.steps;
 }
 
 function fallbackSteps(message, hasWebCtx, uiLang) {
@@ -184,13 +210,21 @@ export async function onRequest(context) {
 
   const sys =
     uiLang === "en"
-      ? "You are a recovery planner. A prior LLM generate timed out. Split the user task into at most 4 short steps. Output JSON only: {\"steps\":[{\"op\":\"websearch\",\"query\":\"...\"},{\"op\":\"generate\",\"focus\":\"...\"}]}. op must be websearch or generate. No markdown, no explanation."
-      : "你是失败恢复规划器。先前一次 LLM 生成因超时失败。请把用户任务拆成最多 4 个短步骤。只输出 JSON：{\"steps\":[{\"op\":\"websearch\",\"query\":\"...\"},{\"op\":\"generate\",\"focus\":\"...\"}]}。op 只能是 websearch 或 generate。不要 markdown，不要解释。";
+      ? "You are a recovery planner. A prior LLM generate timed out. Split the user task into at most 4 short steps. Output JSON only: {\"steps\":[{\"op\":\"websearch\",\"query\":\"...\"},{\"op\":\"generate\",\"focus\":\"...\"}]}. op must be websearch or generate. CRITICAL: if web material is already available (Has web material already: yes), you MUST NOT include any websearch step — only generate. No markdown, no explanation."
+      : "你是失败恢复规划器。先前一次 LLM 生成因超时失败。请把用户任务拆成最多 4 个短步骤。只输出 JSON：{\"steps\":[{\"op\":\"websearch\",\"query\":\"...\"},{\"op\":\"generate\",\"focus\":\"...\"}]}。op 只能是 websearch 或 generate。硬性规则：若已有联网材料（「是否已有联网材料：是」），禁止再输出任何 websearch，只能 generate。不要 markdown，不要解释。";
 
   const user =
     (uiLang === "en"
-      ? "Fail reason: " + (failReason || "gateway/timeout") + "\nHas web material already: " + (hasWebCtx ? "yes" : "no") + "\nUser request:\n"
-      : "失败原因：" + (failReason || "网关/超时") + "\n是否已有联网材料：" + (hasWebCtx ? "是" : "否") + "\n用户问题：\n") +
+      ? "Fail reason: " +
+        (failReason || "gateway/timeout") +
+        "\nHas web material already: " +
+        (hasWebCtx ? "yes — DO NOT plan websearch" : "no") +
+        "\nUser request:\n"
+      : "失败原因：" +
+        (failReason || "网关/超时") +
+        "\n是否已有联网材料：" +
+        (hasWebCtx ? "是（禁止再规划 websearch）" : "否") +
+        "\n用户问题：\n") +
     message.slice(0, 1200);
 
   const result = await chatCompletions({
@@ -209,8 +243,18 @@ export async function onRequest(context) {
   });
 
   const raw = extractAssistantText(result.data) || "";
-  let steps = normalizeSteps(extractJsonObject(raw));
+  let parsed = normalizeSteps(extractJsonObject(raw), hasWebCtx);
+  let steps = parsed.steps;
   let fallback = false;
+  if (parsed.droppedWeb > 0) {
+    notes.push(
+      uiLang === "en"
+        ? "Plan prune: drop " +
+          parsed.droppedWeb +
+          " websearch (web material already present)"
+        : "规划取舍：已有联网材料，去掉 " + parsed.droppedWeb + " 步 websearch"
+    );
+  }
   if (!steps.length) {
     steps = fallbackSteps(message, hasWebCtx, uiLang);
     fallback = true;
@@ -226,6 +270,8 @@ export async function onRequest(context) {
         : "规划 → " + steps.length + " 步 · " + (target.label || target.modelId)
     );
   }
+  // 再取舍一遍（兜底步骤也统一走规则）
+  steps = pruneStepsForContext(steps, hasWebCtx, uiLang, notes);
   if (proxy) {
     notes.push(
       uiLang === "en" ? "Plan via VPS llm-proxy" : "规划经 VPS llm-proxy"

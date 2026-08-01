@@ -2390,6 +2390,21 @@
             i += 1;
 
             if (op === "websearch") {
+              if (webCtx) {
+                allNotes.push(
+                  t(
+                    "恢复取舍：已有联网材料，跳过本步 websearch",
+                    "Recovery prune: skip websearch (material already present)"
+                  )
+                );
+                if (wantPipelineTrace()) {
+                  messages[thinkingIdx].modelNote = formatPipelineNote({
+                    notes: allNotes,
+                  });
+                  renderThread();
+                }
+                return nextStep();
+              }
               messages[thinkingIdx].text = t(
                 "恢复 " + stepNo + "/" + steps.length + "：联网检索…",
                 "Recovery " + stepNo + "/" + steps.length + ": web search…"
