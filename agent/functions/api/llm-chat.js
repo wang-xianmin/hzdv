@@ -909,27 +909,81 @@ async function handleLlmChat(env, body) {
 
   let queue;
   if (phased && webCtxForCall) {
-    // 联网总结：第一梯队第 2、第 3 位（按 order），哪个可用用哪个；不占用第 1 位免费 7B
+    // 联网总结：按模型库 order 的第 2、第 3 位（含未启用，占位不变）；可用再入队
     const t1Sorted = (models || [])
-      .filter((m) => m && m.enabled !== false && m.tier === 1)
+      .filter((m) => m && m.tier === 1)
       .sort((a, b) => (a.order || 0) - (b.order || 0));
-    const slotModels = [t1Sorted[1], t1Sorted[2]].filter(Boolean);
+    const slotDefs = [
+      { n: 2, m: t1Sorted[1] },
+      { n: 3, m: t1Sorted[2] },
+    ];
     queue = [];
-    for (const m of slotModels) {
-      if (!m.modelId || !m.baseUrl) continue;
-      if (String(m.baseUrl).includes("{WorkspaceId}")) continue;
-      if (!resolveApiKey(env, m.apiKeyEnv)) continue;
-      queue.push({ target: m, via: "auto→tier1-sum" });
+    const slotNotes = [];
+    for (const { n, m } of slotDefs) {
+      const tag = "tier1#" + n;
+      if (!m) {
+        slotNotes.push(
+          uiLang === "en"
+            ? tag + " empty"
+            : "第" + n + "位空缺"
+        );
+        continue;
+      }
+      const name = m.label || m.modelId || "(unnamed)";
+      if (m.enabled === false) {
+        slotNotes.push(
+          uiLang === "en"
+            ? tag + " " + name + " disabled → skip"
+            : "第" + n + "位 " + name + " 未启用 → 跳过"
+        );
+        continue;
+      }
+      if (!m.modelId || !m.baseUrl) {
+        slotNotes.push(
+          uiLang === "en"
+            ? tag + " " + name + " incomplete config → skip"
+            : "第" + n + "位 " + name + " 配置不全 → 跳过"
+        );
+        continue;
+      }
+      if (String(m.baseUrl).includes("{WorkspaceId}")) {
+        slotNotes.push(
+          uiLang === "en"
+            ? tag + " " + name + " bad baseUrl → skip"
+            : "第" + n + "位 " + name + " baseUrl 无效 → 跳过"
+        );
+        continue;
+      }
+      if (!resolveApiKey(env, m.apiKeyEnv)) {
+        slotNotes.push(
+          uiLang === "en"
+            ? tag +
+              " " +
+              name +
+              " missing env " +
+              (m.apiKeyEnv || "?") +
+              " → skip"
+            : "第" +
+              n +
+              "位 " +
+              name +
+              " 缺密钥 " +
+              (m.apiKeyEnv || "?") +
+              " → 跳过"
+        );
+        continue;
+      }
+      queue.push({ target: m, via: "auto→tier1#" + n });
+      slotNotes.push(
+        uiLang === "en"
+          ? tag + " " + name + " ok"
+          : "第" + n + "位 " + name + " 可用"
+      );
     }
-    const names = queue
-      .map((c) => c.target.label || c.target.modelId)
-      .join(" → ");
     notes.push(
       uiLang === "en"
-        ? "③ Generate → web summarize via tier1#2 then #3" +
-          (names ? " · " + names : " (none available)")
-        : "③ 生成 → 联网总结用第一梯队第2、第3位" +
-          (names ? " · " + names : "（均不可用）")
+        ? "③ Generate → web summarize tier1#2→#3: " + slotNotes.join("; ")
+        : "③ 生成 → 联网总结第一梯队第2→第3位：" + slotNotes.join("；")
     );
   } else if (routeTier === 2) {
     queue = registryCandidates(env, models, [2, 3, 1], preferVision);
