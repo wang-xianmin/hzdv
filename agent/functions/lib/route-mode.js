@@ -193,3 +193,29 @@ export function formatRouteModeNote(decision, uiLang) {
     ? "Route mode → " + mode + " (" + how + ")"
     : "路由模式 → " + modeZh + "（" + how + "）";
 }
+
+/** 启动气泡副标题：如「自动·CN」「强制CF」 */
+export function formatLauncherRouteHint(decision, uiLang) {
+  const d = decision || {};
+  if (d.source === "setting") {
+    if (d.mode === "cf") {
+      return uiLang === "en" ? "Forced · CF" : "强制·CF";
+    }
+    return uiLang === "en" ? "Forced · VPS" : "强制·VPS";
+  }
+  if (d.source === "auto" || d.detail && String(d.detail).indexOf("auto") >= 0) {
+    const code = d.country || (uiLang === "en" ? "??" : "未知");
+    const sim = d.simulated
+      ? uiLang === "en"
+        ? "·sim"
+        : "·模拟"
+      : "";
+    return uiLang === "en"
+      ? "Auto·" + code + sim
+      : "自动·" + code + sim;
+  }
+  if (d.mode === "cf") {
+    return uiLang === "en" ? "CF" : "CF方案";
+  }
+  return uiLang === "en" ? "VPS" : "VPS方案";
+}

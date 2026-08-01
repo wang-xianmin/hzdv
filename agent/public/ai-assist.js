@@ -68,6 +68,11 @@
 
   window.onHzdvSystemSettingsChange = function () {
     syncOcrPreviewLimitsFromSystemSettings();
+    if (typeof refreshRouteLauncherHint === "function") {
+      try {
+        refreshRouteLauncherHint();
+      } catch (eHint) {}
+    }
   };
   syncOcrPreviewLimitsFromSystemSettings();
 
@@ -1911,8 +1916,9 @@
     var hintEl = root.querySelector("#aiAssistAgentHint");
     if (titleEl) titleEl.textContent = t("AI助手", "AI Assistant");
     if (hintEl) {
-      hintEl.textContent = t("点我开始对话", "Tap to start chatting");
+      hintEl.textContent = t("…", "…");
     }
+    refreshRouteLauncherHint();
     var closeBtn = root.querySelector("#aiAssistClose");
     if (closeBtn) closeBtn.setAttribute("aria-label", t("关闭", "Close"));
     var uploadLabel = root.querySelector("#aiAssistUploadFileLabel");
@@ -1939,6 +1945,47 @@
     renderPrompts();
     renderModelMenu();
     syncModelUi();
+  }
+
+  /** 启动气泡副标题：如「自动·CN」（点 AI助手 即可看见，无需先对话） */
+  var routeHintSeq = 0;
+  function refreshRouteLauncherHint() {
+    if (!root) return;
+    var hintEl = root.querySelector("#aiAssistAgentHint");
+    if (!hintEl) return;
+    var seq = ++routeHintSeq;
+    var ss = null;
+    if (typeof window.getHzdvSystemSettings === "function") {
+      try {
+        ss = window.getHzdvSystemSettings();
+      } catch (eSys) {
+        ss = null;
+      }
+    }
+    fetch("/api/llm-route", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({
+        lang: currentLang(),
+        systemSettings: ss || {},
+      }),
+    })
+      .then(function (r) {
+        return r.json();
+      })
+      .then(function (j) {
+        if (seq !== routeHintSeq) return;
+        if (j && j.success && j.launcherHint) {
+          hintEl.textContent = j.launcherHint;
+        } else {
+          hintEl.textContent = t("点我开始对话", "Tap to start chatting");
+        }
+      })
+      .catch(function () {
+        if (seq !== routeHintSeq) return;
+        hintEl.textContent = t("点我开始对话", "Tap to start chatting");
+      });
   }
 
   function renderPrompts() {
