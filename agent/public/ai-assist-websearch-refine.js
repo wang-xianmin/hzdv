@@ -27,6 +27,14 @@
 
   function phone() {
     try {
+      if (global.__LENG_USER && global.__LENG_USER.phone) {
+        return String(global.__LENG_USER.phone);
+      }
+      var raw = localStorage.getItem("leng_user");
+      if (raw) {
+        var u = JSON.parse(raw);
+        if (u && u.phone) return String(u.phone);
+      }
       return localStorage.getItem("leng_phone") || "";
     } catch (e) {
       return "";
@@ -43,22 +51,23 @@
     if (overlay) return;
     overlay = document.createElement("div");
     overlay.className = "ai-models-overlay";
+    overlay.id = "aiWebsearchRefineOverlay";
     overlay.hidden = true;
     overlay.innerHTML =
-      '<div class="ai-models-sheet" role="dialog" aria-modal="true">' +
-      '<header class="ai-models-head">' +
-      "<h2>" +
+      '<div class="ai-models-dialog" role="dialog" aria-modal="true" aria-labelledby="webRefineTitle">' +
+      '<div class="ai-models-head">' +
+      '<h2 id="webRefineTitle">' +
       t("联网检索改写", "Web search refine") +
       "</h2>" +
       '<button type="button" class="ai-models-close" aria-label="close">&times;</button>' +
-      "</header>" +
+      "</div>" +
       '<p class="ai-models-hint">' +
       t(
         "匹配用户消息关键词后，改用英文检索式，并可限定域名。排序越靠前越优先。",
         "Match keywords in the user message, rewrite to an English query, optionally lock domains. Earlier rows win."
       ) +
       "</p>" +
-      '<div class="ai-models-toolbar">' +
+      '<div class="ai-models-actions">' +
       '<button type="button" class="ai-models-btn" data-act="add">' +
       t("新增", "Add") +
       "</button>" +
@@ -328,10 +337,15 @@
   }
 
   function open() {
-    ensureUi();
-    overlay.hidden = false;
-    document.body.classList.add("ai-models-open");
-    loadAdmin();
+    try {
+      ensureUi();
+      overlay.hidden = false;
+      document.body.classList.add("ai-models-open");
+      loadAdmin();
+    } catch (err) {
+      console.error("[websearch-refine] open failed", err);
+      alert(t("打开联网检索改写失败，请看控制台", "Failed to open websearch refine — see console"));
+    }
   }
 
   function close() {
@@ -344,9 +358,16 @@
 
   function bindOpsMenuEntry() {
     var menuBtn = document.getElementById("topNavWebsearchRefine");
-    if (!menuBtn || menuBtn.dataset.webRefineBound === "1") return;
+    if (!menuBtn) {
+      console.warn("[websearch-refine] #topNavWebsearchRefine not found");
+      return;
+    }
+    if (menuBtn.dataset.webRefineBound === "1") return;
     menuBtn.dataset.webRefineBound = "1";
-    menuBtn.addEventListener("click", function () {
+    menuBtn.addEventListener("click", function (ev) {
+      try {
+        if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+      } catch (e0) {}
       if (localStorage.getItem("leng_logged_in") !== "1") {
         alert(t("请先登录", "Please log in"));
         return;

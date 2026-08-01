@@ -955,6 +955,35 @@
   background: #f8fafc;
 }
 
+.ai-models-card label {
+  display: block;
+  font-size: 11px;
+  color: #64748b;
+  margin-bottom: 8px;
+}
+
+.ai-models-card label input,
+.ai-models-card label select {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 4px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 8px;
+  padding: 7px 9px;
+  font-size: 13px;
+  background: #fff;
+}
+
+.ai-models-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #334155;
+}
+
 .ai-models-card--builtin {
   background: #f1f5f9;
   border-style: dashed;

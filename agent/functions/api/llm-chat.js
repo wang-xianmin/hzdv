@@ -260,7 +260,7 @@ function systemPrompt(replyLang, ocr, webCtx) {
           "1) Use ONLY the web search materials below for time-sensitive or factual claims. " +
           "2) Do NOT invent titles, sites, headlines, or URLs. Every URL you cite must appear verbatim in the materials. " +
           "3) If the materials do not contain what the user asked for, say clearly that it is not in the materials — do not fabricate examples or tell users to browse other sites instead. " +
-          "4) Prefer listing items that appear in the materials; short quotes/titles + real URLs only."
+          "4) Prefer listing items that appear in the materials; copy titles and URLs exactly; do not translate titles."
         : "") +
       ocrPromptBlock(ocr, "en") +
       webBlock
@@ -276,7 +276,7 @@ function systemPrompt(replyLang, ocr, webCtx) {
         "1）涉及新闻/实时/事实的内容，只能依据下方联网检索材料作答；" +
         "2）禁止捏造标题、网站名或链接；凡写出的 URL 必须在材料中原样出现；" +
         "3）若材料里没有用户要的内容，请明确说「材料里没有…」，不要编造示例或假新闻，也不要用「请自行打开某某网站」代替作答；" +
-        "4）优先列出材料中真实出现的条目，可用短标题 + 材料中的真实链接。"
+        "4）有条目时请直接逐条列出：标题与 URL 逐字复制，不要翻译或改写英文标题。"
       : "") +
     ocrPromptBlock(ocr, "zh") +
     webBlock

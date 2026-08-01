@@ -160,23 +160,39 @@ export async function onRequest(context) {
             (pack.refine.hint ? "（" + pack.refine.hint + "）" : "")
       );
     }
-    notes.push(
-      uiLang === "en"
-        ? "② Tavily: " +
-          pack.results.length +
-          " sources · " +
-          searchDepth +
-          " (" +
-          pack.latencyMs +
-          "ms)"
-        : "② Tavily：" +
-          pack.results.length +
-          " 条 · " +
-          searchDepth +
-          "（" +
-          pack.latencyMs +
-          "ms）"
-    );
+    if (pack.source === "hn") {
+      notes.push(
+        uiLang === "en"
+          ? "② HN API: " +
+            pack.results.length +
+            " stories (" +
+            pack.latencyMs +
+            "ms)"
+          : "② HN 官方 API：" +
+            pack.results.length +
+            " 条（" +
+            pack.latencyMs +
+            "ms）"
+      );
+    } else {
+      notes.push(
+        uiLang === "en"
+          ? "② Tavily: " +
+            pack.results.length +
+            " sources · " +
+            searchDepth +
+            " (" +
+            pack.latencyMs +
+            "ms)"
+          : "② Tavily：" +
+            pack.results.length +
+            " 条 · " +
+            searchDepth +
+            "（" +
+            pack.latencyMs +
+            "ms）"
+      );
+    }
     notes.push(
       uiLang === "en"
         ? "Step 2/3 web search done → next: generate"
