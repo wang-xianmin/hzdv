@@ -203,10 +203,19 @@ export async function onRequest(context) {
       success: true,
       phase: "websearch",
       webCtx,
+      webPack: {
+        query: pack.query,
+        source: pack.source || "tavily",
+        results: (pack.results || []).map((r) => ({
+          title: String((r && r.title) || "").slice(0, 300),
+          url: String((r && r.url) || "").slice(0, 500),
+        })),
+      },
       webSearch: {
         query: pack.query,
         count: pack.results.length,
         latencyMs: pack.latencyMs,
+        source: pack.source || "tavily",
       },
       notes,
       latencyMs: pack.latencyMs,

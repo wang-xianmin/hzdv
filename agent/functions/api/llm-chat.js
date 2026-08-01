@@ -104,11 +104,61 @@ function registryCandidates(env, models, tierOrder, preferVision) {
   return out;
 }
 
-/** 联网总结时跳过易崩的小模型（如 Qwen2.5-7B 易重复乱码） */
+/** 联网总结时跳过易崩的小模型（如 Qwen2.5-7B 易重复乱码、篡改 URL） */
 function isWeakWebSummarizer(m) {
   const id = String((m && m.modelId) || "").toLowerCase();
   const label = String((m && m.label) || "").toLowerCase();
   return /qwen2\.5-7b/.test(id) || /qwen2\.5-7b/.test(label);
+}
+
+function normalizeWebResults(pack) {
+  if (!pack || !Array.isArray(pack.results)) return [];
+  return pack.results
+    .map((r) => ({
+      title: String((r && r.title) || "").trim().slice(0, 300),
+      url: String((r && r.url) || "").trim().slice(0, 500),
+    }))
+    .filter((r) => r.title || r.url);
+}
+
+/** 从 webCtx 文本回拆 [n] title + URL:（无 webPack 时的兜底） */
+function parseResultsFromWebCtx(webCtx) {
+  const text = String(webCtx || "");
+  const out = [];
+  const re = /\[(\d+)\]\s*([^\n]+)\nURL:\s*(\S+)/g;
+  let m;
+  while ((m = re.exec(text))) {
+    out.push({
+      title: String(m[2] || "").trim().slice(0, 300),
+      url: String(m[3] || "").trim().slice(0, 500),
+    });
+  }
+  return out;
+}
+
+/** CF / 失败兜底：原样列出标题与 URL，绝不经弱模型改写 */
+function formatDeterministicNewsReply(results, replyLang) {
+  const list = (results || []).filter((r) => r && (r.title || r.url));
+  if (!list.length) return "";
+  const lines = [];
+  if (replyLang === "en") {
+    lines.push("Current front-page items (titles and URLs copied verbatim):");
+  } else {
+    lines.push(
+      "今日热门如下（标题与链接按材料原样列出，未经模型改写）："
+    );
+  }
+  list.forEach((r, i) => {
+    lines.push(
+      "[" +
+        (i + 1) +
+        "] " +
+        (r.title || "(untitled)") +
+        "\nURL: " +
+        (r.url || "")
+    );
+  });
+  return lines.join("\n\n");
 }
 
 /**
@@ -749,9 +799,22 @@ async function handleLlmChat(env, body) {
   let web;
   if (body.webProvided === true || typeof body.webCtx === "string") {
     const ctx = typeof body.webCtx === "string" ? body.webCtx : "";
+    let pack =
+      body.webPack && typeof body.webPack === "object" ? body.webPack : null;
+    if (
+      (!pack || !Array.isArray(pack.results) || !pack.results.length) &&
+      body.webSearch &&
+      Array.isArray(body.webSearch.results)
+    ) {
+      pack = {
+        query: body.webSearch.query,
+        source: body.webSearch.source,
+        results: body.webSearch.results,
+      };
+    }
     web = {
       webCtx: ctx,
-      pack: body.webPack && typeof body.webPack === "object" ? body.webPack : null,
+      pack,
       used: !!ctx,
       skipped: ctx ? null : body.webSkipped || "provided_empty",
       note:
@@ -774,6 +837,10 @@ async function handleLlmChat(env, body) {
   }
   if (web.note) notes.push(web.note);
   const webCtx = web.webCtx || "";
+  let structuredResults = normalizeWebResults(web.pack);
+  if (!structuredResults.length) {
+    structuredResults = parseResultsFromWebCtx(webCtx);
+  }
 
   const phased =
     Object.prototype.hasOwnProperty.call(body, "intent") ||
@@ -848,27 +915,30 @@ async function handleLlmChat(env, body) {
   }
 
   let queue;
+  let t1StrongForWeb = [];
   if (phased && webCtxForCall) {
     const t2 = registryCandidates(env, models, [2], false).filter(
       (c) => !isWeakWebSummarizer(c.target)
     );
-    const t1 = registryCandidates(env, models, [1], false);
-    const t1Strong = t1.filter((c) => !isWeakWebSummarizer(c.target));
+    t1StrongForWeb = registryCandidates(env, models, [1], false).filter(
+      (c) => !isWeakWebSummarizer(c.target)
+    );
     if (routeMode === "cf") {
-      // CF 直调墙钟紧：先快模型（含 Doubao / 非弱 7B），再 tier2；避免一上来撞 qwen3 长尾 HTML 502
-      queue = (t1Strong.length ? t1Strong : t1).concat(t2);
+      // 绝不回退到 Qwen2.5-7B（会篡改 URL）；无强模型时走列表直出
+      queue = t1StrongForWeb.concat(t2);
       notes.push(
         uiLang === "en"
-          ? "③ Generate → CF mode: prefer fast tier1 then tier2 (summarize search)"
-          : "③ 生成 → CF 模式：优先快 tier1 再 tier2（总结检索）"
+          ? "③ Generate → CF mode: prefer strong tier1/tier2; never weak 7B for web"
+          : "③ 生成 → CF 模式：优先强 tier1/tier2；联网总结禁用弱 7B"
       );
     } else {
-      const t1SkipWeak = t1.filter((c) => !isWeakWebSummarizer(c.target));
       queue = t2.length
-        ? t2.concat(t1SkipWeak)
-        : t1SkipWeak.length
-          ? t1SkipWeak
-          : registryCandidates(env, models, [2, 1], false);
+        ? t2.concat(t1StrongForWeb)
+        : t1StrongForWeb.length
+          ? t1StrongForWeb
+          : registryCandidates(env, models, [2, 1], false).filter(
+              (c) => !isWeakWebSummarizer(c.target)
+            );
       notes.push(
         uiLang === "en"
           ? "③ Generate → prefer tier2 then tier1 (summarize search)"
@@ -893,14 +963,59 @@ async function handleLlmChat(env, body) {
   const webMeta = web.used
     ? {
         query: web.pack && web.pack.query,
-        count: web.pack && web.pack.results ? web.pack.results.length : 0,
+        count: structuredResults.length
+          ? structuredResults.length
+          : web.pack && web.pack.results
+            ? web.pack.results.length
+            : 0,
         latencyMs: web.pack && web.pack.latencyMs,
       }
     : body.webSearch && typeof body.webSearch === "object"
       ? body.webSearch
       : null;
 
+  const listModel = {
+    id: "auto",
+    label: "Verbatim list",
+    modelId: "verbatim-list",
+    tier: routeTier || 0,
+  };
+
+  function respondListDirect(reasonZh, reasonEn) {
+    const reply = formatDeterministicNewsReply(structuredResults, replyLang);
+    if (!reply) return null;
+    notes.push(uiLang === "en" ? reasonEn : reasonZh);
+    return jsonResponse(
+      packChatResult(
+        { ok: true, reply, latencyMs: 0, status: 200, error: null },
+        listModel,
+        "auto→list",
+        langInfo,
+        { notes, webSearch: webMeta, attempts }
+      )
+    );
+  }
+
+  // CF 且无可用强模型：直接原样列表，避免 7B 乱写 URL / tier2 超时
+  if (
+    routeMode === "cf" &&
+    phased &&
+    structuredResults.length &&
+    !t1StrongForWeb.length
+  ) {
+    const direct = respondListDirect(
+      "③ 生成：CF 列表直出（无强 tier1，跳过弱 7B/慢 tier2）",
+      "③ Generate: CF verbatim list (no strong tier1; skip weak 7B / slow tier2)"
+    );
+    if (direct) return direct;
+  }
+
   if (remMs() < 2500) {
+    const direct = respondListDirect(
+      "③ 生成：预算不足 → 列表直出（原样标题+URL）",
+      "③ Generate: low budget → verbatim list"
+    );
+    if (direct) return direct;
     notes.push(
       uiLang === "en"
         ? "Budget left " + remMs() + "ms → skip LLM (return JSON before CF HTML 502)"
@@ -1056,6 +1171,11 @@ async function handleLlmChat(env, body) {
   }
 
   if (lastFail) {
+    const direct = respondListDirect(
+      "③ 生成：模型失败 → 列表直出（原样标题+URL）",
+      "③ Generate: model failed → verbatim list"
+    );
+    if (direct) return direct;
     const bodyOut = packChatResult(lastFail.result, lastFail.target, lastFail.via, langInfo, {
       attempts,
       notes,
@@ -1063,6 +1183,12 @@ async function handleLlmChat(env, body) {
     });
     return jsonResponse(bodyOut, 502);
   }
+
+  const directEmpty = respondListDirect(
+    "③ 生成：无可用总结模型 → 列表直出（原样标题+URL）",
+    "③ Generate: no summarizer → verbatim list"
+  );
+  if (directEmpty) return directEmpty;
 
   return jsonResponse(
     {

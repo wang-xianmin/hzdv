@@ -2574,6 +2574,7 @@
                   webSkipped: wj.skipped || null,
                   notes: wj.notes || [],
                   webSearch: wj.webSearch || null,
+                  webPack: wj.webPack || null,
                 };
               });
             }
@@ -2597,6 +2598,7 @@
                 webCtx: webInfo.webCtx || "",
                 webSkipped: webInfo.webSkipped || null,
                 webSearch: webInfo.webSearch || null,
+                webPack: webInfo.webPack || null,
               });
 
               var afterChat;
