@@ -79,6 +79,8 @@ export function defaultWebsearchRefineSeed() {
       keywords: [
         "hacker news",
         "hackernews",
+        "kicker news",
+        "hacker new",
         "hn",
         "黑客新闻",
         "新闻黑客",

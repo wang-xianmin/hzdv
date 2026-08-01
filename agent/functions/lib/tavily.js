@@ -81,8 +81,11 @@ export function refineWebQuery(message, rules) {
   }
 
   // 内置兜底（KV 尚未配置或未命中时）
+  // Hacker News 首页/热门（含常见拼写误差 kicker/hackernew）
   if (
-    /hacker\s*news|\bhackernews\b|\bhn\b|黑客新闻|新闻黑客/i.test(s) ||
+    /hacker\s*news|\bhackernews\b|\bkicker\s*news\b|\bhacker\s*new\b|\bhn\b|黑客新闻|新闻黑客/i.test(
+      s
+    ) ||
     /news\.ycombinator\.com/i.test(s)
   ) {
     return {
@@ -125,7 +128,7 @@ function wantsHnSource(refined, message) {
   }
   const hint = String((refined && refined.hint) || "");
   if (/HN|Hacker News/i.test(hint)) return true;
-  return /hacker\s*news|\bhackernews\b|\bhn\b|黑客新闻|news\.ycombinator\.com/i.test(
+  return /hacker\s*news|\bhackernews\b|\bkicker\s*news\b|\bhacker\s*new\b|\bhn\b|黑客新闻|news\.ycombinator\.com/i.test(
     String(message || "")
   );
 }
