@@ -104,13 +104,6 @@ function registryCandidates(env, models, tierOrder, preferVision) {
   return out;
 }
 
-/** 联网总结时跳过易崩的小模型（如 Qwen2.5-7B 易重复乱码、篡改 URL） */
-function isWeakWebSummarizer(m) {
-  const id = String((m && m.modelId) || "").toLowerCase();
-  const label = String((m && m.label) || "").toLowerCase();
-  return /qwen2\.5-7b/.test(id) || /qwen2\.5-7b/.test(label);
-}
-
 function normalizeWebResults(pack) {
   if (!pack || !Array.isArray(pack.results)) return [];
   return pack.results
@@ -915,36 +908,18 @@ async function handleLlmChat(env, body) {
   }
 
   let queue;
-  let t1StrongForWeb = [];
   if (phased && webCtxForCall) {
-    const t2 = registryCandidates(env, models, [2], false).filter(
-      (c) => !isWeakWebSummarizer(c.target)
+    // 联网总结：固定第二梯队第一位（按 order）；不占用免费的 tier1 7B
+    const t2 = registryCandidates(env, models, [2], false);
+    queue = t2.slice(0, 1);
+    const pick = queue[0] && queue[0].target;
+    notes.push(
+      uiLang === "en"
+        ? "③ Generate → web summarize via tier2#1" +
+          (pick ? " · " + (pick.label || pick.modelId) : " (none)")
+        : "③ 生成 → 联网总结用第二梯队第一位" +
+          (pick ? " · " + (pick.label || pick.modelId) : "（无）")
     );
-    t1StrongForWeb = registryCandidates(env, models, [1], false).filter(
-      (c) => !isWeakWebSummarizer(c.target)
-    );
-    if (routeMode === "cf") {
-      // 绝不回退到 Qwen2.5-7B（会篡改 URL）；无强模型时走列表直出
-      queue = t1StrongForWeb.concat(t2);
-      notes.push(
-        uiLang === "en"
-          ? "③ Generate → CF mode: prefer strong tier1/tier2; never weak 7B for web"
-          : "③ 生成 → CF 模式：优先强 tier1/tier2；联网总结禁用弱 7B"
-      );
-    } else {
-      queue = t2.length
-        ? t2.concat(t1StrongForWeb)
-        : t1StrongForWeb.length
-          ? t1StrongForWeb
-          : registryCandidates(env, models, [2, 1], false).filter(
-              (c) => !isWeakWebSummarizer(c.target)
-            );
-      notes.push(
-        uiLang === "en"
-          ? "③ Generate → prefer tier2 then tier1 (summarize search)"
-          : "③ 生成 → 优先 tier2 再 tier1（总结检索）"
-      );
-    }
   } else if (routeTier === 2) {
     queue = registryCandidates(env, models, [2, 3, 1], preferVision);
   } else if (routeTier === 3) {
@@ -996,20 +971,6 @@ async function handleLlmChat(env, body) {
     );
   }
 
-  // CF 且无可用强模型：直接原样列表，避免 7B 乱写 URL / tier2 超时
-  if (
-    routeMode === "cf" &&
-    phased &&
-    structuredResults.length &&
-    !t1StrongForWeb.length
-  ) {
-    const direct = respondListDirect(
-      "③ 生成：CF 列表直出（无强 tier1，跳过弱 7B/慢 tier2）",
-      "③ Generate: CF verbatim list (no strong tier1; skip weak 7B / slow tier2)"
-    );
-    if (direct) return direct;
-  }
-
   if (remMs() < 2500) {
     const direct = respondListDirect(
       "③ 生成：预算不足 → 列表直出（原样标题+URL）",
@@ -1045,11 +1006,9 @@ async function handleLlmChat(env, body) {
   }
 
   let lastFail = null;
-  /** 分阶段：有代理时可等多一点；无代理仍短超时防 CF HTML 502 */
+  /** 分阶段联网总结：只试第二梯队第一位；失败再列表直出 */
   const maxAttempts = phased
-    ? routeMode === "cf"
-      ? 2
-      : 1
+    ? 1
     : webCtxForCall
       ? 2
       : 4;
