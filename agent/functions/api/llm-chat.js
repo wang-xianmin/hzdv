@@ -1017,9 +1017,9 @@ async function handleLlmChat(env, body) {
   }
 
   let lastFail = null;
-  /** 分阶段联网总结：只试第二梯队第一位；失败再列表直出 */
+  /** 分阶段联网总结：试 tier1#2→#3；失败再列表直出 */
   const maxAttempts = phased
-    ? 1
+    ? Math.min(2, Math.max(1, queue.length || 1))
     : webCtxForCall
       ? 2
       : 4;
