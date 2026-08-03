@@ -1,13 +1,11 @@
 /**
- * 口译器鉴权：超管 | 技术调试员 | 各组组长（value.g_role === 1）
+ * 口译器鉴权：仅超级用户
  */
 
 import { readKvUser } from "./kv-secure.js";
 import { pickKvBinding } from "./kv-binding.js";
 
 const MASK_SUPER = 0x01;
-const MASK_DBG = 0x02;
-const TRANSLATOR_STAFF_MASK = MASK_SUPER | MASK_DBG;
 
 /** 正式收紧：不再对任意登录开放 */
 const TRANSLATOR_TEMP_OPEN_TO_ANY_LOGIN = false;
@@ -52,11 +50,7 @@ export async function assertTranslatorAccess(env, phone) {
     };
   }
   const mask = parseTypeMask(row.metadata.type);
-  const gRole =
-    row.value && row.value.g_role != null && Number(row.value.g_role) === 1
-      ? 1
-      : 0;
-  if ((mask & TRANSLATOR_STAFF_MASK) === 0 && gRole !== 1) {
+  if ((mask & MASK_SUPER) === 0) {
     const err = new Error("Forbidden");
     err.status = 403;
     throw err;
@@ -66,7 +60,10 @@ export async function assertTranslatorAccess(env, phone) {
     metadata: row.metadata,
     value: row.value,
     typeMask: mask,
-    gRole,
+    gRole:
+      row.value && row.value.g_role != null && Number(row.value.g_role) === 1
+        ? 1
+        : 0,
   };
 }
 

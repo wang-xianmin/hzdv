@@ -8,7 +8,12 @@
  * 输出：tier1|tier2|tier3，可选 web
  */
 
-import { chatCompletions, extractAssistantText, resolveApiKey } from "./openai-compat.js";
+import {
+  chatCompletions,
+  extractAssistantText,
+  normalizeOpenAiCompatBase,
+  resolveApiKey,
+} from "./openai-compat.js";
 import { resolveRouteMode } from "./route-mode.js";
 
 const CLASSIFY_PROMPT =
@@ -33,7 +38,7 @@ const FEW_SHOT = [
 ];
 
 export function intentTarget(env) {
-  const baseUrl = String(env.INTENT_SERVICE_URL || "").trim();
+  const baseUrl = normalizeOpenAiCompatBase(env.INTENT_SERVICE_URL);
   const apiKey = String(env.INTENT_API_KEY || "").trim();
   if (!baseUrl || !apiKey) return null;
   return {
@@ -181,11 +186,25 @@ export async function classifyIntent(env, message, opts) {
   });
 
   if (!result.ok) {
+    let err = result.error || "分类器调用失败";
+    try {
+      const host = String(target.baseUrl || "")
+        .replace(/^https?:\/\//i, "")
+        .split("/")[0];
+      if (host) err += " · 实际基址主机=" + host;
+    } catch (e) {}
+    if (
+      result.status === 404 ||
+      /\b404\b|not found/i.test(String(err))
+    ) {
+      err +=
+        " · 若主机不是 intent.hzdv.net：Pages 变量未生效，请 Production → Retry deployment";
+    }
     return {
       tier: null,
       web: false,
       latencyMs: result.latencyMs,
-      error: result.error || "分类器调用失败",
+      error: err,
       raw: "",
       via,
       label: target.label,

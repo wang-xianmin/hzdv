@@ -1,7 +1,7 @@
 /**
  * 运维接口鉴权。
  * - assertOpsAccess：超管 | 技术调试员（AI 模型库、系统设置等）
- * - assertHeroOpsAccess：超管 | 技术调试员 | 内容审核总负责 | 内容审核员（网站背景）
+ * - assertHeroOpsAccess：超管 | 技术调试员 | 内容审核总负责 | 内容审核员（网站背景、产品目录）
  * - assertAnyLoginAccess：任意已注册用户（KV 有记录即可；AI 对话等，不与运维绑定）
  */
 
@@ -86,6 +86,11 @@ export async function assertOpsAccess(env, phone) {
 export async function assertHeroOpsAccess(env, phone) {
   const user = await loadOpsUser(env, phone);
   return denyIfNeeded(user, OPS_HERO_MASK);
+}
+
+/** 产品目录：与网站背景同权 */
+export async function assertCatalogOpsAccess(env, phone) {
+  return assertHeroOpsAccess(env, phone);
 }
 
 /**

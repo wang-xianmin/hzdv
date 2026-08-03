@@ -16,12 +16,24 @@ export function normalizeBaseUrl(baseUrl) {
 }
 
 /**
+ * OpenAI 兼容根路径：去掉误填的 /chat/completions，并补上 /v1。
+ * llm-proxy 只挂 POST /v1/chat/completions；缺 /v1 会直接 HTTP 404。
+ */
+export function normalizeOpenAiCompatBase(baseUrl) {
+  let u = normalizeBaseUrl(baseUrl);
+  if (!u) return "";
+  u = u.replace(/\/chat\/completions$/i, "").replace(/\/+$/, "");
+  if (!/\/v\d+$/i.test(u)) u += "/v1";
+  return u;
+}
+
+/**
  * 若配置了 LLM_PROXY_SERVICE_URL + LLM_PROXY_API_KEY，
  * 云端生成经 VPS 长超时转发（意图分类器仍直连 INTENT_*）。
  * @returns {{ baseUrl: string, apiKey: string } | null}
  */
 export function llmProxyConfig(env) {
-  const baseUrl = normalizeBaseUrl(env && env.LLM_PROXY_SERVICE_URL);
+  const baseUrl = normalizeOpenAiCompatBase(env && env.LLM_PROXY_SERVICE_URL);
   const apiKey = String((env && env.LLM_PROXY_API_KEY) || "").trim();
   if (!baseUrl || !apiKey) return null;
   return { baseUrl, apiKey };
@@ -52,6 +64,7 @@ export function extractUpstreamError(data, httpStatus) {
   const candidates = [
     data.error && data.error.message,
     data.error && typeof data.error === "string" ? data.error : null,
+    data.detail,
     data.message,
     data.msg,
     data.error_msg,
@@ -121,7 +134,10 @@ export async function chatCompletions({
     }
   }
 
-  const url = base + "/chat/completions";
+  // base 已是 …/v1（或上游兼容根）；禁止再拼出 …/v1/chat/completions/chat/completions
+  const url = /\/chat\/completions$/i.test(base)
+    ? base
+    : base + "/chat/completions";
   const started = Date.now();
   const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
   let timer = null;
@@ -159,12 +175,30 @@ export async function chatCompletions({
       data = { raw: String(text).slice(0, 800) };
     }
     if (!res.ok) {
+      let err = extractUpstreamError(data, res.status) || "HTTP " + res.status;
+      try {
+        const path = new URL(url).pathname;
+        if (res.status === 404) {
+          err += " @ " + path;
+          if (/\/chat\/completions\/chat\/completions$/i.test(path)) {
+            err +=
+              "（基址勿含 /chat/completions，应类似 https://intent.hzdv.net/v1）";
+          } else if (path === "/chat/completions") {
+            err += "（基址须带 /v1，如 https://llm.hzdv.net/v1）";
+          }
+        } else if (
+          res.status === 401 &&
+          /invalid api key|unauthorized/i.test(err)
+        ) {
+          err += " · 与 VPS 服务密钥不一致？";
+        }
+      } catch (e) {}
       return {
         ok: false,
         status: res.status,
         data,
         latencyMs,
-        error: extractUpstreamError(data, res.status) || "HTTP " + res.status,
+        error: err,
       };
     }
     if (looksLikeBusinessError(data)) {
@@ -240,7 +274,9 @@ export async function chatCompletionsStream({
     return { ok: false, status: 0, text: "", error: "缺少 model" };
   }
 
-  const url = base + "/chat/completions";
+  const url = /\/chat\/completions$/i.test(base)
+    ? base
+    : base + "/chat/completions";
   const started = Date.now();
   const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
   let timer = null;

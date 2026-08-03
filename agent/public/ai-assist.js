@@ -2174,10 +2174,77 @@
       return;
     }
 
-    appendAssistant(t("思考中…", "Thinking…"), {
-      modelBadge: want === "auto" ? "Auto …" : formatModelBadge(null, want),
+    appendAssistant(t("思考中…1.", "Thinking…1."), {
+      modelBadge: want === "auto" ? "Auto · 1" : formatModelBadge(null, want),
     });
     var thinkingIdx = messages.length - 1;
+    var thinkMajor = 1;
+    var thinkMinor = 0;
+    var thinkPulseTimer = null;
+
+    function clearThinkPulse() {
+      if (thinkPulseTimer) {
+        clearInterval(thinkPulseTimer);
+        thinkPulseTimer = null;
+      }
+    }
+
+    /**
+     * 气泡正文始终显示步骤编号：思考中…1. / 思考中…3.2（约 0.7s 跳动）。
+     * 打开流水线跟踪时，verbose 阶段说明写入 modelNote，与编号并存。
+     */
+    function setThinkingBusy(major, opts) {
+      opts = opts || {};
+      clearThinkPulse();
+      thinkMajor = Math.max(1, Number(major) || 1);
+      thinkMinor = Math.max(0, Math.floor(Number(opts.minor) || 0));
+      var verbose = opts.verbose || "";
+      var badge = opts.badge || "";
+
+      if (wantPipelineTrace() && verbose) {
+        var prev = messages[thinkingIdx].modelNote || "";
+        var stageLine = "· " + verbose;
+        if (!prev) {
+          messages[thinkingIdx].modelNote = stageLine;
+        } else if (prev.indexOf(stageLine) === -1) {
+          messages[thinkingIdx].modelNote = stageLine + "\n" + prev;
+        }
+      }
+
+      function paint() {
+        var base = t("思考中…", "Thinking…");
+        messages[thinkingIdx].text =
+          thinkMinor > 0
+            ? base + thinkMajor + "." + thinkMinor
+            : base + thinkMajor + ".";
+        messages[thinkingIdx].modelBadge =
+          badge ||
+          (want === "auto"
+            ? "Auto · " +
+              thinkMajor +
+              (thinkMinor > 0 ? "." + thinkMinor : "")
+            : formatModelBadge(null, want) || "LLM");
+        renderThread();
+      }
+
+      paint();
+      thinkPulseTimer = setInterval(function () {
+        thinkMinor += 1;
+        if (thinkMinor > 99) thinkMinor = 1;
+        paint();
+      }, 700);
+    }
+
+    setThinkingBusy(want === "auto" ? 1 : 3, {
+      verbose:
+        want === "auto"
+          ? t("① 正在意图分类…", "① Classifying intent…")
+          : t("正在生成回答…", "Generating answer…"),
+      badge:
+        want === "auto"
+          ? "Auto · ①意图"
+          : formatModelBadge(null, want),
+    });
 
     var reqBody = {
       phone: phone,
@@ -2270,7 +2337,16 @@
       );
     }
 
+    /** 墙钟失败时给用户的可读提示（技术细节仍可进跟踪） */
+    function wallClockUserHint() {
+      return t(
+        "这个问题偏复杂，一次生成超时了。请拆成若干个更小的问题分别提问（例如先问一部分，确认后再问下一部分）。",
+        "This question is too complex for one pass (generate timed out). Please split it into a few smaller questions and ask them one by one."
+      );
+    }
+
     function applyAssistantPack(pack, notePrefix) {
+      clearThinkPulse();
       var j = pack.j || {};
       var badge = formatModelBadge(j.model, want);
       var latency = j.latencyMs != null ? " · " + j.latencyMs + "ms" : "";
@@ -2301,9 +2377,16 @@
             ? t("上游返回空内容或无法解析", "Empty or unreadable upstream reply")
             : t("请求失败（无详细错误）", "Request failed (no detail)");
         }
+        var wall = isWallClockFail(pack) || !!j.wallClockFail;
+        var userText = wall
+          ? wallClockUserHint()
+          : t("调用失败：", "Failed: ") + errText;
+        if (wall && errText && wantPipelineTrace()) {
+          note = (note ? note + "\n" : "") + t("细节：", "Detail: ") + errText;
+        }
         messages[thinkingIdx] = {
           role: "assistant",
-          text: t("调用失败：", "Failed: ") + errText,
+          text: userText,
           model: want,
           modelBadge: (badge || "LLM") + latency,
           modelNote: note || messages[thinkingIdx].modelNote || "",
@@ -2342,12 +2425,13 @@
       var failReason = ctx.failReason || "";
       var failStatus = ctx.failStatus || 0;
 
-      messages[thinkingIdx].text = t(
-        "检测到超时，正在失败恢复编排…",
-        "Timeout detected — recovery orchestration…"
-      );
-      messages[thinkingIdx].modelBadge = "Auto · 恢复";
-      renderThread();
+      setThinkingBusy(4, {
+        verbose: t(
+          "检测到超时，正在尝试自动拆步；若仍失败，请把问题拆成更小的几问…",
+          "Timeout detected — trying auto split; if it still fails, please ask smaller questions…"
+        ),
+        badge: "Auto · 恢复",
+      });
 
       // 打点可失败忽略
       var logP = postJson("/api/llm-recover-log", {
@@ -2362,12 +2446,13 @@
 
       return logP
         .then(function () {
-          messages[thinkingIdx].text = t(
-            "恢复：正在规划分步…",
-            "Recovery: planning steps…"
-          );
-          messages[thinkingIdx].modelBadge = "Auto · 规划";
-          renderThread();
+          setThinkingBusy(4, {
+            verbose: t(
+              "恢复：正在规划分步…",
+              "Recovery: planning steps…"
+            ),
+            badge: "Auto · 规划",
+          });
           return postJson("/api/llm-plan", {
             phone: reqBody.phone,
             message: reqBody.message,
@@ -2400,6 +2485,7 @@
                 ok: false,
                 j: {
                   success: false,
+                  wallClockFail: true,
                   error:
                     (pj && pj.error) ||
                     failReason ||
@@ -2420,6 +2506,7 @@
                   ok: false,
                   j: {
                     success: false,
+                    wallClockFail: true,
                     error: t(
                       "恢复分步已执行完毕但仍无有效回答",
                       "Recovery steps finished without a usable answer"
@@ -2452,12 +2539,14 @@
                 }
                 return nextStep();
               }
-              messages[thinkingIdx].text = t(
-                "恢复 " + stepNo + "/" + steps.length + "：联网检索…",
-                "Recovery " + stepNo + "/" + steps.length + ": web search…"
-              );
-              messages[thinkingIdx].modelBadge = "Auto · 恢复搜网";
-              renderThread();
+              setThinkingBusy(4, {
+                minor: stepNo,
+                verbose: t(
+                  "恢复 " + stepNo + "/" + steps.length + "：联网检索…",
+                  "Recovery " + stepNo + "/" + steps.length + ": web search…"
+                ),
+                badge: "Auto · 恢复搜网",
+              });
               return postJson("/api/llm-websearch", {
                 phone: reqBody.phone,
                 message: step.query || reqBody.message,
@@ -2480,17 +2569,20 @@
             }
 
             if (op === "generate") {
-              messages[thinkingIdx].text = t(
-                "恢复 " + stepNo + "/" + steps.length + "：生成…",
-                "Recovery " + stepNo + "/" + steps.length + ": generate…"
-              );
-              messages[thinkingIdx].modelBadge = "Auto · 恢复生成";
+              setThinkingBusy(4, {
+                minor: stepNo,
+                verbose: t(
+                  "恢复 " + stepNo + "/" + steps.length + "：生成…",
+                  "Recovery " + stepNo + "/" + steps.length + ": generate…"
+                ),
+                badge: "Auto · 恢复生成",
+              });
               if (wantPipelineTrace()) {
                 messages[thinkingIdx].modelNote = formatPipelineNote({
                   notes: allNotes,
                 });
+                renderThread();
               }
-              renderThread();
               var chatMsg = reqBody.message;
               if (step.focus) {
                 chatMsg =
@@ -2525,6 +2617,20 @@
                   )
                 );
                 if (i < steps.length) return nextStep();
+                if (!cj.wallClockFail && isWallClockFail(chatPack)) {
+                  cj.wallClockFail = true;
+                }
+                if (!cj.wallClockFail) {
+                  cj.wallClockFail = true;
+                  cj.error =
+                    (cj.error || "") +
+                    (cj.error ? " · " : "") +
+                    t(
+                      "恢复后仍超时/失败",
+                      "Still timed out/failed after recovery"
+                    );
+                }
+                chatPack.j = cj;
                 applyAssistantPack(chatPack, "");
                 return null;
               });
@@ -2551,17 +2657,11 @@
           }).then(function (intentPack) {
             var ij = intentPack.j || {};
             var allNotes = mergeNotes(ij.notes);
-            messages[thinkingIdx].text = t(
-              "① 意图完成，继续…",
-              "① Intent done…"
-            );
-            messages[thinkingIdx].modelBadge = "Auto · ①意图";
             if (allNotes.length && wantPipelineTrace()) {
               messages[thinkingIdx].modelNote = formatPipelineNote({
                 notes: allNotes,
               });
             }
-            renderThread();
             if (!intentPack.ok || ij.success === false) {
               applyAssistantPack(intentPack, "");
               return null;
@@ -2574,6 +2674,13 @@
                 reqBody.message || ""
               );
 
+            setThinkingBusy(needWeb ? 2 : 3, {
+              verbose: needWeb
+                ? t("② 正在联网检索…", "② Searching the web…")
+                : t("③ 正在生成回答…", "③ Generating answer…"),
+              badge: needWeb ? "Auto · ②搜网" : "Auto · ③生成",
+            });
+
             var afterWeb = Promise.resolve({
               webCtx: "",
               webNote: null,
@@ -2582,12 +2689,6 @@
             });
 
             if (needWeb) {
-              messages[thinkingIdx].text = t(
-                "② 正在联网检索…",
-                "② Searching the web…"
-              );
-              messages[thinkingIdx].modelBadge = "Auto · ②搜网";
-              renderThread();
               afterWeb = postJson("/api/llm-websearch", {
                 phone: reqBody.phone,
                 message: reqBody.message,
@@ -2627,17 +2728,16 @@
             }
 
             return afterWeb.then(function (webInfo) {
-              messages[thinkingIdx].text = t(
-                "③ 正在生成回答…",
-                "③ Generating answer…"
-              );
-              messages[thinkingIdx].modelBadge = "Auto · ③生成";
+              setThinkingBusy(3, {
+                verbose: t("③ 正在生成回答…", "③ Generating answer…"),
+                badge: "Auto · ③生成",
+              });
               if (wantPipelineTrace()) {
                 messages[thinkingIdx].modelNote = formatPipelineNote({
                   notes: allNotes,
                 });
+                renderThread();
               }
-              renderThread();
 
               var chatBody = Object.assign({}, reqBody, {
                 intent: intentObj,
@@ -2700,6 +2800,7 @@
           });
 
     chain.catch(function (err) {
+      clearThinkPulse();
       messages[thinkingIdx] = {
         role: "assistant",
         text:

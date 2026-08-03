@@ -130,6 +130,12 @@ function sanitizeIncoming(incoming) {
       base.llmForceFailGenerate
     ),
     llmRouteMode: clampInt(incoming.llmRouteMode, 0, 2, base.llmRouteMode),
+    llmRouteDebugCountry: clampInt(
+      incoming.llmRouteDebugCountry,
+      0,
+      2,
+      base.llmRouteDebugCountry
+    ),
     asrMicMode: clampInt(
       incoming.asrMicMode != null
         ? incoming.asrMicMode

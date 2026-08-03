@@ -61,6 +61,7 @@ def health() -> dict[str, Any]:
 
 
 @app.post("/v1/chat/completions")
+@app.post("/chat/completions")
 async def chat_completions(
     request: Request,
     authorization: str | None = Header(default=None),

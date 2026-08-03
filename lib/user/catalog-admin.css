@@ -1,0 +1,255 @@
+/* 产品目录管理（运维） */
+
+.catalog-admin-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 12000;
+  background: rgba(20, 22, 28, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.catalog-admin-overlay[hidden] {
+  display: none !important;
+}
+
+.catalog-admin-dialog {
+  position: relative;
+  width: min(1100px, 96vw);
+  height: min(820px, 92vh);
+  background: #f7f6f3;
+  color: #1c1c1c;
+  border-radius: 10px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.catalog-admin-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px 8px;
+  border-bottom: 1px solid #ddd8ce;
+}
+
+.catalog-admin-head h2 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 650;
+}
+
+.catalog-admin-close {
+  border: 0;
+  background: transparent;
+  font-size: 1.6rem;
+  line-height: 1;
+  cursor: pointer;
+  color: #555;
+}
+
+.catalog-admin-hint {
+  margin: 8px 18px 0;
+  font-size: 0.85rem;
+  color: #5a574f;
+}
+
+.catalog-admin-actions {
+  display: flex;
+  gap: 8px;
+  padding: 10px 18px;
+  flex-wrap: wrap;
+}
+
+.catalog-admin-btn {
+  border: 1px solid #2f2f2f;
+  background: #2f2f2f;
+  color: #fff;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.catalog-admin-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.catalog-admin-btn--ghost {
+  background: transparent;
+  color: #2f2f2f;
+}
+
+.catalog-admin-grid {
+  flex: 1;
+  min-height: 240px;
+  margin: 0 18px;
+  border: 1px solid #ddd8ce;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.catalog-admin-status {
+  margin: 8px 18px 12px;
+  min-height: 1.2em;
+  font-size: 0.85rem;
+  color: #5a574f;
+}
+
+.catalog-admin-status.is-error {
+  color: #a12622;
+}
+
+.catalog-admin-status.is-ok {
+  color: #1f6b3a;
+}
+
+.catalog-admin-media-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  padding: 2px;
+}
+
+.catalog-admin-cell-thumb {
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 4px;
+  background: #ddd;
+  display: inline-block;
+}
+
+.catalog-admin-cell-thumb--empty {
+  width: 40px;
+  height: 40px;
+  line-height: 40px;
+  text-align: center;
+  color: #888;
+  font-size: 1.2rem;
+}
+
+.catalog-admin-media-badge {
+  font-size: 0.72rem;
+  color: #555;
+}
+
+.catalog-admin-del {
+  border: 1px solid #c45;
+  background: #fff;
+  color: #a12622;
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+  font-size: 0.78rem;
+}
+
+.catalog-admin-drawer {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: min(360px, 92%);
+  background: #fff;
+  border-left: 1px solid #ddd8ce;
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.08);
+  display: flex;
+  flex-direction: column;
+  padding: 14px;
+  z-index: 2;
+}
+
+.catalog-admin-drawer[hidden] {
+  display: none !important;
+}
+
+.catalog-admin-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.catalog-admin-drawer-hint {
+  margin: 0 0 8px;
+  font-size: 0.8rem;
+  color: #666;
+}
+
+.catalog-admin-drop {
+  flex: 1;
+  min-height: 180px;
+  border: 1px dashed #bbb;
+  border-radius: 8px;
+  padding: 10px;
+  overflow: auto;
+  outline: none;
+}
+
+.catalog-admin-drop.is-drag {
+  border-color: #2f6fed;
+  background: #eef4ff;
+}
+
+.catalog-admin-drop-tip {
+  margin: 10px 0 0;
+  font-size: 0.78rem;
+  color: #888;
+  text-align: center;
+}
+
+.catalog-admin-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.catalog-admin-strip-empty {
+  color: #999;
+  font-size: 0.85rem;
+  padding: 24px 8px;
+  width: 100%;
+  text-align: center;
+}
+
+.catalog-admin-media-card {
+  width: 96px;
+  position: relative;
+}
+
+.catalog-admin-media-preview {
+  width: 96px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: #222;
+  display: block;
+}
+
+.catalog-admin-media-card-ops {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.catalog-admin-media-card-ops button {
+  flex: 1;
+  font-size: 0.7rem;
+  padding: 2px 0;
+  cursor: pointer;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #fafafa;
+}
+
+.catalog-admin-drawer-actions {
+  margin-top: 10px;
+}
