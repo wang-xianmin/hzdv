@@ -141,14 +141,35 @@
   color: #555;
 }
 
+.catalog-admin-cell-rownum {
+  text-align: center;
+  color: #666;
+}
+
+.catalog-admin-cell-ops {
+  text-align: center;
+}
+
 .catalog-admin-del {
-  border: 1px solid #c45;
-  background: #fff;
-  color: #a12622;
+  border: 0;
+  background: transparent;
+  color: #8b1e1e;
   border-radius: 4px;
-  padding: 2px 8px;
+  padding: 4px;
   cursor: pointer;
-  font-size: 0.78rem;
+  line-height: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.catalog-admin-del:hover {
+  color: #c02828;
+  background: rgba(192, 40, 40, 0.08);
+}
+
+.catalog-admin-trash-icon {
+  display: block;
 }
 
 .catalog-admin-drawer {
