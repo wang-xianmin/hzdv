@@ -6,13 +6,14 @@
 export const CATALOG_KIND = {
   PRODUCT: "product",
   SOLUTION: "solution",
+  CASE: "case",
 };
 
 const CREATE_ITEMS_SQL = `
 CREATE TABLE IF NOT EXISTS catalog_items (
   id TEXT PRIMARY KEY,
   kind TEXT NOT NULL DEFAULT 'product'
-    CHECK (kind IN ('product', 'solution')),
+    CHECK (kind IN ('product', 'solution', 'case')),
   name TEXT NOT NULL,
   model TEXT NOT NULL DEFAULT '',
   specs TEXT NOT NULL DEFAULT '',
@@ -48,9 +49,59 @@ const CREATE_MEDIA_INDEX_SQL = `
 CREATE INDEX IF NOT EXISTS idx_catalog_media_item_sort
   ON catalog_media (item_id, sort_order, id)`;
 
+/** 旧表 CHECK 无 case 时重建（保留数据） */
+async function migrateCatalogKindAllowCase(d1) {
+  const meta = await d1
+    .prepare(
+      `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'catalog_items'`
+    )
+    .first();
+  const sql = meta && meta.sql ? String(meta.sql) : "";
+  if (!sql) return;
+  if (sql.includes("'case'") || sql.includes('"case"')) return;
+  if (!/CHECK\s*\(\s*kind\s+IN/i.test(sql)) return;
+
+  await d1.batch([
+    d1.prepare(`
+      CREATE TABLE catalog_items__kind_mig (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL DEFAULT 'product'
+          CHECK (kind IN ('product', 'solution', 'case')),
+        name TEXT NOT NULL,
+        model TEXT NOT NULL DEFAULT '',
+        specs TEXT NOT NULL DEFAULT '',
+        description TEXT NOT NULL DEFAULT '',
+        cover_r2_key TEXT,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        extra_json TEXT NOT NULL DEFAULT '{}',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )`),
+    d1.prepare(`
+      INSERT INTO catalog_items__kind_mig (
+        id, kind, name, model, specs, description, cover_r2_key,
+        is_active, sort_order, extra_json, created_at, updated_at
+      )
+      SELECT
+        id,
+        CASE WHEN kind IN ('product', 'solution', 'case') THEN kind ELSE 'product' END,
+        name, model, specs, description, cover_r2_key,
+        is_active, sort_order, extra_json, created_at, updated_at
+      FROM catalog_items`),
+    d1.prepare(`DROP TABLE catalog_items`),
+    d1.prepare(`ALTER TABLE catalog_items__kind_mig RENAME TO catalog_items`),
+  ]);
+}
+
 export async function ensureCatalogTables(d1) {
   if (!d1) throw new Error("D1 not configured");
   await d1.prepare(CREATE_ITEMS_SQL).run();
+  try {
+    await migrateCatalogKindAllowCase(d1);
+  } catch (e) {
+    // 迁移失败不阻断；新建库已含 case
+  }
   await d1.prepare(CREATE_ITEMS_KIND_INDEX_SQL).run();
   await d1.prepare(CREATE_ITEMS_MODEL_INDEX_SQL).run();
   await d1.prepare(CREATE_MEDIA_SQL).run();
@@ -115,7 +166,10 @@ function nowMs() {
 }
 
 function normalizeKind(raw) {
-  return String(raw || "").trim() === "solution" ? "solution" : "product";
+  const k = String(raw || "").trim().toLowerCase();
+  if (k === "solution") return "solution";
+  if (k === "case") return "case";
+  return "product";
 }
 
 export const EMPTY_SOLUTION_CONTENT = {
@@ -540,8 +594,14 @@ function truncateEmbed(s, n) {
 /** 拼进向量库的文本：名称 + 型号 + 规格 + 方案结构化块 + 说明 */
 export function catalogItemEmbeddingText(row) {
   if (!row || typeof row !== "object") return "";
+  const kindLabel =
+    row.kind === "solution"
+      ? "系统集成方案"
+      : row.kind === "case"
+        ? "案例"
+        : "产品";
   const parts = [
-    row.kind === "solution" ? "系统集成方案" : "产品",
+    kindLabel,
     row.name,
     row.model ? "型号 " + row.model : "",
   ];

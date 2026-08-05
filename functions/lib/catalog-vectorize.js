@@ -84,7 +84,12 @@ export function catalogItemToVectorRecord(item, values) {
     values,
     metadata: {
       source: "catalog",
-      kind: item.kind === "solution" ? "solution" : "product",
+      kind:
+        item.kind === "solution"
+          ? "solution"
+          : item.kind === "case"
+            ? "case"
+            : "product",
       item_id: String(item.id),
       name: truncateMeta(item.name, 120),
       model: truncateMeta(item.model, 80),

@@ -4,10 +4,11 @@
 -- kind:
 --   product  = 单品（阀门、仪表、模块等）
 --   solution = 系统集成方案 / 成套系统
+--   case     = 案例（见 0003_catalog_kind_case.sql）
 CREATE TABLE IF NOT EXISTS catalog_items (
   id TEXT PRIMARY KEY,
   kind TEXT NOT NULL DEFAULT 'product'
-    CHECK (kind IN ('product', 'solution')),
+    CHECK (kind IN ('product', 'solution', 'case')),
   name TEXT NOT NULL,
   model TEXT NOT NULL DEFAULT '',
   specs TEXT NOT NULL DEFAULT '',
