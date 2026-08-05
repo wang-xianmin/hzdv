@@ -274,3 +274,67 @@
 .catalog-admin-drawer-actions {
   margin-top: 10px;
 }
+
+.catalog-admin-drawer-tabs {
+  display: flex;
+  gap: 6px;
+  margin: 0 0 10px;
+}
+
+.catalog-admin-drawer-tab {
+  border: 1px solid #c8c3b8;
+  background: #fff;
+  color: #333;
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.catalog-admin-drawer-tab.is-active {
+  background: #2f2f2f;
+  color: #fff;
+  border-color: #2f2f2f;
+}
+
+.catalog-admin-solution {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: min(52vh, 420px);
+  overflow: auto;
+  margin-bottom: 10px;
+  padding-right: 4px;
+}
+
+.catalog-admin-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.8rem;
+  color: #444;
+}
+
+.catalog-admin-field input,
+.catalog-admin-field textarea {
+  width: 100%;
+  border: 1px solid #ccc6bb;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+  resize: vertical;
+}
+
+.catalog-admin-content-btn {
+  border: 1px solid #8a857a;
+  background: #fff;
+  border-radius: 5px;
+  padding: 2px 8px;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.catalog-admin-drawer-media[hidden],
+.catalog-admin-solution[hidden] {
+  display: none !important;
+}

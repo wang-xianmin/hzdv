@@ -39,3 +39,17 @@ CREATE TABLE IF NOT EXISTS catalog_media (
 
 CREATE INDEX IF NOT EXISTS idx_catalog_media_item_sort
   ON catalog_media (item_id, sort_order, id);
+
+-- 方案（kind=solution）主展区四屏内容存于 extra_json.solution，示例：
+-- {
+--   "solution": {
+--     "tag": "分类标签",
+--     "hero": { "lead": "简介句1", "sublead": "简介句2" },
+--     "summary": { "lead": "简述导语", "highlights": ["要点1","要点2"] },
+--     "overview": {
+--       "features": [], "applications": [], "recommended_for": []
+--     },
+--     "advantages": [{ "title": "优势标题", "body": "正文" }]
+--   }
+-- }
+-- 规格仍用 specs 列；媒体 sort_order：0=Hero 封面，1=简述配图。

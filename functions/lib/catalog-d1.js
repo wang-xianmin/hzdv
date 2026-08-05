@@ -118,11 +118,95 @@ function normalizeKind(raw) {
   return String(raw || "").trim() === "solution" ? "solution" : "product";
 }
 
+export const EMPTY_SOLUTION_CONTENT = {
+  tag: "",
+  hero: { lead: "", sublead: "" },
+  summary: { lead: "", highlights: [] },
+  overview: {
+    features: [],
+    applications: [],
+    recommended_for: [],
+  },
+  advantages: [],
+};
+
+export function parseExtraJson(raw) {
+  if (raw && typeof raw === "object") return raw;
+  try {
+    const o = JSON.parse(String(raw || "{}"));
+    return o && typeof o === "object" ? o : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function normalizeStringList(arr) {
+  if (!Array.isArray(arr)) return [];
+  return arr.map((x) => String(x || "").trim()).filter(Boolean);
+}
+
+function normalizeAdvantages(arr) {
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .map((x) => {
+      if (typeof x === "string") {
+        const t = x.trim();
+        return t ? { title: t, body: "" } : null;
+      }
+      if (!x || typeof x !== "object") return null;
+      const title = String(x.title || "").trim();
+      const body = String(x.body || "").trim();
+      return title || body ? { title, body } : null;
+    })
+    .filter(Boolean);
+}
+
+/** 方案主展区四屏结构化内容（存于 extra_json.solution） */
+export function normalizeSolutionContent(raw) {
+  const s = raw && typeof raw === "object" ? raw : {};
+  const hero = s.hero && typeof s.hero === "object" ? s.hero : {};
+  const summary = s.summary && typeof s.summary === "object" ? s.summary : {};
+  const overview = s.overview && typeof s.overview === "object" ? s.overview : {};
+  return {
+    tag: String(s.tag || "").trim(),
+    hero: {
+      lead: String(hero.lead || "").trim(),
+      sublead: String(hero.sublead || "").trim(),
+    },
+    summary: {
+      lead: String(summary.lead || "").trim(),
+      highlights: normalizeStringList(summary.highlights),
+    },
+    overview: {
+      features: normalizeStringList(overview.features),
+      applications: normalizeStringList(overview.applications),
+      recommended_for: normalizeStringList(overview.recommended_for),
+    },
+    advantages: normalizeAdvantages(s.advantages),
+  };
+}
+
+export function getItemSolution(item) {
+  if (!item || normalizeKind(item.kind) !== "solution") {
+    return normalizeSolutionContent(null);
+  }
+  const extra = parseExtraJson(item.extra_json);
+  return normalizeSolutionContent(extra.solution);
+}
+
+export function mergeExtraJsonSolution(extraJson, solution) {
+  const extra = parseExtraJson(extraJson);
+  extra.solution = normalizeSolutionContent(solution);
+  return JSON.stringify(extra);
+}
+
 function rowToItem(row) {
   if (!row) return null;
-  return {
+  const kind = normalizeKind(row.kind);
+  const extraJson = String(row.extra_json || "{}");
+  const item = {
     id: String(row.id),
-    kind: normalizeKind(row.kind),
+    kind,
     name: String(row.name || ""),
     model: String(row.model || ""),
     specs: String(row.specs || ""),
@@ -133,10 +217,14 @@ function rowToItem(row) {
       : "",
     is_active: Number(row.is_active) !== 0 ? 1 : 0,
     sort_order: Number(row.sort_order) || 0,
-    extra_json: String(row.extra_json || "{}"),
+    extra_json: extraJson,
     created_at: Number(row.created_at) || 0,
     updated_at: Number(row.updated_at) || 0,
   };
+  if (kind === "solution") {
+    item.solution = getItemSolution(item);
+  }
+  return item;
 }
 
 function rowToMedia(row) {
@@ -222,14 +310,36 @@ export async function createCatalogItem(d1, fields) {
         : 0
       : 1;
   const sortOrder = Math.max(0, Math.floor(Number(fields && fields.sort_order) || 0));
+  let extraJson = "{}";
+  if (fields && fields.extra_json != null) {
+    extraJson =
+      typeof fields.extra_json === "string"
+        ? fields.extra_json
+        : JSON.stringify(fields.extra_json);
+  }
+  if (fields && fields.solution != null) {
+    extraJson = mergeExtraJsonSolution(extraJson, fields.solution);
+  }
   await d1
     .prepare(
       `INSERT INTO catalog_items (
         id, kind, name, model, specs, description, cover_r2_key,
         is_active, sort_order, extra_json, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, '{}', ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)`
     )
-    .bind(id, kind, name, model, specs, description, isActive, sortOrder, t, t)
+    .bind(
+      id,
+      kind,
+      name,
+      model,
+      specs,
+      description,
+      isActive,
+      sortOrder,
+      extraJson,
+      t,
+      t
+    )
     .run();
   return getCatalogItem(d1, id);
 }
@@ -265,12 +375,22 @@ export async function updateCatalogItem(d1, id, fields) {
   if (fields && Object.prototype.hasOwnProperty.call(fields, "cover_r2_key")) {
     cover = normalizeCatalogR2Key(fields.cover_r2_key) || null;
   }
+  let extraJson = cur.extra_json || "{}";
+  if (fields && fields.extra_json != null) {
+    extraJson =
+      typeof fields.extra_json === "string"
+        ? fields.extra_json
+        : JSON.stringify(fields.extra_json);
+  }
+  if (fields && fields.solution != null) {
+    extraJson = mergeExtraJsonSolution(extraJson, fields.solution);
+  }
   const t = nowMs();
   await d1
     .prepare(
       `UPDATE catalog_items SET
         kind = ?, name = ?, model = ?, specs = ?, description = ?,
-        cover_r2_key = ?, is_active = ?, sort_order = ?, updated_at = ?
+        cover_r2_key = ?, is_active = ?, sort_order = ?, extra_json = ?, updated_at = ?
        WHERE id = ?`
     )
     .bind(
@@ -282,6 +402,7 @@ export async function updateCatalogItem(d1, id, fields) {
       cover,
       isActive,
       sortOrder,
+      extraJson,
       t,
       String(id)
     )
@@ -410,18 +531,79 @@ export async function setCatalogCover(d1, itemId, r2Key) {
   return getCatalogItem(d1, itemId);
 }
 
-/** 拼进向量库的文本：名称 + 型号 + 规格 + 说明 */
+function truncateEmbed(s, n) {
+  const t = String(s || "").trim();
+  if (t.length <= n) return t;
+  return t.slice(0, n);
+}
+
+/** 拼进向量库的文本：名称 + 型号 + 规格 + 方案结构化块 + 说明 */
 export function catalogItemEmbeddingText(row) {
   if (!row || typeof row !== "object") return "";
   const parts = [
     row.kind === "solution" ? "系统集成方案" : "产品",
     row.name,
     row.model ? "型号 " + row.model : "",
-    row.specs,
-    row.description,
   ];
+  if (row.kind === "solution") {
+    const sol = row.solution || getItemSolution(row);
+    if (sol.tag) parts.push(sol.tag);
+    if (sol.hero.lead) parts.push(sol.hero.lead);
+    if (sol.hero.sublead) parts.push(sol.hero.sublead);
+    if (sol.summary.lead) parts.push(sol.summary.lead);
+    parts.push(...sol.summary.highlights);
+    parts.push(...sol.overview.features);
+    parts.push(...sol.overview.applications);
+    parts.push(...sol.overview.recommended_for);
+    for (const adv of sol.advantages) {
+      parts.push(adv.title);
+      if (adv.body) parts.push(truncateEmbed(adv.body, 80));
+    }
+  }
+  parts.push(row.specs);
+  parts.push(row.description);
   return parts
     .map((s) => String(s || "").trim())
     .filter(Boolean)
     .join("\n");
+}
+
+/** 对外 API：主展区用精简视图 */
+export function catalogItemPublicView(item) {
+  if (!item) return null;
+  const media = (item.media || []).map((m) => ({
+    id: m.id,
+    media_type: m.media_type,
+    url: m.url,
+    sort_order: m.sort_order,
+    caption: m.caption,
+  }));
+  const images = media.filter((m) => m.media_type === "image");
+  const heroImage =
+    item.cover_url || (images[0] && images[0].url) || "";
+  const summaryImage =
+    (images[1] && images[1].url) || heroImage || "";
+  const solution =
+    item.kind === "solution"
+      ? item.solution || getItemSolution(item)
+      : null;
+  const blurb =
+    (solution &&
+      (solution.hero.lead ||
+        solution.summary.lead ||
+        solution.hero.sublead)) ||
+    String(item.description || "").trim().slice(0, 120);
+  return {
+    id: item.id,
+    kind: item.kind,
+    name: item.name,
+    model: item.model,
+    specs: item.specs,
+    cover_url: item.cover_url || heroImage,
+    hero_image: heroImage,
+    summary_image: summaryImage,
+    media,
+    solution,
+    blurb,
+  };
 }

@@ -2161,6 +2161,7 @@
     }
     appendMessage("user", q);
     inputEl.value = "";
+    searchCatalogForShowcase(q);
     var ocrPayload = pendingOcr;
     clearAttachment({ keepOcr: true });
     pendingOcr = null;
@@ -2818,6 +2819,40 @@
     if (root && typeof root._aiClosePlusMenu === "function") root._aiClosePlusMenu();
   }
 
+  function dispatchAgentVisible() {
+    try {
+      document.dispatchEvent(
+        new CustomEvent("hzdv:agent-visible", {
+          detail: { visible: !!visible, opened: !!opened },
+        })
+      );
+    } catch (e) {}
+  }
+
+  function searchCatalogForShowcase(query) {
+    var q = String(query || "").trim();
+    if (!q) return;
+    var url =
+      "/api/catalog-public?q=" +
+      encodeURIComponent(q) +
+      "&kind=solution&topK=2";
+    fetch(url, { cache: "no-store" })
+      .then(function (r) {
+        return r.json();
+      })
+      .then(function (j) {
+        if (!j || !j.success || !j.items || !j.items.length) return;
+        try {
+          document.dispatchEvent(
+            new CustomEvent("hzdv:catalog-hits", {
+              detail: { query: q, items: j.items },
+            })
+          );
+        } catch (e2) {}
+      })
+      .catch(function () {});
+  }
+
   function showLauncher() {
     ensureDom();
     renderCopy();
@@ -2830,6 +2865,7 @@
     syncChattingClass();
     root.setAttribute("aria-hidden", "false");
     syncNavActive();
+    dispatchAgentVisible();
   }
 
   function hideAll() {
@@ -2844,6 +2880,7 @@
     root.classList.remove("is-visible", "is-open");
     root.setAttribute("aria-hidden", "true");
     syncNavActive();
+    dispatchAgentVisible();
   }
 
   function openChat() {
@@ -2861,6 +2898,7 @@
         inputEl.focus();
       } catch (e) {}
     }, 40);
+    dispatchAgentVisible();
   }
 
   function closeChat() {
@@ -2871,6 +2909,7 @@
     root.classList.remove("is-open");
     root.classList.add("is-visible");
     syncNavActive();
+    dispatchAgentVisible();
   }
 
   function syncNavActive() {
