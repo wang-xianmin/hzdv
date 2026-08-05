@@ -408,12 +408,16 @@ export async function updateCatalogItem(d1, id, fields) {
       ? String(fields.name).trim() || cur.name
       : cur.name;
   const model =
-    fields && fields.model != null ? String(fields.model).trim() : cur.model;
+    fields && Object.prototype.hasOwnProperty.call(fields, "model")
+      ? String(fields.model == null ? "" : fields.model).trim()
+      : cur.model;
   const specs =
-    fields && fields.specs != null ? String(fields.specs) : cur.specs;
+    fields && Object.prototype.hasOwnProperty.call(fields, "specs")
+      ? String(fields.specs == null ? "" : fields.specs)
+      : cur.specs;
   const description =
-    fields && fields.description != null
-      ? String(fields.description)
+    fields && Object.prototype.hasOwnProperty.call(fields, "description")
+      ? String(fields.description == null ? "" : fields.description)
       : cur.description;
   const isActive =
     fields && fields.is_active != null
