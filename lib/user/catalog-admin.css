@@ -271,6 +271,14 @@
   background: #fafafa;
 }
 
+.catalog-admin-media-ord {
+  flex: 1;
+  font-size: 0.7rem;
+  color: #5a574f;
+  line-height: 1.4;
+  padding: 2px 0;
+}
+
 .catalog-admin-drawer-actions {
   margin-top: 10px;
 }

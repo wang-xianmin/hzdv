@@ -309,6 +309,33 @@ export async function listCatalogMedia(d1, itemId) {
   return ((rs && rs.results) || []).map(rowToMedia).filter(Boolean);
 }
 
+function applyFirstMediaCover(item) {
+  if (!item) return item;
+  const media = item.media || [];
+  const firstImg = media.find((m) => m.media_type === "image") || media[0];
+  if (firstImg) {
+    item.cover_r2_key = firstImg.r2_key;
+    item.cover_url = firstImg.url;
+  } else {
+    item.cover_r2_key = "";
+    item.cover_url = "";
+  }
+  return item;
+}
+
+/** 约定：媒体按 sort_order 排序后，第 1 张图 = 封面/缩略图 */
+async function syncCoverToFirstMedia(d1, itemId) {
+  const media = await listCatalogMedia(d1, itemId);
+  const firstImg = media.find((m) => m.media_type === "image") || media[0];
+  const key = firstImg ? firstImg.r2_key : null;
+  await d1
+    .prepare(
+      `UPDATE catalog_items SET cover_r2_key = ?, updated_at = ? WHERE id = ?`
+    )
+    .bind(key, nowMs(), String(itemId))
+    .run();
+}
+
 export async function listCatalogItems(d1, opts) {
   const includeInactive = !!(opts && opts.includeInactive);
   const sql = includeInactive
@@ -318,14 +345,7 @@ export async function listCatalogItems(d1, opts) {
   const items = ((rs && rs.results) || []).map(rowToItem).filter(Boolean);
   for (const item of items) {
     item.media = await listCatalogMedia(d1, item.id);
-    if (!item.cover_r2_key && item.media.length) {
-      const cover =
-        item.media.find((m) => m.media_type === "image") || item.media[0];
-      if (cover) {
-        item.cover_r2_key = cover.r2_key;
-        item.cover_url = cover.url;
-      }
-    }
+    applyFirstMediaCover(item);
     item.media_counts = {
       image: item.media.filter((m) => m.media_type === "image").length,
       video: item.media.filter((m) => m.media_type === "video").length,
@@ -342,6 +362,7 @@ export async function getCatalogItem(d1, id) {
   const item = rowToItem(row);
   if (!item) return null;
   item.media = await listCatalogMedia(d1, item.id);
+  applyFirstMediaCover(item);
   item.media_counts = {
     image: item.media.filter((m) => m.media_type === "image").length,
     video: item.media.filter((m) => m.media_type === "video").length,
@@ -519,19 +540,7 @@ export async function addCatalogMedia(d1, itemId, meta) {
     )
     .bind(String(itemId), mediaType, key, sortOrder, caption, t)
     .run();
-  if (!item.cover_r2_key && mediaType === "image") {
-    await d1
-      .prepare(
-        `UPDATE catalog_items SET cover_r2_key = ?, updated_at = ? WHERE id = ?`
-      )
-      .bind(key, t, String(itemId))
-      .run();
-  } else {
-    await d1
-      .prepare(`UPDATE catalog_items SET updated_at = ? WHERE id = ?`)
-      .bind(t, String(itemId))
-      .run();
-  }
+  await syncCoverToFirstMedia(d1, itemId);
   const mediaId =
     rs && rs.meta && rs.meta.last_row_id != null
       ? Number(rs.meta.last_row_id)
@@ -556,17 +565,7 @@ export async function deleteCatalogMedia(d1, r2, mediaId) {
     .prepare(`DELETE FROM catalog_media WHERE id = ?`)
     .bind(Number(mediaId))
     .run();
-  const item = await getCatalogItem(d1, itemId);
-  if (item && item.cover_r2_key === key) {
-    const nextImg = (item.media || []).find((m) => m.media_type === "image");
-    const nextKey = nextImg ? nextImg.r2_key : null;
-    await d1
-      .prepare(
-        `UPDATE catalog_items SET cover_r2_key = ?, updated_at = ? WHERE id = ?`
-      )
-      .bind(nextKey, nowMs(), itemId)
-      .run();
-  }
+  await syncCoverToFirstMedia(d1, itemId);
   if (r2 && key) {
     try {
       await r2.delete(key);
@@ -643,8 +642,8 @@ export function catalogItemPublicView(item) {
     caption: m.caption,
   }));
   const images = media.filter((m) => m.media_type === "image");
-  const heroImage =
-    item.cover_url || (images[0] && images[0].url) || "";
+  // 约定：第 1 张图 = 封面/缩略图/Hero；第 2 张 = 简述配图
+  const heroImage = (images[0] && images[0].url) || item.cover_url || "";
   const summaryImage =
     (images[1] && images[1].url) || heroImage || "";
   const solution =
