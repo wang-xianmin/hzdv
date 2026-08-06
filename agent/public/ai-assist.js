@@ -2917,6 +2917,19 @@
     /你们|咱们|咱家|贵司|本公司|本站|迪微|HZDV|hzdv|贵公司|你们公司/i;
   var BROWSE_ASK =
     /有什么|有哪些|都有什么|介绍一下|看看|列一下|展示一下|有没有|能否介绍|想了解/;
+  var DEFAULT_CATALOG_MAP = {
+    product: ["产品", "单品", "设备", "阀门", "仪表", "模块", "配件", "货品", "商品"],
+    solution: [
+      "方案",
+      "系统集成",
+      "成套",
+      "产线",
+      "装配线",
+      "集成系统",
+      "交钥匙",
+    ],
+    case: ["案例", "例子", "实例", "应用案例", "成功案例", "项目案例", "样板"],
+  };
   var DEFAULT_CATALOG_NOUN =
     /产品|单品|设备|阀门|仪表|模块|配件|型号|货品|商品|方案|系统集成|成套|产线|装配线|集成系统|交钥匙|案例|例子|实例|应用案例|成功案例|项目案例|目录|型号库/;
 
@@ -2924,11 +2937,15 @@
     return String(s || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
 
+  function activeSynonymMap() {
+    return synonymMapCache || DEFAULT_CATALOG_MAP;
+  }
+
   function catalogNounRegex() {
-    if (!synonymMapCache) return DEFAULT_CATALOG_NOUN;
+    var map = activeSynonymMap();
     var terms = [];
     ["product", "solution", "case"].forEach(function (k) {
-      (synonymMapCache[k] || []).forEach(function (a) {
+      (map[k] || []).forEach(function (a) {
         var t = String(a || "").trim();
         if (t && terms.indexOf(t) < 0) terms.push(t);
       });
@@ -2943,6 +2960,27 @@
     } catch (e) {
       return DEFAULT_CATALOG_NOUN;
     }
+  }
+
+  /** @returns {"product"|"solution"|"case"|null} */
+  function detectCatalogKind(message) {
+    var s = String(message || "").trim();
+    if (!s) return null;
+    var map = activeSynonymMap();
+    var best = null;
+    var bestIdx = Infinity;
+    ["product", "solution", "case"].forEach(function (kind) {
+      (map[kind] || []).forEach(function (a) {
+        var t = String(a || "").trim();
+        if (!t) return;
+        var idx = s.toLowerCase().indexOf(t.toLowerCase());
+        if (idx >= 0 && idx < bestIdx) {
+          bestIdx = idx;
+          best = kind;
+        }
+      });
+    });
+    return best;
   }
 
   function ensureSynonymMap() {
@@ -2987,34 +3025,49 @@
     return false;
   }
 
+  function filterItemsByKind(items, kind) {
+    if (!kind || !items || !items.length) return items || [];
+    return items.filter(function (it) {
+      return String((it && it.kind) || "product") === kind;
+    });
+  }
+
   /** @returns {Promise<object[]>} */
   function searchCatalogForShowcase(query) {
     var q = String(query || "").trim();
     if (!q) return Promise.resolve([]);
     return ensureSynonymMap().then(function () {
       var browse = isBrowseCatalogQuery(q);
+      var kind = detectCatalogKind(q);
+      var kindQs = kind ? "&kind=" + encodeURIComponent(kind) : "";
       var url = browse
-        ? "/api/catalog-public?browse=1&topK=10"
-        : "/api/catalog-public?q=" + encodeURIComponent(q) + "&topK=5";
+        ? "/api/catalog-public?browse=1&topK=20" + kindQs
+        : "/api/catalog-public?q=" +
+          encodeURIComponent(q) +
+          "&topK=8" +
+          kindQs;
       return fetch(url, { cache: "no-store" })
         .then(function (r) {
           return r.json();
         })
         .then(function (j) {
           var items = j && Array.isArray(j.items) ? j.items : [];
+          items = filterItemsByKind(items, kind);
           if (
             (!j || j.success === false || !items.length) &&
             !browse &&
             isCompanyCatalogQuery(q)
           ) {
-            return fetch("/api/catalog-public?browse=1&topK=10", {
-              cache: "no-store",
-            })
+            return fetch(
+              "/api/catalog-public?browse=1&topK=20" + kindQs,
+              { cache: "no-store" }
+            )
               .then(function (r2) {
                 return r2.json();
               })
               .then(function (j2) {
-                return j2 && Array.isArray(j2.items) ? j2.items : [];
+                var list = j2 && Array.isArray(j2.items) ? j2.items : [];
+                return filterItemsByKind(list, kind);
               })
               .catch(function () {
                 return [];
@@ -3039,7 +3092,7 @@
             try {
               document.dispatchEvent(
                 new CustomEvent("hzdv:catalog-hits", {
-                  detail: { query: q, items: items },
+                  detail: { query: q, items: items, kind: kind },
                 })
               );
             } catch (e2) {}

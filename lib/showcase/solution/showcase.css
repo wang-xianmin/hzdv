@@ -34,31 +34,33 @@
 }
 
 .ss-recommend {
-  padding: 16px 20px 0;
+  padding: 16px 20px 20px;
   background: #fff;
   border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+  min-height: 100%;
+  box-sizing: border-box;
 }
 
 .ss-recommend-title {
   font-size: 13px;
   font-weight: 600;
   color: #64748b;
-  margin: 0 0 12px;
+  margin: 0 0 14px;
   letter-spacing: 0.02em;
 }
 
 .ss-recommend-strip {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 14px;
-  overflow-x: auto;
-  padding-bottom: 16px;
-  scroll-snap-type: x mandatory;
-  -webkit-overflow-scrolling: touch;
+  padding-bottom: 4px;
+  overflow: visible;
+  scroll-snap-type: none;
 }
 
 .ss-recommend-card {
-  flex: 0 0 min(280px, 72vw);
-  scroll-snap-align: start;
+  flex: none;
+  width: 100%;
   border: 1px solid rgba(15, 23, 42, 0.1);
   border-radius: 12px;
   overflow: hidden;
@@ -75,7 +77,8 @@
   box-shadow: 0 8px 24px rgba(61, 106, 150, 0.18);
 }
 
-.ss-recommend-card img {
+.ss-recommend-card img,
+.ss-recommend-card-ph {
   display: block;
   width: 100%;
   aspect-ratio: 16 / 10;
@@ -84,25 +87,23 @@
 }
 
 .ss-recommend-card-body {
-  padding: 12px 14px 14px;
+  padding: 10px 12px 12px;
 }
 
 .ss-recommend-card h3 {
-  margin: 0 0 6px;
-  font-size: 15px;
+  margin: 0;
+  font-size: 14px;
   font-weight: 600;
   color: #1a2332;
-}
-
-.ss-recommend-card p {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.45;
-  color: #5a6a7e;
+  line-height: 1.35;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+.ss-recommend-card p {
+  display: none;
 }
 
 .ss-recommend-table-wrap {

@@ -15,7 +15,7 @@ import {
   listCatalogItems,
 } from "../lib/catalog-d1.js";
 import { queryCatalogVectors } from "../lib/catalog-vectorize.js";
-import { isBrowseCatalogQuery } from "../lib/catalog-query-intent.js";
+import { isBrowseCatalogQuery, detectCatalogKind } from "../lib/catalog-query-intent.js";
 import { getCatalogSynonymMap } from "../lib/catalog-synonyms.js";
 
 function jsonResponse(body, status = 200) {
@@ -69,9 +69,9 @@ export async function onRequest(context) {
   const q = String(
     url.searchParams.get("q") || url.searchParams.get("query") || ""
   ).trim();
-  const kind = String(url.searchParams.get("kind") || "").trim() || null;
+  let kind = String(url.searchParams.get("kind") || "").trim() || null;
   const topK = Math.min(
-    10,
+    20,
     Math.max(1, Number(url.searchParams.get("topK")) || 5)
   );
   const browse =
@@ -92,6 +92,11 @@ export async function onRequest(context) {
     synonymMap = await getCatalogSynonymMap(d1);
   } catch (e) {
     synonymMap = null;
+  }
+
+  // 未显式传 kind 时，从问句推断（问「产品」则不混入方案/案例）
+  if (!kind && q) {
+    kind = detectCatalogKind(q, synonymMap);
   }
 
   if (id) {

@@ -43,6 +43,30 @@ export function buildCatalogNounRegex(synonymMap) {
   return new RegExp(terms.map(escapeRegExp).join("|"));
 }
 
+/**
+ * 从问句推断目录类型：product / solution / case；无法判断则 null
+ * 多种名词同时出现时，取问句中最先出现的一类。
+ */
+export function detectCatalogKind(message, synonymMap) {
+  const s = String(message || "").trim();
+  if (!s) return null;
+  const map = synonymMap || DEFAULT_MAP;
+  let best = null;
+  let bestIdx = Infinity;
+  for (const kind of ["product", "solution", "case"]) {
+    for (const a of map[kind] || []) {
+      const t = String(a || "").trim();
+      if (!t) continue;
+      const idx = s.toLowerCase().indexOf(t.toLowerCase());
+      if (idx >= 0 && idx < bestIdx) {
+        bestIdx = idx;
+        best = kind;
+      }
+    }
+  }
+  return best;
+}
+
 export function isBrowseCatalogQuery(message, synonymMap) {
   const s = String(message || "").trim();
   if (!s) return false;
