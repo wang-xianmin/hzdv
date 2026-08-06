@@ -248,6 +248,33 @@ export function getItemSolution(item) {
   return normalizeSolutionContent(extra.solution);
 }
 
+/**
+ * 产品/案例详情：特点与适用场景
+ * 优先 extra_json.product；否则用 description 按行拆成特点。
+ */
+export function getItemProductContent(item) {
+  const empty = { features: [], applications: [] };
+  if (!item) return empty;
+  const kind = normalizeKind(item.kind);
+  if (kind === "solution") return empty;
+  const extra = parseExtraJson(item.extra_json);
+  const p =
+    (extra.product && typeof extra.product === "object" && extra.product) ||
+    (extra.case && typeof extra.case === "object" && extra.case) ||
+    {};
+  let features = normalizeStringList(p.features);
+  let applications = normalizeStringList(
+    p.applications || p.scenarios || p.use_cases
+  );
+  if (!features.length) {
+    features = String(item.description || "")
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+  return { features, applications };
+}
+
 export function mergeExtraJsonSolution(extraJson, solution) {
   const extra = parseExtraJson(extraJson);
   extra.solution = normalizeSolutionContent(solution);
@@ -277,6 +304,8 @@ function rowToItem(row) {
   };
   if (kind === "solution") {
     item.solution = getItemSolution(item);
+  } else {
+    item.product = getItemProductContent(item);
   }
   return item;
 }
@@ -323,7 +352,7 @@ function applyFirstMediaCover(item) {
   return item;
 }
 
-/** 约定：媒体按 sort_order 排序后，第 1 张图 = 封面/缩略图 */
+/** 约定：媒体按 sort_order 排序后，第 1 张图 = 封面/缩略图；第 2 张 = 详情主图 */
 async function syncCoverToFirstMedia(d1, itemId) {
   const media = await listCatalogMedia(d1, itemId);
   const firstImg = media.find((m) => m.media_type === "image") || media[0];
@@ -659,13 +688,17 @@ export function catalogItemPublicView(item) {
     caption: m.caption,
   }));
   const images = media.filter((m) => m.media_type === "image");
-  // 约定：第 1 张图 = 封面/缩略图/Hero；第 2 张 = 简述配图
+  // 约定：第 1 张图 = 封面/缩略图；第 2 张 = 产品详情主图（方案简述配图）
   const heroImage = (images[0] && images[0].url) || item.cover_url || "";
   const summaryImage =
     (images[1] && images[1].url) || heroImage || "";
   const solution =
     item.kind === "solution"
       ? item.solution || getItemSolution(item)
+      : null;
+  const product =
+    item.kind !== "solution"
+      ? item.product || getItemProductContent(item)
       : null;
   const blurb =
     (solution &&
@@ -679,11 +712,15 @@ export function catalogItemPublicView(item) {
     name: item.name,
     model: item.model,
     specs: item.specs,
+    description: String(item.description || "").trim(),
     cover_url: item.cover_url || heroImage,
     hero_image: heroImage,
     summary_image: summaryImage,
     media,
     solution,
+    product,
+    features: (product && product.features) || [],
+    applications: (product && product.applications) || [],
     blurb,
   };
 }

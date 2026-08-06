@@ -106,6 +106,150 @@
   display: none;
 }
 
+/* —— 产品详情页：图 → 规格型号 → 特点 / 适用场景 —— */
+.ss-detail-bar {
+  padding: 12px 20px 0;
+  background: #fff;
+}
+
+.ss-product {
+  background: #fff;
+  min-height: 100%;
+  padding: 0 0 40px;
+}
+
+.ss-product-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  padding: 12px 20px 8px;
+}
+
+.ss-product-back {
+  appearance: none;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  background: #f8fafc;
+  color: #334155;
+  font-size: 13px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.ss-product-back:hover {
+  border-color: #3d6a96;
+  color: #1e3a5f;
+}
+
+.ss-product-name {
+  margin: 0;
+  font-size: clamp(1.15rem, 2vw, 1.45rem);
+  font-weight: 700;
+  color: #1a2332;
+  flex: 1 1 200px;
+}
+
+.ss-product-hero {
+  margin: 0 20px 20px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #e8edf2;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.ss-product-hero img {
+  display: block;
+  width: 100%;
+  max-height: min(52vh, 520px);
+  object-fit: cover;
+  aspect-ratio: 16 / 9;
+}
+
+.ss-product-hero--empty {
+  min-height: 180px;
+}
+
+.ss-product-specs,
+.ss-product-cols {
+  padding: 0 20px 8px;
+}
+
+.ss-product-specs h2,
+.ss-product-col h2 {
+  margin: 0 0 12px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #1e3a5f;
+  letter-spacing: 0.02em;
+}
+
+.ss-product-spec-dl {
+  margin: 0 0 24px;
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  background: #f8fafc;
+  border-radius: 10px;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.ss-product-spec-dl > div {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 8px 12px;
+  align-items: start;
+}
+
+.ss-product-spec-dl dt {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.ss-product-spec-dl dd {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: #1a2332;
+}
+
+.ss-product-specs-body {
+  white-space: pre-wrap;
+}
+
+.ss-product-cols {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px 28px;
+  margin-top: 4px;
+}
+
+.ss-product-col ul {
+  margin: 0;
+  padding: 0 0 0 1.15em;
+  font-size: 14px;
+  line-height: 1.65;
+  color: #334155;
+}
+
+.ss-product-col li + li {
+  margin-top: 8px;
+}
+
+.ss-product-empty {
+  margin: 0;
+  font-size: 13px;
+  color: #94a3b8;
+}
+
+@media (max-width: 700px) {
+  .ss-product-cols {
+    grid-template-columns: 1fr;
+  }
+}
+
 .ss-recommend-table-wrap {
   margin-top: 8px;
   padding-bottom: 16px;

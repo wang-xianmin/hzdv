@@ -3209,6 +3209,26 @@
     else if (visible) hideAll();
   });
 
+  document.addEventListener("hzdv:catalog-item-open", function (e) {
+    var d = (e && e.detail) || {};
+    if (!d.name || !opened) return;
+    var kindZh =
+      d.kind === "solution"
+        ? t("方案", "solution")
+        : d.kind === "case"
+          ? t("案例", "case")
+          : t("产品", "product");
+    var tip =
+      t("已在左侧打开", "Opened on the left: ") +
+      kindZh +
+      "「" +
+      d.name +
+      "」" +
+      (d.model ? "（" + d.model + "）" : "") +
+      t("。", ".");
+    appendAssistant(tip, { modelBadge: t("目录", "Catalog") });
+  });
+
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", bindNav);
   } else {
