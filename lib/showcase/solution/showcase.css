@@ -185,10 +185,28 @@
   min-height: 180px;
 }
 
-/* ATS 风格：主图下方标题 / 特征 / 键值网格 */
+/* ATS 风格：主图下方型号大标题 / 特征 / 键值网格 */
 .ss-product-body {
   padding: 8px 28px 40px;
   max-width: 52rem;
+}
+
+.ss-product-model {
+  margin: 16px 0 0;
+  font-size: clamp(2rem, 4.2vw, 2.85rem);
+  font-weight: 800;
+  color: #111827;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+  word-break: break-word;
+}
+
+.ss-product-name-sub {
+  margin: 8px 0 0;
+  font-size: 15px;
+  font-weight: 500;
+  color: #64748b;
+  line-height: 1.4;
 }
 
 .ss-product-title {
@@ -211,7 +229,7 @@
 .ss-product-accent {
   width: 3.25rem;
   height: 3px;
-  margin: 16px 0 28px;
+  margin: 18px 0 28px;
   background: #2f6fed;
   border-radius: 2px;
 }
