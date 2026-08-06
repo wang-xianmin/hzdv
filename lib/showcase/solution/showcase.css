@@ -317,6 +317,134 @@
   }
 }
 
+/* —— 案例详情：元信息 + 三栏总结 + 详细叙述 —— */
+.ss-case {
+  background: #fff;
+  min-height: 100%;
+  padding: 0 0 40px;
+}
+
+.ss-case-body {
+  padding: 8px 28px 40px;
+  max-width: 56rem;
+}
+
+.ss-case-title {
+  margin: 16px 0 0;
+  font-size: clamp(1.75rem, 3.2vw, 2.4rem);
+  font-weight: 800;
+  color: #111827;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.ss-case-lead {
+  margin: 12px 0 0;
+  font-size: 15px;
+  line-height: 1.65;
+  color: #475569;
+  max-width: 42rem;
+}
+
+.ss-case-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 8px 0 28px;
+}
+
+.ss-case-meta-card {
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 10px;
+  padding: 14px 16px;
+  background: #fff;
+}
+
+.ss-case-meta-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+  margin-bottom: 6px;
+}
+
+.ss-case-meta-value {
+  font-size: 15px;
+  font-weight: 700;
+  color: #1a2332;
+  line-height: 1.4;
+}
+
+.ss-case-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin: 0 0 36px;
+}
+
+.ss-case-card {
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 12px;
+  padding: 18px 16px 16px;
+  background: #fff;
+}
+
+.ss-case-card-title {
+  margin: 0 0 12px;
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: #111827;
+}
+
+.ss-case-card ul {
+  margin: 0;
+  padding: 0 0 0 1.1em;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #334155;
+}
+
+.ss-case-card li + li {
+  margin-top: 8px;
+}
+
+.ss-case-detail-block {
+  margin: 0 0 28px;
+  max-width: 40rem;
+}
+
+.ss-case-detail-title {
+  margin: 0 0 8px;
+  font-size: clamp(1.35rem, 2.4vw, 1.75rem);
+  font-weight: 800;
+  color: #111827;
+}
+
+.ss-case-detail-sub {
+  margin: 0 0 12px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #2f6fed;
+  line-height: 1.4;
+}
+
+.ss-case-detail-body {
+  font-size: 15px;
+  line-height: 1.7;
+  color: #334155;
+}
+
+@media (max-width: 900px) {
+  .ss-case-meta,
+  .ss-case-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .ss-case-body {
+    padding: 4px 18px 32px;
+  }
+}
+
+
 .ss-recommend-table-wrap {
   margin-top: 8px;
   padding-bottom: 16px;

@@ -440,11 +440,10 @@ export function getItemProductContent(item) {
   };
   if (!item) return empty;
   const kind = normalizeKind(item.kind);
-  if (kind === "solution") return empty;
+  if (kind === "solution" || kind === "case") return empty;
   const extra = parseExtraJson(item.extra_json);
   const p =
     (extra.product && typeof extra.product === "object" && extra.product) ||
-    (extra.case && typeof extra.case === "object" && extra.case) ||
     {};
   let features = normalizeStringList(p.features);
   let applications = normalizeStringList(
@@ -475,13 +474,69 @@ export function getItemProductContent(item) {
   };
 }
 
+function normalizeCaseSectionSummary(raw, fallbackTitle) {
+  const s = raw && typeof raw === "object" ? raw : {};
+  return {
+    title: String(s.title || fallbackTitle || "").trim(),
+    bullets: normalizeStringList(s.bullets || s.points || s.items),
+  };
+}
+
+function normalizeCaseSectionDetail(raw, fallbackTitle) {
+  const s = raw && typeof raw === "object" ? raw : {};
+  return {
+    title: String(s.title || fallbackTitle || "").trim(),
+    subtitle: String(s.subtitle || s.lead || "").trim(),
+    body: String(s.body || s.text || s.content || "").trim(),
+  };
+}
+
+/** 案例 ATS 结构（存于 extra_json.case）：meta + summary 三卡 + detail 长文 */
+export function normalizeCaseContent(raw) {
+  const c = raw && typeof raw === "object" ? raw : {};
+  const metaRaw =
+    (c.meta && typeof c.meta === "object" && c.meta) ||
+    (c.attrs && typeof c.attrs === "object" && !Array.isArray(c.attrs) && c.attrs) ||
+    {};
+  const metaPairs = normalizeAttrPairs(metaRaw);
+  const meta = {};
+  for (const a of metaPairs) {
+    if (a && a.label && a.value) meta[a.label] = a.value;
+  }
+  const sum =
+    (c.summary && typeof c.summary === "object" && c.summary) || {};
+  const det =
+    (c.detail && typeof c.detail === "object" && c.detail) || {};
+  return {
+    meta,
+    summary: {
+      challenge: normalizeCaseSectionSummary(sum.challenge, "挑战"),
+      solution: normalizeCaseSectionSummary(sum.solution, "解决方案"),
+      result: normalizeCaseSectionSummary(sum.result, "结果"),
+    },
+    detail: {
+      customer: normalizeCaseSectionDetail(det.customer, "顾客"),
+      challenge: normalizeCaseSectionDetail(det.challenge, "挑战"),
+      solution: normalizeCaseSectionDetail(det.solution, "解决方案"),
+      result: normalizeCaseSectionDetail(det.result, "结果"),
+    },
+  };
+}
+
+export function getItemCaseContent(item) {
+  const empty = normalizeCaseContent({});
+  if (!item || normalizeKind(item.kind) !== "case") return empty;
+  const extra = parseExtraJson(item.extra_json);
+  return normalizeCaseContent(extra.case);
+}
+
 export function mergeExtraJsonSolution(extraJson, solution) {
   const extra = parseExtraJson(extraJson);
   extra.solution = normalizeSolutionContent(solution);
   return JSON.stringify(extra);
 }
 
-/** 产品/案例结构化字段（存于 extra_json.product / .case） */
+/** 产品结构化字段（存于 extra_json.product） */
 export function normalizeProductExtraContent(raw) {
   const p = raw && typeof raw === "object" ? raw : {};
   const pairs = normalizeAttrPairs(p.attrs || p.fields || p.meta || p.ext);
@@ -502,15 +557,15 @@ export function normalizeProductExtraContent(raw) {
   };
 }
 
-export function mergeExtraJsonProduct(extraJson, product, kind) {
+export function mergeExtraJsonProduct(extraJson, product) {
   const extra = parseExtraJson(extraJson);
-  const normalized = normalizeProductExtraContent(product);
-  const k = normalizeKind(kind);
-  if (k === "case") {
-    extra.case = normalized;
-  } else {
-    extra.product = normalized;
-  }
+  extra.product = normalizeProductExtraContent(product);
+  return JSON.stringify(extra);
+}
+
+export function mergeExtraJsonCase(extraJson, caseContent) {
+  const extra = parseExtraJson(extraJson);
+  extra.case = normalizeCaseContent(caseContent);
   return JSON.stringify(extra);
 }
 
@@ -537,6 +592,8 @@ function rowToItem(row) {
   };
   if (kind === "solution") {
     item.solution = getItemSolution(item);
+  } else if (kind === "case") {
+    item.case = getItemCaseContent(item);
   } else {
     item.product = getItemProductContent(item);
   }
@@ -658,7 +715,10 @@ export async function createCatalogItem(d1, fields) {
     extraJson = mergeExtraJsonSolution(extraJson, fields.solution);
   }
   if (fields && fields.product != null) {
-    extraJson = mergeExtraJsonProduct(extraJson, fields.product, kind);
+    extraJson = mergeExtraJsonProduct(extraJson, fields.product);
+  }
+  if (fields && fields.case != null) {
+    extraJson = mergeExtraJsonCase(extraJson, fields.case);
   }
   await d1
     .prepare(
@@ -730,7 +790,10 @@ export async function updateCatalogItem(d1, id, fields) {
     extraJson = mergeExtraJsonSolution(extraJson, fields.solution);
   }
   if (fields && fields.product != null) {
-    extraJson = mergeExtraJsonProduct(extraJson, fields.product, kind);
+    extraJson = mergeExtraJsonProduct(extraJson, fields.product);
+  }
+  if (fields && fields.case != null) {
+    extraJson = mergeExtraJsonCase(extraJson, fields.case);
   }
   const t = nowMs();
   await d1
@@ -907,6 +970,29 @@ export function catalogItemEmbeddingText(row, synonymMap) {
       parts.push(adv.title);
       if (adv.body) parts.push(truncateEmbed(adv.body, 80));
     }
+  } else if (row.kind === "case") {
+    const cse = row.case || getItemCaseContent(row);
+    Object.keys(cse.meta || {}).forEach(function (k) {
+      parts.push(k + " " + cse.meta[k]);
+    });
+    ["challenge", "solution", "result"].forEach(function (key) {
+      const sum = cse.summary && cse.summary[key];
+      if (sum) {
+        if (sum.title) parts.push(sum.title);
+        parts.push(...(sum.bullets || []));
+      }
+      const det = cse.detail && cse.detail[key];
+      if (det) {
+        if (det.title) parts.push(det.title);
+        if (det.subtitle) parts.push(det.subtitle);
+        if (det.body) parts.push(truncateEmbed(det.body, 240));
+      }
+    });
+    const cust = cse.detail && cse.detail.customer;
+    if (cust) {
+      if (cust.title) parts.push(cust.title);
+      if (cust.body) parts.push(truncateEmbed(cust.body, 160));
+    }
   }
   parts.push(row.specs);
   parts.push(row.description);
@@ -957,8 +1043,12 @@ export function catalogItemPublicView(item) {
     item.kind === "solution"
       ? item.solution || getItemSolution(item)
       : null;
+  const caseContent =
+    item.kind === "case"
+      ? item.case || getItemCaseContent(item)
+      : null;
   const product =
-    item.kind !== "solution"
+    item.kind === "product"
       ? item.product || getItemProductContent(item)
       : null;
   const blurb =
@@ -987,6 +1077,7 @@ export function catalogItemPublicView(item) {
       : null,
     media,
     solution,
+    case: caseContent,
     product,
     features: (product && product.features) || [],
     applications: (product && product.applications) || [],

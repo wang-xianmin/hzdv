@@ -307,6 +307,7 @@
 
 .catalog-admin-solution,
 .catalog-admin-product-ext,
+.catalog-admin-case-ext,
 .catalog-admin-description {
   display: flex;
   flex-direction: column;
@@ -347,6 +348,7 @@
 .catalog-admin-drawer-media[hidden],
 .catalog-admin-solution[hidden],
 .catalog-admin-product-ext[hidden],
+.catalog-admin-case-ext[hidden],
 .catalog-admin-description[hidden] {
   display: none !important;
 }

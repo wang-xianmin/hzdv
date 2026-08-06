@@ -70,5 +70,21 @@ CREATE INDEX IF NOT EXISTS idx_catalog_media_item_sort
 --     "applications": ["制药", "医疗器械"]
 --   }
 -- }
--- 无 attrs 时，也可把「键:值」分行写在 specs 列作兜底。
--- 规格仍用 specs 列；媒体 sort_order：0=缩略图，1=详情主图，2=方案简述图/视频。
+-- 案例（kind=case）详情：description=短导语；结构化进 extra_json.case：
+-- {
+--   "case": {
+--     "meta": { "公司": "…", "行业": "…", "地区": "…" },
+--     "summary": {
+--       "challenge": { "title": "挑战", "bullets": ["…"] },
+--       "solution": { "title": "解决方案", "bullets": ["…"] },
+--       "result": { "title": "结果", "bullets": ["…"] }
+--     },
+--     "detail": {
+--       "customer": { "title": "顾客", "subtitle": "", "body": "…" },
+--       "challenge": { "title": "挑战", "subtitle": "…", "body": "…" },
+--       "solution": { "title": "解决方案", "subtitle": "…", "body": "…" },
+--       "result": { "title": "结果", "subtitle": "…", "body": "…" }
+--     }
+--   }
+-- }
+-- 展示顺序：元信息 → 总结三卡 → 详细叙述。
