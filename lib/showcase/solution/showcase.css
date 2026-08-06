@@ -307,27 +307,33 @@
   max-width: 28em;
 }
 
-/* —— 屏 1：Hero —— */
+/* —— 屏 1：Hero（斜切过中心，蓝底与图片各占一半面积） —— */
 .ss-hero {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+  position: relative;
+  display: block;
   min-height: min(52vh, 480px);
   background: #1e3a5f;
   color: #fff;
-  position: relative;
   overflow: hidden;
 }
 
 .ss-hero::after {
-  content: "";
+  display: none;
+}
+
+.ss-hero-media {
   position: absolute;
-  top: 0;
-  right: 38%;
-  width: 120px;
+  inset: 0;
+  z-index: 0;
+  min-height: 100%;
+}
+
+.ss-hero-media img,
+.ss-hero-media video {
+  width: 100%;
   height: 100%;
-  background: #1e3a5f;
-  transform: skewX(-12deg) translateX(50%);
-  z-index: 1;
+  object-fit: cover;
+  display: block;
 }
 
 .ss-hero-copy {
@@ -336,7 +342,22 @@
   display: flex;
   flex-direction: column;
   justify-content: center;
-  padding: 48px 40px 48px 48px;
+  align-items: flex-start;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: min(52vh, 480px);
+  padding: 48px 24px 48px 48px;
+  background: #1e3a5f;
+  /* 顶 58% / 底 42%：斜线过矩形中心 → 左右面积各 50% */
+  -webkit-clip-path: polygon(0 0, 58% 0, 42% 100%, 0 100%);
+  clip-path: polygon(0 0, 58% 0, 42% 100%, 0 100%);
+}
+
+.ss-hero-tag,
+.ss-hero-title,
+.ss-hero-lead {
+  /* 落在斜切安全区（最窄处约 42%）内 */
+  max-width: min(28rem, 34%);
 }
 
 .ss-hero-tag {
@@ -359,25 +380,10 @@
   font-size: 15px;
   line-height: 1.65;
   opacity: 0.95;
-  max-width: 36em;
 }
 
 .ss-hero-lead + .ss-hero-lead {
   margin-top: 10px;
-}
-
-.ss-hero-media {
-  position: relative;
-  z-index: 0;
-  min-height: 240px;
-}
-
-.ss-hero-media img,
-.ss-hero-media video {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
 }
 
 /* —— 屏 2：图文简述 —— */
@@ -608,21 +614,34 @@
 @media (max-width: 900px) {
   .ss-hero,
   .ss-summary {
-    grid-template-columns: 1fr;
+    display: flex;
+    flex-direction: column;
   }
 
-  .ss-hero::after {
-    display: none;
-  }
-
-  .ss-hero-copy {
-    padding: 32px 24px 24px;
-    order: 2;
+  .ss-hero {
+    min-height: 0;
   }
 
   .ss-hero-media {
+    position: relative;
+    inset: auto;
     order: 1;
     min-height: 220px;
+    aspect-ratio: 16 / 10;
+  }
+
+  .ss-hero-copy {
+    order: 2;
+    min-height: 0;
+    padding: 32px 24px 28px;
+    -webkit-clip-path: none;
+    clip-path: none;
+  }
+
+  .ss-hero-tag,
+  .ss-hero-title,
+  .ss-hero-lead {
+    max-width: none;
   }
 
   .ss-summary-media {
