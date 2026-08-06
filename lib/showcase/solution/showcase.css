@@ -106,7 +106,7 @@
   display: none;
 }
 
-/* —— 产品详情页：图 → 规格型号 → 特点 / 适用场景 —— */
+/* —— 产品详情：主图 → ATS 风格正文（description + extra_json） —— */
 .ss-detail-bar {
   padding: 12px 20px 0;
   background: #fff;
@@ -166,7 +166,7 @@
 }
 
 .ss-product-hero {
-  margin: 0 20px 20px;
+  margin: 0 20px 8px;
   border-radius: 12px;
   overflow: hidden;
   background: #e8edf2;
@@ -185,71 +185,100 @@
   min-height: 180px;
 }
 
-.ss-product-specs,
-.ss-product-cols {
-  padding: 0 20px 8px;
+/* ATS 风格：主图下方标题 / 特征 / 键值网格 */
+.ss-product-body {
+  padding: 8px 28px 40px;
+  max-width: 52rem;
 }
 
-.ss-product-specs h2,
-.ss-product-col h2 {
-  margin: 0 0 12px;
-  font-size: 15px;
+.ss-product-title {
+  margin: 12px 0 0;
+  font-size: clamp(1.55rem, 2.6vw, 2.05rem);
   font-weight: 700;
-  color: #1e3a5f;
-  letter-spacing: 0.02em;
+  color: #1a2332;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
 }
 
-.ss-product-spec-dl {
-  margin: 0 0 24px;
-  display: grid;
-  gap: 10px;
-  padding: 14px 16px;
-  background: #f8fafc;
-  border-radius: 10px;
-  border: 1px solid rgba(15, 23, 42, 0.06);
+.ss-product-highlight {
+  margin: 14px 0 0;
+  font-size: clamp(1.25rem, 2.2vw, 1.65rem);
+  font-weight: 700;
+  color: #1a2332;
+  line-height: 1.35;
 }
 
-.ss-product-spec-dl > div {
-  display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
-  gap: 8px 12px;
-  align-items: start;
+.ss-product-accent {
+  width: 3.25rem;
+  height: 3px;
+  margin: 16px 0 28px;
+  background: #2f6fed;
+  border-radius: 2px;
 }
 
-.ss-product-spec-dl dt {
+.ss-product-block {
+  margin: 0 0 32px;
+}
+
+.ss-product-h2 {
+  margin: 0 0 14px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #1a2332;
+  padding-bottom: 8px;
+  border-bottom: 2px solid #2f6fed;
+  display: inline-block;
+  min-width: 3.5rem;
+}
+
+.ss-product-desc {
+  margin: 0 0 22px;
+  font-size: 15px;
+  line-height: 1.7;
+  color: #334155;
+  max-width: 40rem;
+}
+
+.ss-product-attrs {
   margin: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px 36px;
+}
+
+.ss-product-attrs > div {
+  min-width: 0;
+}
+
+.ss-product-attrs dt {
+  margin: 0 0 4px;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   color: #64748b;
 }
 
-.ss-product-spec-dl dd {
+.ss-product-attrs dd {
   margin: 0;
-  font-size: 14px;
-  line-height: 1.55;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.5;
   color: #1a2332;
 }
 
-.ss-product-specs-body {
+.ss-product-attrs-pre {
+  font-weight: 500;
   white-space: pre-wrap;
 }
 
-.ss-product-cols {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 20px 28px;
-  margin-top: 4px;
-}
-
-.ss-product-col ul {
-  margin: 0;
+.ss-product-block ul {
+  margin: 8px 0 0;
   padding: 0 0 0 1.15em;
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1.65;
   color: #334155;
 }
 
-.ss-product-col li + li {
+.ss-product-block li + li {
   margin-top: 8px;
 }
 
@@ -260,8 +289,13 @@
 }
 
 @media (max-width: 700px) {
-  .ss-product-cols {
+  .ss-product-body {
+    padding: 4px 18px 32px;
+  }
+
+  .ss-product-attrs {
     grid-template-columns: 1fr;
+    gap: 14px;
   }
 }
 
@@ -311,7 +345,8 @@
 .ss-hero {
   position: relative;
   display: block;
-  min-height: min(52vh, 480px);
+  min-height: min(40vh, 360px);
+  max-height: min(48vh, 420px);
   background: #1e3a5f;
   color: #fff;
   overflow: hidden;
@@ -326,12 +361,15 @@
   inset: 0;
   z-index: 0;
   min-height: 100%;
+  max-height: inherit;
+  overflow: hidden;
 }
 
 .ss-hero-media img,
 .ss-hero-media video {
   width: 100%;
   height: 100%;
+  max-height: min(48vh, 420px);
   object-fit: cover;
   display: block;
 }
@@ -345,7 +383,8 @@
   align-items: flex-start;
   box-sizing: border-box;
   width: 100%;
-  min-height: min(52vh, 480px);
+  min-height: min(40vh, 360px);
+  max-height: min(48vh, 420px);
   padding: 48px 24px 48px 48px;
   background: #1e3a5f;
   /* 顶 58% / 底 42%：斜线过矩形中心 → 左右面积各 50% */
@@ -391,14 +430,23 @@
   display: grid;
   grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
   background: #fff;
-  min-height: 360px;
+  min-height: 0;
+  align-items: stretch;
+}
+
+.ss-summary-media {
+  max-height: min(42vh, 380px);
+  overflow: hidden;
+  background: #e8edf2;
+  align-self: stretch;
 }
 
 .ss-summary-media img,
 .ss-summary-media video {
   width: 100%;
   height: 100%;
-  min-height: 280px;
+  max-height: min(42vh, 380px);
+  min-height: 200px;
   object-fit: cover;
   display: block;
 }
@@ -626,13 +674,20 @@
     position: relative;
     inset: auto;
     order: 1;
-    min-height: 220px;
+    min-height: 180px;
+    max-height: min(36vh, 280px);
     aspect-ratio: 16 / 10;
+  }
+
+  .ss-hero-media img,
+  .ss-hero-media video {
+    max-height: min(36vh, 280px);
   }
 
   .ss-hero-copy {
     order: 2;
     min-height: 0;
+    max-height: none;
     padding: 32px 24px 28px;
     -webkit-clip-path: none;
     clip-path: none;
@@ -646,6 +701,13 @@
 
   .ss-summary-media {
     order: 1;
+    max-height: min(36vh, 280px);
+  }
+
+  .ss-summary-media img,
+  .ss-summary-media video {
+    max-height: min(36vh, 280px);
+    min-height: 160px;
   }
 
   .ss-summary-copy {

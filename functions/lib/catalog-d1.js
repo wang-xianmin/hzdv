@@ -249,11 +249,195 @@ export function getItemSolution(item) {
 }
 
 /**
- * 产品/案例详情：特点与适用场景
- * 优先 extra_json.product；否则用 description 按行拆成特点。
+ * 产品/案例详情：
+ * - description 列 → 特征区：可先写一段正文，末尾再跟「键：值」或「键：\n值」多行
+ * - extra_json（扩展JSON）→ attrs 键值；也认 product.attrs / attrs / ext
+ * - 若仍无 attrs，则尝试从 specs 按「键:值」行解析
  */
+export function normalizeAttrPairs(raw) {
+  const out = [];
+  if (raw == null || raw === "") return out;
+  if (Array.isArray(raw)) {
+    for (const row of raw) {
+      if (row == null) continue;
+      if (typeof row === "string") {
+        const s = row.trim();
+        if (!s) continue;
+        const sep = s.search(/[:：]/);
+        if (sep > 0) {
+          out.push({
+            label: s.slice(0, sep).trim(),
+            value: s.slice(sep + 1).trim(),
+          });
+        } else {
+          out.push({ label: "", value: s });
+        }
+        continue;
+      }
+      if (typeof row === "object") {
+        const label = row.label || row.key || row.name || row.k || "";
+        const value =
+          row.value != null
+            ? row.value
+            : row.val != null
+              ? row.val
+              : row.v != null
+                ? row.v
+                : row.text;
+        if (value == null || typeof value === "object") continue;
+        out.push({
+          label: String(label || "").trim(),
+          value: String(value).trim(),
+        });
+      }
+    }
+    return out.filter((a) => a.value);
+  }
+  if (typeof raw === "object") {
+    for (const [k, v] of Object.entries(raw)) {
+      if (v == null || typeof v === "object") continue;
+      const label = String(k || "").trim();
+      const value = String(v).trim();
+      if (!value) continue;
+      out.push({ label, value });
+    }
+  }
+  return out;
+}
+
+function parseSpecsAsAttrs(specs) {
+  return String(specs || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const sep = line.search(/[:：]/);
+      if (sep <= 0) return null;
+      const label = line.slice(0, sep).trim();
+      const value = line.slice(sep + 1).trim();
+      if (!label || !value) return null;
+      return { label, value };
+    })
+    .filter(Boolean);
+}
+
+/** 短标签行：如「输出：」「平台: SuperTrak」——不像长句正文 */
+function isAttrKeyLine(line) {
+  const s = String(line || "").trim();
+  if (!s || s.length > 80) return false;
+  // 标签不允许空格，避免「一段话里提到 输出：…」误判
+  const m = s.match(
+    /^([\u4e00-\u9fffA-Za-z0-9_/\-（）()]{1,16})[:：]\s*(.*)$/
+  );
+  if (!m) return false;
+  const label = m[1].trim();
+  const value = (m[2] || "").trim();
+  if (!label) return false;
+  if (value && value.length > 48 && /[。！？]/.test(value)) return false;
+  return true;
+}
+
+function parseAttrBlockLines(lines) {
+  const attrs = [];
+  let i = 0;
+  while (i < lines.length) {
+    const t = String(lines[i] || "").trim();
+    i += 1;
+    if (!t) continue;
+    if (!isAttrKeyLine(t)) {
+      // 孤行并入上一项值
+      if (attrs.length) {
+        attrs[attrs.length - 1].value =
+          attrs[attrs.length - 1].value + "\n" + t;
+      }
+      continue;
+    }
+    const m = t.match(/^([\u4e00-\u9fffA-Za-z0-9_/\-（）()]{1,16})[:：]\s*(.*)$/);
+    const label = m[1].trim();
+    let value = (m[2] || "").trim();
+    if (!value) {
+      while (i < lines.length) {
+        const n = String(lines[i] || "").trim();
+        if (!n) {
+          i += 1;
+          if (value) break;
+          continue;
+        }
+        if (isAttrKeyLine(n)) break;
+        value = value ? value + "\n" + n : n;
+        i += 1;
+      }
+    }
+    if (label && value) attrs.push({ label, value });
+  }
+  return attrs;
+}
+
+/**
+ * 说明列可混写：前面正文段落，末尾「键：值」或「键：\n值」若干行。
+ * @returns {{ body: string, attrs: {label:string,value:string}[] }}
+ */
+export function splitDescriptionBodyAndAttrs(text) {
+  const raw = String(text || "").replace(/\r\n/g, "\n");
+  if (!raw.trim()) return { body: "", attrs: [] };
+  const lines = raw.split("\n");
+  let start = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i].trim();
+    if (!t) continue;
+    if (!isAttrKeyLine(t)) continue;
+    // 从该行到文末应主要是键值块（允许空行）
+    let ok = true;
+    let sawKey = false;
+    for (let j = i; j < lines.length; j++) {
+      const u = lines[j].trim();
+      if (!u) continue;
+      if (isAttrKeyLine(u)) {
+        sawKey = true;
+        continue;
+      }
+      // 非键行：当作某键的值；若出现很长散文且尚未有键，则失败
+      if (!sawKey && u.length > 60) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok && sawKey) {
+      start = i;
+      break;
+    }
+  }
+  if (start < 0) return { body: raw.trim(), attrs: [] };
+  const body = lines.slice(0, start).join("\n").trim();
+  const attrs = parseAttrBlockLines(lines.slice(start));
+  if (!attrs.length) return { body: raw.trim(), attrs: [] };
+  return { body, attrs };
+}
+
+function mergeAttrsByLabel(base, extra) {
+  const out = (base || []).slice();
+  const seen = {};
+  out.forEach((a) => {
+    if (a && a.label) seen[String(a.label).toLowerCase()] = true;
+  });
+  (extra || []).forEach((a) => {
+    if (!a || !a.value) return;
+    const k = String(a.label || "").toLowerCase();
+    if (k && seen[k]) return;
+    if (k) seen[k] = true;
+    out.push(a);
+  });
+  return out;
+}
+
 export function getItemProductContent(item) {
-  const empty = { features: [], applications: [] };
+  const empty = {
+    features: [],
+    applications: [],
+    attrs: [],
+    highlight: "",
+    description_body: "",
+  };
   if (!item) return empty;
   const kind = normalizeKind(item.kind);
   if (kind === "solution") return empty;
@@ -264,20 +448,69 @@ export function getItemProductContent(item) {
     {};
   let features = normalizeStringList(p.features);
   let applications = normalizeStringList(
-    p.applications || p.scenarios || p.use_cases
+    p.applications || p.scenarios || p.use_cases || p.recommended_for
   );
-  if (!features.length) {
-    features = String(item.description || "")
-      .split(/\r?\n/)
-      .map((s) => s.trim())
-      .filter(Boolean);
+  const split = splitDescriptionBodyAndAttrs(item.description);
+  let attrs = normalizeAttrPairs(
+    p.attrs || p.fields || p.meta || p.ext || p.ext_json
+  );
+  if (!attrs.length) {
+    attrs = normalizeAttrPairs(
+      extra.attrs || extra.ext || extra.ext_json || extra.fields
+    );
   }
-  return { features, applications };
+  attrs = mergeAttrsByLabel(attrs, split.attrs);
+  if (!attrs.length) {
+    attrs = parseSpecsAsAttrs(item.specs);
+  }
+  const highlight = String(
+    p.highlight || p.lead || extra.highlight || ""
+  ).trim();
+  return {
+    features,
+    applications,
+    attrs,
+    highlight,
+    description_body: split.body,
+  };
 }
 
 export function mergeExtraJsonSolution(extraJson, solution) {
   const extra = parseExtraJson(extraJson);
   extra.solution = normalizeSolutionContent(solution);
+  return JSON.stringify(extra);
+}
+
+/** 产品/案例结构化字段（存于 extra_json.product / .case） */
+export function normalizeProductExtraContent(raw) {
+  const p = raw && typeof raw === "object" ? raw : {};
+  const pairs = normalizeAttrPairs(p.attrs || p.fields || p.meta || p.ext);
+  const attrsObj = {};
+  for (const a of pairs) {
+    if (!a || !a.value) continue;
+    const key = String(a.label || "").trim() || "_";
+    if (key === "_") continue;
+    attrsObj[key] = a.value;
+  }
+  return {
+    highlight: String(p.highlight || p.lead || "").trim(),
+    attrs: attrsObj,
+    applications: normalizeStringList(
+      p.applications || p.scenarios || p.use_cases || p.recommended_for
+    ),
+    features: normalizeStringList(p.features),
+  };
+}
+
+export function mergeExtraJsonProduct(extraJson, product, kind) {
+  const extra = parseExtraJson(extraJson);
+  const normalized = normalizeProductExtraContent(product);
+  const k = normalizeKind(kind);
+  if (k === "case") {
+    extra.case = normalized;
+  } else {
+    extra.product = normalized;
+  }
   return JSON.stringify(extra);
 }
 
@@ -424,6 +657,9 @@ export async function createCatalogItem(d1, fields) {
   if (fields && fields.solution != null) {
     extraJson = mergeExtraJsonSolution(extraJson, fields.solution);
   }
+  if (fields && fields.product != null) {
+    extraJson = mergeExtraJsonProduct(extraJson, fields.product, kind);
+  }
   await d1
     .prepare(
       `INSERT INTO catalog_items (
@@ -492,6 +728,9 @@ export async function updateCatalogItem(d1, id, fields) {
   }
   if (fields && fields.solution != null) {
     extraJson = mergeExtraJsonSolution(extraJson, fields.solution);
+  }
+  if (fields && fields.product != null) {
+    extraJson = mergeExtraJsonProduct(extraJson, fields.product, kind);
   }
   const t = nowMs();
   await d1
@@ -688,10 +927,32 @@ export function catalogItemPublicView(item) {
     caption: m.caption,
   }));
   const images = media.filter((m) => m.media_type === "image");
-  // 约定：第 1 张图 = 封面/缩略图；第 2 张 = 产品详情主图（方案简述配图）
-  const heroImage = (images[0] && images[0].url) || item.cover_url || "";
-  const summaryImage =
-    (images[1] && images[1].url) || heroImage || "";
+  // 约定（媒体列表顺序）：
+  // 第 1 条 = 缩略图/封面
+  // 第 2 条 = 产品详情主图 / 方案斜切主图
+  // 第 3 条 = 方案简述配图（图或视频）
+  const coverUrl =
+    (media[0] && media[0].media_type === "image" && media[0].url) ||
+    (images[0] && images[0].url) ||
+    item.cover_url ||
+    "";
+  const slot2 = media[1] || null;
+  const slot3 = media[2] || null;
+  const detailPrimaryUrl =
+    (slot2 && slot2.url) || (images[1] && images[1].url) || "";
+  const detailPrimaryType =
+    slot2 && slot2.media_type === "video"
+      ? "video"
+      : detailPrimaryUrl
+        ? "image"
+        : "";
+  const detailSecondaryUrl = (slot3 && slot3.url) || "";
+  const detailSecondaryType =
+    slot3 && slot3.media_type === "video"
+      ? "video"
+      : detailSecondaryUrl
+        ? "image"
+        : "";
   const solution =
     item.kind === "solution"
       ? item.solution || getItemSolution(item)
@@ -713,14 +974,27 @@ export function catalogItemPublicView(item) {
     model: item.model,
     specs: item.specs,
     description: String(item.description || "").trim(),
-    cover_url: item.cover_url || heroImage,
-    hero_image: heroImage,
-    summary_image: summaryImage,
+    cover_url: coverUrl,
+    /** 列表缩略：第 1 张 */
+    hero_image: coverUrl,
+    /** 产品详情主图 / 方案斜切：第 2 张 */
+    summary_image: detailPrimaryUrl || coverUrl,
+    detail_hero: detailPrimaryUrl
+      ? { url: detailPrimaryUrl, media_type: detailPrimaryType }
+      : null,
+    detail_summary: detailSecondaryUrl
+      ? { url: detailSecondaryUrl, media_type: detailSecondaryType }
+      : null,
     media,
     solution,
     product,
     features: (product && product.features) || [],
     applications: (product && product.applications) || [],
+    attrs: (product && product.attrs) || [],
+    highlight: (product && product.highlight) || "",
+    description_body:
+      (product && product.description_body) ||
+      String(item.description || "").trim(),
     blurb,
   };
 }

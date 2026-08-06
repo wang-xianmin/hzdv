@@ -53,4 +53,22 @@ CREATE INDEX IF NOT EXISTS idx_catalog_media_item_sort
 --     "advantages": [{ "title": "优势标题", "body": "正文" }]
 --   }
 -- }
--- 规格仍用 specs 列；媒体 sort_order：0=Hero 封面，1=简述配图。
+-- 产品（kind=product / case）详情字段约定：
+--   description 列 = 特征区：可先写一段正文，末尾再跟键值行，例如：
+--     这是一段产品说明……
+--
+--     输出：
+--     21-150 ppm
+--     平台：
+--     SuperTrak™ 输送
+--   系统会自动拆成「正文段落 + 双列键值网格」。
+--   extra_json（管理页「扩展JSON」）也可写：
+-- {
+--   "product": {
+--     "highlight": "输出水平最高可达 150 PPM",
+--     "attrs": { "输出": "21-150 ppm", "平台": "SuperTrak™ 输送" },
+--     "applications": ["制药", "医疗器械"]
+--   }
+-- }
+-- 无 attrs 时，也可把「键:值」分行写在 specs 列作兜底。
+-- 规格仍用 specs 列；媒体 sort_order：0=缩略图，1=详情主图，2=方案简述图/视频。
