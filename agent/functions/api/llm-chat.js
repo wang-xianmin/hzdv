@@ -299,14 +299,21 @@ function ocrPromptBlock(ocr, replyLang) {
   );
 }
 
-function systemPrompt(replyLang, ocr, hasWeb) {
+function systemPrompt(replyLang, ocr, hasWeb, hasCatalog) {
   if (replyLang === "en") {
     return (
       "You are the HZDV site assistant. Be concise and direct. " +
       "Always answer in the same language the user wrote in. " +
       "The user wrote in English, so answer in English. " +
       "Ignore the site menu language." +
-      (hasWeb
+      (hasCatalog
+        ? " CATALOG RULES (mandatory): " +
+          "1) Our products/solutions are shown in the MAIN SHOWCASE (left/center), not in this chat. " +
+          "2) Reply in ONE short sentence only, e.g. “Matched items are in the showcase — tap a thumbnail for details.” " +
+          "3) Do NOT list product names, specs, URLs, or Microsoft/Google pages in chat. " +
+          "4) If catalog materials are empty, say no matching catalog entries yet (one short sentence)."
+        : "") +
+      (hasWeb && !hasCatalog
         ? " WEB MATERIALS RULES (mandatory): " +
           "1) Use ONLY the materials provided in the user message for time-sensitive or factual claims. " +
           "2) Do NOT invent titles, sites, headlines, or URLs. Every URL you cite must appear verbatim in the materials. " +
@@ -324,7 +331,14 @@ function systemPrompt(replyLang, ocr, hasWeb) {
     "始终使用与用户提问相同的语言回答。" +
     "本次用户用中文提问，请用中文回答。" +
     "不要参考站点菜单语言。" +
-    (hasWeb
+    (hasCatalog
+      ? "【产品目录硬性规则】" +
+        "1）本站产品/方案详情在主展区展示，不要在对话里展开；" +
+        "2）对话只回一句短话，例如：「已在左侧展示区列出相关产品，点击缩略图可看详情。」；" +
+        "3）禁止在对话里罗列品名、规格、外网链接；禁止提微软/谷歌等无关站点；" +
+        "4）若目录材料为空，只说一句：暂无匹配的目录条目。"
+      : "") +
+    (hasWeb && !hasCatalog
       ? "【联网材料硬性规则】" +
         "1）涉及新闻/实时/事实，只能依据用户消息中附带的联网材料作答；" +
         "2）禁止捏造标题、网站名或链接；URL 必须从材料中逐字符原样复制，不得改写、补全或拼接；" +
@@ -336,6 +350,64 @@ function systemPrompt(replyLang, ocr, hasWeb) {
       : "") +
     ocrPromptBlock(ocr, "zh")
   );
+}
+
+function formatCatalogContext(items, replyLang) {
+  const list = Array.isArray(items) ? items : [];
+  if (!list.length) return "";
+  const lines = list.map((it, i) => {
+    const kind =
+      it.kind === "solution"
+        ? replyLang === "en"
+          ? "Solution"
+          : "方案"
+        : it.kind === "case"
+          ? replyLang === "en"
+            ? "Case"
+            : "案例"
+          : replyLang === "en"
+            ? "Product"
+            : "产品";
+    const name = String(it.name || "").trim() || "(unnamed)";
+    const model = String(it.model || "").trim();
+    const blurb = String(it.blurb || "").trim();
+    let line =
+      "[" +
+      (i + 1) +
+      "] (" +
+      kind +
+      ") " +
+      name +
+      (model ? " · " + model : "");
+    if (blurb) line += "\n    " + blurb;
+    return line;
+  });
+  if (replyLang === "en") {
+    return (
+      "\n\n[Site catalog — answer from these items only for our products/solutions]\n" +
+      lines.join("\n")
+    );
+  }
+  return (
+    "\n\n【本站产品目录——问我们的产品/方案时只能依据下列条目】\n" +
+    lines.join("\n")
+  );
+}
+
+function normalizeCatalogItems(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((it) => {
+      if (!it || typeof it !== "object") return null;
+      return {
+        id: String(it.id || "").trim(),
+        kind: String(it.kind || "product"),
+        name: String(it.name || "").trim(),
+        model: String(it.model || "").trim(),
+        blurb: String(it.blurb || "").trim().slice(0, 240),
+      };
+    })
+    .filter((it) => it && (it.id || it.name));
 }
 
 function buildUserContent(message, ocr, useVision) {
@@ -389,8 +461,22 @@ async function callModel(env, target, message, replyLang, ocr, useVision, webCtx
     !!useVision &&
     !!(ocr && ocr.visionImages && ocr.visionImages.length) &&
     !!(target.caps && target.caps.vision);
-  const hasWeb = !!(webCtx && String(webCtx).trim());
+  const catalogCtx =
+    (opts && opts.catalogCtx && String(opts.catalogCtx).trim()) || "";
+  const hasCatalog = !!catalogCtx;
+  // 有本站目录时，公司产品问不拿外网材料当答案
+  let effectiveWeb = webCtx;
+  if (hasCatalog) effectiveWeb = "";
+  const hasWeb = !!(effectiveWeb && String(effectiveWeb).trim());
   let userContent = buildUserContent(message, ocr, wantVision);
+  if (hasCatalog) {
+    const block = catalogCtx;
+    if (typeof userContent === "string") {
+      userContent = userContent + block;
+    } else if (Array.isArray(userContent)) {
+      userContent = userContent.concat([{ type: "text", text: block }]);
+    }
+  }
   // 小模型对 user 里的材料更听话；有列表时避免误报「材料里没有」
   if (hasWeb) {
     const bridge =
@@ -399,7 +485,7 @@ async function callModel(env, target, message, replyLang, ocr, useVision, webCtx
         : "\n\n请根据下列材料用中文回答。若已有编号条目，必须逐条汇报：" +
           "每条给出【中文译名】、原文标题、以及材料中的原样 URL（禁止改 URL）。" +
           "禁止说「材料里没有」或「没有今天的新闻」。\n\n";
-    const block = bridge + String(webCtx).trim();
+    const block = bridge + String(effectiveWeb).trim();
     if (typeof userContent === "string") {
       userContent = userContent + block;
     } else if (Array.isArray(userContent)) {
@@ -422,10 +508,13 @@ async function callModel(env, target, message, replyLang, ocr, useVision, webCtx
     upstreamApiKey: proxy ? apiKey : null,
     model: target.modelId,
     messages: [
-      { role: "system", content: systemPrompt(replyLang, ocr, hasWeb) },
+      {
+        role: "system",
+        content: systemPrompt(replyLang, ocr, hasWeb, hasCatalog),
+      },
       { role: "user", content: userContent },
     ],
-    temperature: hasWeb ? 0.1 : 0.3,
+    temperature: hasWeb || hasCatalog ? 0.1 : 0.3,
     max_tokens: maxTokens,
     timeoutMs,
   });
@@ -612,6 +701,12 @@ async function handleLlmChat(env, body, reqOpts) {
   const uiLang = normalizeUiLang(body.lang || body.locale || "zh");
   const replyLang = detectTextLang(message, uiLang);
   const langInfo = { uiLang, replyLang };
+  const catalogItems = normalizeCatalogItems(
+    body.catalogItems || body.catalog_items
+  );
+  const catalogCtx =
+    (typeof body.catalogCtx === "string" && body.catalogCtx.trim()) ||
+    formatCatalogContext(catalogItems, replyLang);
   const wantId = String(body.modelId || body.model || "auto").trim() || "auto";
   const ocrLimits = resolveOcrLimits(body.systemSettings || body.system_settings);
   const ocr = normalizeOcrContext(body.ocr, ocrLimits);
@@ -650,7 +745,7 @@ async function handleLlmChat(env, body, reqOpts) {
       ocr,
       useVision,
       web.webCtx || "",
-      { systemSettings, country }
+      { systemSettings, country, catalogCtx }
     );
     if (result.usedVision) {
       notes.push(
@@ -901,6 +996,7 @@ async function handleLlmChat(env, body, reqOpts) {
     ? callModel(env, primary.target, message, replyLang, ocr, false, "", {
         systemSettings,
         country,
+        catalogCtx,
       })
     : null;
 
@@ -1120,7 +1216,7 @@ async function handleLlmChat(env, body, reqOpts) {
       ? 2
       : 4;
   const callOpts = Object.assign(
-    { systemSettings, country },
+    { systemSettings, country, catalogCtx },
     phased
       ? {
           timeoutMs: proxy

@@ -2161,7 +2161,7 @@
     }
     appendMessage("user", q);
     inputEl.value = "";
-    searchCatalogForShowcase(q);
+    var catalogPromise = searchCatalogForShowcase(q);
     var ocrPayload = pendingOcr;
     clearAttachment({ keepOcr: true });
     pendingOcr = null;
@@ -2602,6 +2602,7 @@
                 intent: intentObj || { tier: 1, web: !!webCtx },
                 webProvided: true,
                 webCtx: webCtx || "",
+                catalogItems: ctx.catalogItems || [],
               }).then(function (chatPack) {
                 var cj = (chatPack && chatPack.j) || {};
                 cj.notes = mergeNotes(allNotes, cj.notes);
@@ -2669,11 +2670,22 @@
             }
 
             var intentObj = ij.intent || null;
+            var companyCatalog = isCompanyCatalogQuery(reqBody.message || "");
             var needWeb =
-              !!(intentObj && intentObj.web) ||
-              /最新|今天|新闻|实时|股价|天气|latest|today|news/i.test(
-                reqBody.message || ""
+              !companyCatalog &&
+              (!!(intentObj && intentObj.web) ||
+                /最新|今天|新闻|实时|股价|天气|latest|today|news/i.test(
+                  reqBody.message || ""
+                ));
+            if (companyCatalog && intentObj) {
+              intentObj = Object.assign({}, intentObj, { web: false });
+              allNotes.push(
+                t(
+                  "① 本站产品/方案问句 → 跳过联网，改用产品目录",
+                  "① Company catalog question → skip web, use site catalog"
+                )
               );
+            }
 
             setThinkingBusy(needWeb ? 2 : 3, {
               verbose: needWeb
@@ -2729,75 +2741,145 @@
             }
 
             return afterWeb.then(function (webInfo) {
-              setThinkingBusy(3, {
-                verbose: t("③ 正在生成回答…", "③ Generating answer…"),
-                badge: "Auto · ③生成",
-              });
-              if (wantPipelineTrace()) {
-                messages[thinkingIdx].modelNote = formatPipelineNote({
-                  notes: allNotes,
-                });
-                renderThread();
-              }
-
-              var chatBody = Object.assign({}, reqBody, {
-                intent: intentObj,
-                webProvided: true,
-                webCtx: webInfo.webCtx || "",
-                webSkipped: webInfo.webSkipped || null,
-                webSearch: webInfo.webSearch || null,
-                webPack: webInfo.webPack || null,
-              });
-
-              var afterChat;
-              if (wantForceFailGenerate()) {
-                allNotes.push(
-                  t(
-                    "③ 调试：强制模拟生成墙钟失败（llmForceFailGenerate=1）",
-                    "③ Debug: force-simulate generate wall-clock fail (llmForceFailGenerate=1)"
-                  )
-                );
-                afterChat = Promise.resolve({
-                  ok: false,
-                  status: 502,
-                  j: {
-                    success: false,
-                    wallClockFail: true,
-                    error: t(
-                      "（调试）强制模拟 Cloudflare HTML 502，用于测试失败恢复编排",
-                      "(debug) Forced Cloudflare HTML 502 to test recovery orchestration"
+              return Promise.resolve(catalogPromise || []).then(function (
+                catalogItems
+              ) {
+                if (catalogItems && catalogItems.length) {
+                  allNotes.push(
+                    t(
+                      "③ 目录命中 → 主展区展示，对话仅短提示",
+                      "③ Catalog hits → showcase; short chat tip only"
+                    )
+                  );
+                  if (wantPipelineTrace()) {
+                    messages[thinkingIdx].modelNote = formatPipelineNote({
+                      notes: allNotes,
+                    });
+                  }
+                  clearThinkPulse();
+                  messages[thinkingIdx] = {
+                    role: "assistant",
+                    text: t(
+                      "相关产品/方案已在左侧展示区列出，点击缩略图可查看详情。",
+                      "Matching products/solutions are in the showcase — tap a thumbnail for details."
                     ),
-                    notes: allNotes.slice(),
-                  },
-                });
-              } else {
-                afterChat = postJson("/api/llm-chat", chatBody);
-              }
-
-              return afterChat.then(function (chatPack) {
-                var cj = chatPack.j || {};
-                cj.notes = mergeNotes(allNotes, cj.notes);
-                chatPack.j = cj;
-                if (cj.success && cj.reply) {
-                  applyAssistantPack(chatPack, "");
+                    model: "auto",
+                    modelBadge: "Auto · 目录",
+                    modelNote: wantPipelineTrace()
+                      ? formatPipelineNote({ notes: allNotes })
+                      : "",
+                  };
+                  renderThread();
                   return null;
                 }
-                if (isWallClockFail(chatPack)) {
-                  return runRecoverPlan({
-                    intentObj: intentObj,
-                    webCtx: webInfo.webCtx || "",
-                    allNotes: cj.notes || allNotes,
-                    failReason: cj.error || "",
-                    failStatus: chatPack.status || 0,
-                  });
+                if (companyCatalog) {
+                  allNotes.push(
+                    t(
+                      "③ 目录无命中 → 短提示（不联网）",
+                      "③ No catalog hits → short tip (no web)"
+                    )
+                  );
+                  if (wantPipelineTrace()) {
+                    messages[thinkingIdx].modelNote = formatPipelineNote({
+                      notes: allNotes,
+                    });
+                  }
+                  clearThinkPulse();
+                  messages[thinkingIdx] = {
+                    role: "assistant",
+                    text: t(
+                      "目录里暂未匹配到相关产品/方案。可换个关键词，或稍后再试。",
+                      "No matching catalog items yet. Try other keywords."
+                    ),
+                    model: "auto",
+                    modelBadge: "Auto · 目录",
+                    modelNote: wantPipelineTrace()
+                      ? formatPipelineNote({ notes: allNotes })
+                      : "",
+                  };
+                  renderThread();
+                  return null;
                 }
-                applyAssistantPack(chatPack, "");
-                return null;
+
+                setThinkingBusy(3, {
+                  verbose: t("③ 正在生成回答…", "③ Generating answer…"),
+                  badge: "Auto · ③生成",
+                });
+                if (wantPipelineTrace()) {
+                  messages[thinkingIdx].modelNote = formatPipelineNote({
+                    notes: allNotes,
+                  });
+                  renderThread();
+                }
+
+                var chatBody = Object.assign({}, reqBody, {
+                  intent: intentObj,
+                  webProvided: true,
+                  webCtx: webInfo.webCtx || "",
+                  webSkipped: webInfo.webSkipped || null,
+                  webSearch: webInfo.webSearch || null,
+                  webPack: webInfo.webPack || null,
+                  catalogItems: [],
+                });
+
+                var afterChat;
+                if (wantForceFailGenerate()) {
+                  allNotes.push(
+                    t(
+                      "③ 调试：强制模拟生成墙钟失败（llmForceFailGenerate=1）",
+                      "③ Debug: force-simulate generate wall-clock fail (llmForceFailGenerate=1)"
+                    )
+                  );
+                  afterChat = Promise.resolve({
+                    ok: false,
+                    status: 502,
+                    j: {
+                      success: false,
+                      wallClockFail: true,
+                      error: t(
+                        "（调试）强制模拟 Cloudflare HTML 502，用于测试失败恢复编排",
+                        "(debug) Forced Cloudflare HTML 502 to test recovery orchestration"
+                      ),
+                      notes: allNotes.slice(),
+                    },
+                  });
+                } else {
+                  afterChat = postJson("/api/llm-chat", chatBody);
+                }
+
+                return afterChat.then(function (chatPack) {
+                  var cj = chatPack.j || {};
+                  cj.notes = mergeNotes(allNotes, cj.notes);
+                  chatPack.j = cj;
+                  if (cj.success && cj.reply) {
+                    applyAssistantPack(chatPack, "");
+                    return null;
+                  }
+                  if (isWallClockFail(chatPack)) {
+                    return runRecoverPlan({
+                      intentObj: intentObj,
+                      webCtx: chatBody.webCtx || "",
+                      allNotes: cj.notes || allNotes,
+                      failReason: cj.error || "",
+                      failStatus: chatPack.status || 0,
+                      catalogItems: catalogItems || [],
+                    });
+                  }
+                  applyAssistantPack(chatPack, "");
+                  return null;
+                });
               });
             });
           })
-        : postJson("/api/llm-chat", reqBody).then(function (pack) {
-            applyAssistantPack(pack, "");
+        : Promise.resolve(catalogPromise || []).then(function (catalogItems) {
+            return postJson(
+              "/api/llm-chat",
+              Object.assign({}, reqBody, {
+                catalogItems: catalogItems || [],
+              })
+            ).then(function (pack) {
+              applyAssistantPack(pack, "");
+            });
           });
 
     chain.catch(function (err) {
@@ -2829,28 +2911,53 @@
     } catch (e) {}
   }
 
+  function isCompanyCatalogQuery(message) {
+    var s = String(message || "").trim();
+    if (!s) return false;
+    if (
+      /(你们|咱们|咱家|贵司|本公司|本站|迪微|HZDV|hzdv)/i.test(s) &&
+      /(产品|方案|系统|设备|目录|型号|集成)/.test(s)
+    ) {
+      return true;
+    }
+    if (
+      /(有什么|有哪些|介绍一下|推荐).{0,8}(产品|方案)/.test(s) ||
+      /(产品|方案).{0,8}(有什么|有哪些|目录)/.test(s)
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  /** @returns {Promise<object[]>} */
   function searchCatalogForShowcase(query) {
     var q = String(query || "").trim();
-    if (!q) return;
+    if (!q) return Promise.resolve([]);
     var url =
       "/api/catalog-public?q=" +
       encodeURIComponent(q) +
-      "&kind=solution&topK=2";
-    fetch(url, { cache: "no-store" })
+      "&topK=5";
+    return fetch(url, { cache: "no-store" })
       .then(function (r) {
         return r.json();
       })
       .then(function (j) {
-        if (!j || !j.success || !j.items || !j.items.length) return;
-        try {
-          document.dispatchEvent(
-            new CustomEvent("hzdv:catalog-hits", {
-              detail: { query: q, items: j.items },
-            })
-          );
-        } catch (e2) {}
+        var items =
+          j && j.success && Array.isArray(j.items) ? j.items : [];
+        if (items.length) {
+          try {
+            document.dispatchEvent(
+              new CustomEvent("hzdv:catalog-hits", {
+                detail: { query: q, items: items },
+              })
+            );
+          } catch (e2) {}
+        }
+        return items;
       })
-      .catch(function () {});
+      .catch(function () {
+        return [];
+      });
   }
 
   function showLauncher() {

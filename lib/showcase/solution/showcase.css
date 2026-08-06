@@ -98,6 +98,48 @@
   overflow: hidden;
 }
 
+.ss-recommend-table-wrap {
+  margin-top: 8px;
+  padding-bottom: 16px;
+  overflow-x: auto;
+}
+
+.ss-recommend-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  background: #fff;
+}
+
+.ss-recommend-table th,
+.ss-recommend-table td {
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+  vertical-align: top;
+}
+
+.ss-recommend-table th {
+  font-weight: 600;
+  color: #64748b;
+  background: #f8fafc;
+  white-space: nowrap;
+}
+
+.ss-recommend-row {
+  cursor: pointer;
+}
+
+.ss-recommend-row:hover,
+.ss-recommend-row.is-active {
+  background: rgba(61, 106, 150, 0.08);
+}
+
+.ss-recommend-table td:last-child {
+  color: #5a6a7e;
+  max-width: 28em;
+}
+
 /* —— 屏 1：Hero —— */
 .ss-hero {
   display: grid;

@@ -19,9 +19,10 @@ import { resolveRouteMode } from "./route-mode.js";
 const CLASSIFY_PROMPT =
   "你是路由分类器。给用户消息分级，只输出一行：tier1、tier2、tier3，需要联网时在后面加空格和 web。\n" +
   "tier1：打招呼、闲聊、寒暄。\n" +
-  "tier2：常规任务：翻译、总结、解释、一般知识、网站功能咨询。\n" +
+  "tier2：常规任务：翻译、总结、解释、一般知识、网站功能咨询、询问本站/本公司产品方案。\n" +
   "tier3：多步推理/长文/编程/方案规划。\n" +
-  "web：必须查最新新闻、实时数据、股价、天气、赛果、刚发布的产品信息等；纯概念解释不要加 web。\n" +
+  "web：必须查最新新闻、实时数据、股价、天气、赛果、外部厂商刚发布的产品新闻等；纯概念解释不要加 web。\n" +
+  "重要：问「你们/迪微/HZDV/本公司」有什么产品、方案、业务时，一律 tier2，禁止加 web（答案在本站目录，不靠外网）。\n" +
   "示例输出：tier1 / tier2 / tier3 / tier2 web / tier3 web";
 
 const FEW_SHOT = [
@@ -30,12 +31,34 @@ const FEW_SHOT = [
   ["帮我把这段话翻译成英文：今天天气不错", "tier2"],
   ["什么是量子纠缠？", "tier2"],
   ["网站上怎么切换语言", "tier2"],
+  ["你们有什么产品", "tier2"],
+  ["迪微有什么产品？", "tier2"],
+  ["有没有装配线方案", "tier2"],
   ["今天有什么科技新闻", "tier2 web"],
   ["苹果现在股价多少", "tier2 web"],
   ["latest OpenAI model release news", "tier2 web"],
   ["写一个 Python 快速排序并解释时间复杂度", "tier3"],
   ["帮我规划一个三个月的机器学习学习路线", "tier3"],
 ];
+
+/** 本站/本公司产品方案问句：禁止联网 */
+export function isCompanyCatalogQuery(message) {
+  const s = String(message || "").trim();
+  if (!s) return false;
+  if (
+    /(你们|咱们|咱家|贵司|本公司|本站|迪微|HZDV|hzdv)/i.test(s) &&
+    /(产品|方案|系统|设备|目录|型号|集成)/.test(s)
+  ) {
+    return true;
+  }
+  if (
+    /(有什么|有哪些|介绍一下|推荐).{0,8}(产品|方案)/.test(s) ||
+    /(产品|方案).{0,8}(有什么|有哪些|目录)/.test(s)
+  ) {
+    return true;
+  }
+  return false;
+}
 
 export function intentTarget(env) {
   const baseUrl = normalizeOpenAiCompatBase(env.INTENT_SERVICE_URL);
@@ -223,9 +246,15 @@ export async function classifyIntent(env, message, opts) {
       label: target.label,
     };
   }
+  let tier = parsed.tier;
+  let web = parsed.web;
+  if (isCompanyCatalogQuery(message)) {
+    web = false;
+    if (!tier || tier === 1) tier = 2;
+  }
   return {
-    tier: parsed.tier,
-    web: parsed.web,
+    tier,
+    web,
     latencyMs: result.latencyMs,
     error: null,
     raw,

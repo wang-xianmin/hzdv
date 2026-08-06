@@ -27,6 +27,19 @@ export function heuristicNeedsWeb(message) {
   if (s.length < 2) return false;
   // 明显不需要
   if (/^(你好|您好|嗨|hi|hello|hey)[\s!！.。]*$/i.test(s.trim())) return false;
+  // 本站产品/方案问句：用目录，不靠外网
+  if (
+    /(你们|咱们|咱家|贵司|本公司|本站|迪微|HZDV|hzdv)/i.test(s) &&
+    /(产品|方案|系统|设备|目录|型号|集成)/.test(s)
+  ) {
+    return false;
+  }
+  if (
+    /(有什么|有哪些|介绍一下|推荐).{0,8}(产品|方案)/.test(s) ||
+    /(产品|方案).{0,8}(有什么|有哪些|目录)/.test(s)
+  ) {
+    return false;
+  }
   return /最新|今天|昨日|本周|本月|实时|新闻|股价|行情|天气|搜一下|搜索|网上|查一下|官网|发布了吗|几号比赛|谁赢了|汇率|当前|现在多少|202[4-9]年|latest|today|tonight|this week|breaking|news|stock price|weather|search the web|look up|who won|current |as of /i.test(
     s
   );
