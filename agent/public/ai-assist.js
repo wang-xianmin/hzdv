@@ -3236,14 +3236,8 @@
   }
 
   function closeChat() {
-    if (!visible) return;
-    opened = false;
-    closeModelMenu();
-    closePlusMenuSafe();
-    root.classList.remove("is-open");
-    root.classList.add("is-visible");
-    syncNavActive();
-    dispatchAgentVisible();
+    // 不再收成底部/侧栏卷帘条，关闭即整组消失
+    hideAll();
   }
 
   function syncNavActive() {
@@ -3255,9 +3249,9 @@
 
   function toggleFromNav() {
     ensureDom();
-    // 左上角「AI助手」：显示 agent ↔ 再点一次整组消失
+    // 顶栏「AI助手」：直接展开对话，不再先出卷帘条再点一次
     if (visible) hideAll();
-    else showLauncher();
+    else openChat();
     syncNavActive();
   }
 
@@ -3287,8 +3281,7 @@
       closeModelMenu();
       return;
     }
-    if (opened) closeChat();
-    else if (visible) hideAll();
+    if (opened || visible) hideAll();
   });
 
   document.addEventListener("hzdv:catalog-item-open", function (e) {
