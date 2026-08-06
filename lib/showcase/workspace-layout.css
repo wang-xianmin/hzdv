@@ -99,14 +99,29 @@ body.workspace-has-showcase:not(.workspace-agent-open) #site-hero.is-workspace-h
   overflow: hidden;
 }
 
+/* Agent 已关、主展区仍在：顶栏保持可点可读，内容从顶栏下方开始 */
+body.workspace-has-showcase:not(.workspace-agent-open) .site-header--overlay {
+  background: rgba(15, 23, 42, 0.94);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
 body.workspace-has-showcase:not(.workspace-agent-open) #site-content {
   display: block !important;
   position: relative;
   z-index: 1;
-  min-height: calc(100vh - var(--nav-height, 64px));
-  max-width: none;
   margin: 0;
-  padding: 0;
+  /* hero 已收起时避免白底顶到 fixed 顶栏下方被「盖住」 */
+  padding-top: var(--nav-height, 64px);
+  box-sizing: border-box;
+  min-height: 100vh;
+  min-height: 100dvh;
+  max-width: none;
+  padding-left: 0;
+  padding-right: 0;
+  padding-bottom: 0;
+  overflow: auto;
 }
 
 body.workspace-agent-open .ai-assist.is-open .ai-assist__stage {
@@ -129,6 +144,8 @@ body.workspace-agent-open .ai-assist.is-open.is-chatting .ai-assist__panel {
   }
 
   body.workspace-has-showcase:not(.workspace-agent-open) #site-content {
-    min-height: calc(100vh - var(--nav-height, 64px));
+    padding-top: var(--nav-height, 64px);
+    min-height: 100vh;
+    min-height: 100dvh;
   }
 }
