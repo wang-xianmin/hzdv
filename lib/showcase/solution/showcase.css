@@ -26,6 +26,13 @@
   line-height: 1.6;
 }
 
+.ss-empty[hidden],
+.ss-recommend[hidden],
+.ss-detail[hidden],
+.ss-recommend-table-wrap[hidden] {
+  display: none !important;
+}
+
 .ss-recommend {
   padding: 16px 20px 0;
   background: #fff;
