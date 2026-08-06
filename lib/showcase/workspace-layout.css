@@ -91,14 +91,6 @@ body.workspace-agent-open .ai-assist__agent {
   border-radius: 16px;
 }
 
-body.workspace-agent-open .ai-assist__close {
-  position: fixed;
-  right: calc(var(--workspace-agent-width) - 44px);
-  top: calc(var(--nav-height, 64px) + 8px);
-  bottom: auto;
-  z-index: 1301;
-}
-
 body.workspace-has-showcase:not(.workspace-agent-open) #site-hero.is-workspace-hidden {
   visibility: hidden;
   pointer-events: none;
@@ -134,11 +126,6 @@ body.workspace-agent-open .ai-assist.is-open.is-chatting .ai-assist__panel {
 
   body.workspace-agent-open #site-content {
     display: none !important;
-  }
-
-  body.workspace-agent-open .ai-assist__close {
-    right: 12px;
-    top: calc(var(--nav-height, 64px) + 8px);
   }
 
   body.workspace-has-showcase:not(.workspace-agent-open) #site-content {

@@ -128,18 +128,33 @@
 
 .ss-product-back {
   appearance: none;
-  border: 1px solid rgba(15, 23, 42, 0.12);
-  background: #f8fafc;
-  color: #334155;
-  font-size: 13px;
-  padding: 6px 12px;
-  border-radius: 8px;
+  box-sizing: border-box;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: #111827;
+  color: #fff;
+  font-size: 20px;
+  line-height: 1;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s ease, transform 0.15s ease;
 }
 
 .ss-product-back:hover {
-  border-color: #3d6a96;
-  color: #1e3a5f;
+  background: #000;
+  color: #fff;
+  transform: scale(1.04);
+}
+
+.ss-product-back:active {
+  transform: scale(0.96);
 }
 
 .ss-product-name {

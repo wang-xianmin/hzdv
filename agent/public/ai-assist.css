@@ -778,30 +778,7 @@
 
 
 .ai-assist__close {
-  position: absolute;
-  right: max(12px, calc(50% - 280px - 8px));
-  bottom: calc(100px + env(safe-area-inset-bottom, 0px));
-  width: 32px;
-  height: 32px;
-  border: none;
-  border-radius: 50%;
-  background: rgba(20, 24, 32, 0.55);
-  color: #fff;
-  cursor: pointer;
-  pointer-events: auto;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-}
-
-.ai-assist.is-open .ai-assist__close {
-  display: inline-flex;
-}
-
-.ai-assist__close:hover {
-  background: rgba(20, 24, 32, 0.75);
+  display: none !important;
 }
 
 @keyframes ai-assist-rise {
