@@ -2143,6 +2143,54 @@
     appendMessage("assistant", text, extra);
   }
 
+  /**
+   * 短期记忆：取当前提问之前的最近对话（不含本轮思考中气泡）。
+   * @returns {{role:string,content:string}[]}
+   */
+  function buildChatHistory(currentQuestion) {
+    var maxTurns = 8;
+    var maxPer = 500;
+    var out = [];
+    var end = messages.length;
+    // 去掉末尾「思考中…」助手气泡
+    if (
+      end > 0 &&
+      messages[end - 1] &&
+      messages[end - 1].role === "assistant" &&
+      /^思考中|^Thinking/i.test(String(messages[end - 1].text || ""))
+    ) {
+      end -= 1;
+    }
+    // 去掉刚追加的本轮用户句
+    if (
+      end > 0 &&
+      messages[end - 1] &&
+      messages[end - 1].role === "user" &&
+      String(messages[end - 1].text || "").trim() ===
+        String(currentQuestion || "").trim()
+    ) {
+      end -= 1;
+    }
+    for (var i = 0; i < end; i++) {
+      var m = messages[i];
+      if (!m) continue;
+      if (m.role !== "user" && m.role !== "assistant") continue;
+      if (m.__asrLive) continue;
+      var text = String(m.text || "").trim();
+      if (!text) continue;
+      if (/^思考中|^Thinking/i.test(text)) continue;
+      if (/^你好，我是 HZDV|^Hi there, you’re speaking with HZDV/i.test(text)) {
+        continue;
+      }
+      out.push({
+        role: m.role,
+        content: text.slice(0, maxPer),
+      });
+    }
+    if (out.length > maxTurns) out = out.slice(-maxTurns);
+    return out;
+  }
+
   function submitPrompt(text) {
     var q = String(text || "").trim();
     if (!q) return;
@@ -2252,6 +2300,7 @@
       message: q,
       modelId: want,
       lang: currentLang(),
+      history: buildChatHistory(q),
     };
     if (ocrPayload) reqBody.ocr = ocrPayload;
     if (typeof window.getHzdvSystemSettings === "function") {

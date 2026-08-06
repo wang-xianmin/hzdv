@@ -64,6 +64,27 @@ export async function onRequest(context) {
   const replyLang = detectTextLang(message, uiLang);
   const ocr = normalizeOcrForClassify(body.ocr);
   const classifyText = ocr.present ? message + "\n" + ocr.text : message;
+  const history = Array.isArray(body.history) ? body.history : [];
+  let classifyPayload = classifyText;
+  if (history.length) {
+    const lines = [];
+    let budget = 600;
+    for (let i = Math.max(0, history.length - 6); i < history.length; i++) {
+      const row = history[i];
+      if (!row) continue;
+      const role = row.role === "assistant" ? "助手" : "用户";
+      let t = String(row.content || row.text || "").trim();
+      if (!t || /^思考中|^Thinking/i.test(t)) continue;
+      t = t.slice(0, 120);
+      if (budget - t.length < 0) break;
+      budget -= t.length;
+      lines.push(role + "：" + t);
+    }
+    if (lines.length) {
+      classifyPayload =
+        "【近期对话】\n" + lines.join("\n") + "\n【当前】\n" + classifyText;
+    }
+  }
   const systemSettings = body.systemSettings || body.system_settings || {};
   const country = clientCountryFromRequest(request);
   const routeDecision = resolveRouteDecision(systemSettings, env, { country });
@@ -83,7 +104,7 @@ export async function onRequest(context) {
   }
 
   try {
-    const intent = await classifyIntent(env, classifyText, {
+    const intent = await classifyIntent(env, classifyPayload, {
       routeMode,
       systemSettings,
       models,

@@ -2,7 +2,8 @@
  * POST /api/llm-chat
  * 最小对话入口（调试用）：按所选模型或 Auto 解析后的模型调用 OpenAI 兼容接口。
  *
- * Body: { phone, message, modelId?: "auto" | <registry id>, lang?: "zh"|"en" }
+ * Body: { phone, message, modelId?: "auto" | <registry id>, lang?: "zh"|"en",
+ *         history?: [{ role, content }] 近期对话（短期记忆） }
  * Returns: { success, reply, model: {...}, attempts, notes, latencyMs, error? }
  *
  * Auto：先用 VPS 上的 Qwen2.5-1.5B 分类器给消息定级（见 lib/intent.js），
@@ -60,6 +61,31 @@ function clampInt(v, min, max, fallback) {
   if (n < min) return min;
   if (n > max) return max;
   return n;
+}
+
+/** 短期记忆：规范化前端传来的 history */
+function normalizeChatHistory(raw) {
+  if (!Array.isArray(raw)) return [];
+  const maxTurns = 8;
+  const maxPer = 500;
+  const maxTotal = 4000;
+  const out = [];
+  let total = 0;
+  for (let i = 0; i < raw.length; i++) {
+    const row = raw[i];
+    if (!row || typeof row !== "object") continue;
+    const role = row.role === "assistant" ? "assistant" : row.role === "user" ? "user" : "";
+    if (!role) continue;
+    let content = String(row.content || row.text || "").trim();
+    if (!content) continue;
+    if (/^思考中|^Thinking/i.test(content)) continue;
+    content = content.slice(0, maxPer);
+    if (total + content.length > maxTotal) break;
+    total += content.length;
+    out.push({ role, content });
+  }
+  if (out.length > maxTurns) return out.slice(-maxTurns);
+  return out;
 }
 
 function resolveOcrLimits(raw) {
@@ -305,7 +331,8 @@ function systemPrompt(replyLang, ocr, hasWeb, hasCatalog) {
       "You are the HZDV site assistant. Be concise and direct. " +
       "Always answer in the same language the user wrote in. " +
       "The user wrote in English, so answer in English. " +
-      "Ignore the site menu language." +
+      "Ignore the site menu language. " +
+      "If prior turns are provided, use them for follow-ups (e.g. “that one”). " +
       (hasCatalog
         ? " CATALOG RULES (mandatory): " +
           "1) Our products/solutions are shown in the MAIN SHOWCASE (left/center), not in this chat. " +
@@ -331,6 +358,7 @@ function systemPrompt(replyLang, ocr, hasWeb, hasCatalog) {
     "始终使用与用户提问相同的语言回答。" +
     "本次用户用中文提问，请用中文回答。" +
     "不要参考站点菜单语言。" +
+    "若提供了此前几轮对话，请用于理解追问（如「那个」「刚才说的」）。" +
     (hasCatalog
       ? "【产品目录硬性规则】" +
         "1）本站产品/方案详情在主展区展示，不要在对话里展开；" +
@@ -501,6 +529,7 @@ async function callModel(env, target, message, replyLang, ocr, useVision, webCtx
     (proxy ? (wantVision ? 90000 : 60000) : wantVision ? 55000 : 28000);
   const maxTokens =
     (opts && opts.maxTokens) || (wantVision ? 2048 : 1024);
+  const history = normalizeChatHistory(opts && opts.history);
   const result = await chatCompletions({
     baseUrl: proxy ? proxy.baseUrl : target.baseUrl,
     apiKey: proxy ? proxy.apiKey : apiKey,
@@ -512,6 +541,7 @@ async function callModel(env, target, message, replyLang, ocr, useVision, webCtx
         role: "system",
         content: systemPrompt(replyLang, ocr, hasWeb, hasCatalog),
       },
+      ...history,
       { role: "user", content: userContent },
     ],
     temperature: hasWeb || hasCatalog ? 0.1 : 0.3,
@@ -707,6 +737,9 @@ async function handleLlmChat(env, body, reqOpts) {
   const catalogCtx =
     (typeof body.catalogCtx === "string" && body.catalogCtx.trim()) ||
     formatCatalogContext(catalogItems, replyLang);
+  const history = normalizeChatHistory(
+    body.history || body.messages || body.chatHistory
+  );
   const wantId = String(body.modelId || body.model || "auto").trim() || "auto";
   const ocrLimits = resolveOcrLimits(body.systemSettings || body.system_settings);
   const ocr = normalizeOcrContext(body.ocr, ocrLimits);
@@ -745,7 +778,7 @@ async function handleLlmChat(env, body, reqOpts) {
       ocr,
       useVision,
       web.webCtx || "",
-      { systemSettings, country, catalogCtx }
+      { systemSettings, country, catalogCtx, history }
     );
     if (result.usedVision) {
       notes.push(
@@ -835,7 +868,27 @@ async function handleLlmChat(env, body, reqOpts) {
   } else {
     const classifyText =
       ocr.present && ocr.text ? message + "\n" + ocr.text : message;
-    intent = await classifyIntent(env, classifyText, {
+    let classifyPayload = classifyText;
+    if (history.length) {
+      const lines = [];
+      let budget = 600;
+      for (let i = Math.max(0, history.length - 6); i < history.length; i++) {
+        const row = history[i];
+        if (!row) continue;
+        const role = row.role === "assistant" ? "助手" : "用户";
+        let t = String(row.content || "").trim();
+        if (!t) continue;
+        t = t.slice(0, 120);
+        if (budget - t.length < 0) break;
+        budget -= t.length;
+        lines.push(role + "：" + t);
+      }
+      if (lines.length) {
+        classifyPayload =
+          "【近期对话】\n" + lines.join("\n") + "\n【当前】\n" + classifyText;
+      }
+    }
+    intent = await classifyIntent(env, classifyPayload, {
       routeMode,
       systemSettings,
       models,
@@ -997,6 +1050,7 @@ async function handleLlmChat(env, body, reqOpts) {
         systemSettings,
         country,
         catalogCtx,
+        history,
       })
     : null;
 
@@ -1216,7 +1270,7 @@ async function handleLlmChat(env, body, reqOpts) {
       ? 2
       : 4;
   const callOpts = Object.assign(
-    { systemSettings, country, catalogCtx },
+    { systemSettings, country, catalogCtx, history },
     phased
       ? {
           timeoutMs: proxy
