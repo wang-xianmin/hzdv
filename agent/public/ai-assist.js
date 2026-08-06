@@ -3025,6 +3025,18 @@
         .then(function (items) {
           if (items && items.length) {
             try {
+              if (
+                global.SolutionShowcase &&
+                typeof global.SolutionShowcase.showHits === "function"
+              ) {
+                global.SolutionShowcase.showHits(items, q);
+              }
+            } catch (eShow) {
+              try {
+                console.warn("[catalog] showcase render failed", eShow);
+              } catch (eLog) {}
+            }
+            try {
               document.dispatchEvent(
                 new CustomEvent("hzdv:catalog-hits", {
                   detail: { query: q, items: items },
