@@ -27,16 +27,18 @@ export function heuristicNeedsWeb(message) {
   if (s.length < 2) return false;
   // 明显不需要
   if (/^(你好|您好|嗨|hi|hello|hey)[\s!！.。]*$/i.test(s.trim())) return false;
-  // 本站产品/方案问句：用目录，不靠外网
+  // 本站目录问句：用目录/向量，不靠外网（同义词见 catalog-query-intent）
   if (
-    /(你们|咱们|咱家|贵司|本公司|本站|迪微|HZDV|hzdv)/i.test(s) &&
-    /(产品|方案|系统|设备|目录|型号|集成)/.test(s)
+    /(你们|咱们|咱家|贵司|本公司|本站|迪微|HZDV|hzdv|贵公司)/i.test(s) &&
+    /(产品|单品|方案|系统集成|案例|例子|设备|目录|装配)/.test(s)
   ) {
     return false;
   }
   if (
-    /(有什么|有哪些|介绍一下|推荐).{0,8}(产品|方案)/.test(s) ||
-    /(产品|方案).{0,8}(有什么|有哪些|目录)/.test(s)
+    /(有什么|有哪些|介绍一下|推荐|有没有).{0,12}(产品|单品|方案|系统集成|案例|例子|目录)/.test(
+      s
+    ) ||
+    /(产品|单品|方案|案例|例子).{0,8}(有什么|有哪些|目录)/.test(s)
   ) {
     return false;
   }

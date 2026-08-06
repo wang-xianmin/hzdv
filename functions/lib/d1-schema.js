@@ -5,6 +5,7 @@
 import { pickD1ForDebugRegistry } from "./debug-issue-registry-d1.js";
 import { ensureHeroBackgroundTables } from "./hero-background-d1.js";
 import { ensureCatalogTables } from "./catalog-d1.js";
+import { ensureCatalogSynonymTable } from "./catalog-synonyms.js";
 
 export { pickD1ForDebugRegistry as pickD1Binding };
 
@@ -57,12 +58,14 @@ export const D1_TABLE_NAMES = [
   "delete_kv_user_audit",
   "catalog_items",
   "catalog_media",
+  "catalog_synonyms",
 ];
 
 export async function ensureAllD1Tables(d1) {
   if (!d1) throw new Error("D1 not configured");
   await ensureHeroBackgroundTables(d1);
   await ensureCatalogTables(d1);
+  await ensureCatalogSynonymTable(d1);
   await d1.prepare(USER_SETTINGS_SQL).run();
   await d1.prepare(AVATARS_SQL).run();
   await d1.prepare(AVATARS_INDEX_SQL).run();

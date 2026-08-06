@@ -594,8 +594,10 @@ function truncateEmbed(s, n) {
   return t.slice(0, n);
 }
 
-/** 拼进向量库的文本：名称 + 型号 + 规格 + 方案结构化块 + 说明 */
-export function catalogItemEmbeddingText(row) {
+/** 拼进向量库的文本：名称 + 型号 + 规格 + 方案结构化块 + 说明 + 同义词
+ * @param {object} [synonymMap] getCatalogSynonymMap 结果；重建索引时传入
+ */
+export function catalogItemEmbeddingText(row, synonymMap) {
   if (!row || typeof row !== "object") return "";
   const kindLabel =
     row.kind === "solution"
@@ -603,8 +605,23 @@ export function catalogItemEmbeddingText(row) {
       : row.kind === "case"
         ? "案例"
         : "产品";
+  const synKey =
+    row.kind === "solution"
+      ? "solution"
+      : row.kind === "case"
+        ? "case"
+        : "product";
+  const syn =
+    synonymMap && Array.isArray(synonymMap[synKey])
+      ? synonymMap[synKey].join(" ")
+      : row.kind === "solution"
+        ? "系统集成 成套 产线 装配线"
+        : row.kind === "case"
+          ? "例子 实例 应用案例 项目案例"
+          : "单品 设备 模块";
   const parts = [
     kindLabel,
+    syn,
     row.name,
     row.model ? "型号 " + row.model : "",
   ];

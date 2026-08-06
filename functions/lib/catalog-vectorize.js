@@ -4,6 +4,8 @@
  */
 
 import { catalogItemEmbeddingText } from "./catalog-d1.js";
+import { getCatalogSynonymMap } from "./catalog-synonyms.js";
+import { pickD1Binding } from "./cloudflare-bindings.js";
 
 export const CATALOG_EMBED_MODEL = "@cf/google/embeddinggemma-300m";
 export const CATALOG_EMBED_DIMS = 768;
@@ -108,6 +110,14 @@ export async function indexCatalogItems(env, items) {
   if (!ai) throw new Error("缺少 AI 绑定");
   if (!index) throw new Error("缺少 Vectorize 绑定（VECTORIZE / HZDV_INDEX）");
 
+  let synonymMap = null;
+  try {
+    const d1 = pickD1Binding(env);
+    if (d1) synonymMap = await getCatalogSynonymMap(d1);
+  } catch (e) {
+    synonymMap = null;
+  }
+
   const active = [];
   const toDelete = [];
   for (const item of items || []) {
@@ -116,7 +126,7 @@ export async function indexCatalogItems(env, items) {
       toDelete.push(catalogVectorId(item.id));
       continue;
     }
-    const text = catalogItemEmbeddingText(item);
+    const text = catalogItemEmbeddingText(item, synonymMap);
     if (!text.trim()) continue;
     active.push({ item, text });
   }

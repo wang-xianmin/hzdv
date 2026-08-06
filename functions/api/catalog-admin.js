@@ -24,6 +24,10 @@ import {
   setCatalogCover,
   updateCatalogItem,
 } from "../lib/catalog-d1.js";
+import {
+  listCatalogSynonyms,
+  saveCatalogSynonyms,
+} from "../lib/catalog-synonyms.js";
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -63,6 +67,11 @@ export async function onRequest(context) {
   if (request.method === "GET") {
     try {
       await assertCatalogOpsAccess(env, phoneFromUrl(request));
+      const view = new URL(request.url).searchParams.get("view") || "";
+      if (view === "synonyms") {
+        const synonyms = await listCatalogSynonyms(d1);
+        return jsonResponse({ success: true, synonyms });
+      }
       const items = await listCatalogItems(d1, { includeInactive: true });
       return jsonResponse({ success: true, items });
     } catch (e) {
@@ -75,6 +84,14 @@ export async function onRequest(context) {
     if (!body) return jsonResponse({ success: false, error: "Invalid JSON" }, 400);
     try {
       await assertCatalogOpsAccess(env, body.phone);
+      if (body.action === "save_synonyms") {
+        const synonyms = await saveCatalogSynonyms(d1, body.synonyms || body.rows);
+        return jsonResponse({
+          success: true,
+          synonyms,
+          hint: "同义词已保存。若希望向量检索立即吃到新说法，请点「重建向量索引」。",
+        });
+      }
       if (body.action === "set_cover") {
         const item = await setCatalogCover(d1, body.id, body.r2_key);
         if (!item) {

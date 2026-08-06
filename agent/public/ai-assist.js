@@ -2788,8 +2788,8 @@
                   messages[thinkingIdx] = {
                     role: "assistant",
                     text: t(
-                      "目录里暂未匹配到相关产品/方案。可换个关键词，或稍后再试。",
-                      "No matching catalog items yet. Try other keywords."
+                      "目录里暂未匹配到相关产品/方案。请确认产品目录有已启用条目；若刚录入，可在运维里点「重建向量索引」后再试。",
+                      "No matching catalog items. Ensure active catalog entries exist; after edits, rebuild the vector index."
                     ),
                     model: "auto",
                     modelBadge: "Auto · 目录",
@@ -2911,18 +2911,76 @@
     } catch (e) {}
   }
 
+  // 前端先用内置同义词；启动后拉 D1 表覆盖（/api/catalog-public?synonyms=1）
+  var synonymMapCache = null;
+  var OUR_SITE =
+    /你们|咱们|咱家|贵司|本公司|本站|迪微|HZDV|hzdv|贵公司|你们公司/i;
+  var BROWSE_ASK =
+    /有什么|有哪些|都有什么|介绍一下|看看|列一下|展示一下|有没有|能否介绍|想了解/;
+  var DEFAULT_CATALOG_NOUN =
+    /产品|单品|设备|阀门|仪表|模块|配件|型号|货品|商品|方案|系统集成|成套|产线|装配线|集成系统|交钥匙|案例|例子|实例|应用案例|成功案例|项目案例|目录|型号库/;
+
+  function escapeRegExp(s) {
+    return String(s || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function catalogNounRegex() {
+    if (!synonymMapCache) return DEFAULT_CATALOG_NOUN;
+    var terms = [];
+    ["product", "solution", "case"].forEach(function (k) {
+      (synonymMapCache[k] || []).forEach(function (a) {
+        var t = String(a || "").trim();
+        if (t && terms.indexOf(t) < 0) terms.push(t);
+      });
+    });
+    terms.push("目录", "型号库", "型号");
+    terms.sort(function (a, b) {
+      return b.length - a.length;
+    });
+    if (!terms.length) return DEFAULT_CATALOG_NOUN;
+    try {
+      return new RegExp(terms.map(escapeRegExp).join("|"));
+    } catch (e) {
+      return DEFAULT_CATALOG_NOUN;
+    }
+  }
+
+  function ensureSynonymMap() {
+    if (synonymMapCache) return Promise.resolve(synonymMapCache);
+    return fetch("/api/catalog-public?synonyms=1", { cache: "no-store" })
+      .then(function (r) {
+        return r.json();
+      })
+      .then(function (j) {
+        if (j && j.success && j.synonyms) synonymMapCache = j.synonyms;
+        return synonymMapCache;
+      })
+      .catch(function () {
+        return null;
+      });
+  }
+
+  function isBrowseCatalogQuery(message) {
+    var s = String(message || "").trim();
+    if (!s) return false;
+    var noun = catalogNounRegex();
+    if (BROWSE_ASK.test(s) && noun.test(s)) return true;
+    if (noun.test(s) && /(列表|一览|目录|清单)/.test(s)) return true;
+    if (OUR_SITE.test(s) && BROWSE_ASK.test(s)) return true;
+    return false;
+  }
+
   function isCompanyCatalogQuery(message) {
     var s = String(message || "").trim();
     if (!s) return false;
+    if (isBrowseCatalogQuery(s)) return true;
+    var noun = catalogNounRegex();
+    if (OUR_SITE.test(s) && noun.test(s)) return true;
+    if (BROWSE_ASK.test(s) && noun.test(s)) return true;
     if (
-      /(你们|咱们|咱家|贵司|本公司|本站|迪微|HZDV|hzdv)/i.test(s) &&
-      /(产品|方案|系统|设备|目录|型号|集成)/.test(s)
-    ) {
-      return true;
-    }
-    if (
-      /(有什么|有哪些|介绍一下|推荐).{0,8}(产品|方案)/.test(s) ||
-      /(产品|方案).{0,8}(有什么|有哪些|目录)/.test(s)
+      /(有没有|有吗|推荐|适合|用于).{0,20}(装配|产线|阀门|仪表|洁净|模块|工位)/.test(
+        s
+      )
     ) {
       return true;
     }
@@ -2933,31 +2991,53 @@
   function searchCatalogForShowcase(query) {
     var q = String(query || "").trim();
     if (!q) return Promise.resolve([]);
-    var url =
-      "/api/catalog-public?q=" +
-      encodeURIComponent(q) +
-      "&topK=5";
-    return fetch(url, { cache: "no-store" })
-      .then(function (r) {
-        return r.json();
-      })
-      .then(function (j) {
-        var items =
-          j && j.success && Array.isArray(j.items) ? j.items : [];
-        if (items.length) {
-          try {
-            document.dispatchEvent(
-              new CustomEvent("hzdv:catalog-hits", {
-                detail: { query: q, items: items },
+    return ensureSynonymMap().then(function () {
+      var browse = isBrowseCatalogQuery(q);
+      var url = browse
+        ? "/api/catalog-public?browse=1&topK=10"
+        : "/api/catalog-public?q=" + encodeURIComponent(q) + "&topK=5";
+      return fetch(url, { cache: "no-store" })
+        .then(function (r) {
+          return r.json();
+        })
+        .then(function (j) {
+          var items = j && Array.isArray(j.items) ? j.items : [];
+          if (
+            (!j || j.success === false || !items.length) &&
+            !browse &&
+            isCompanyCatalogQuery(q)
+          ) {
+            return fetch("/api/catalog-public?browse=1&topK=10", {
+              cache: "no-store",
+            })
+              .then(function (r2) {
+                return r2.json();
               })
-            );
-          } catch (e2) {}
-        }
-        return items;
-      })
-      .catch(function () {
-        return [];
-      });
+              .then(function (j2) {
+                return j2 && Array.isArray(j2.items) ? j2.items : [];
+              })
+              .catch(function () {
+                return [];
+              });
+          }
+          return items;
+        })
+        .then(function (items) {
+          if (items && items.length) {
+            try {
+              document.dispatchEvent(
+                new CustomEvent("hzdv:catalog-hits", {
+                  detail: { query: q, items: items },
+                })
+              );
+            } catch (e2) {}
+          }
+          return items || [];
+        })
+        .catch(function () {
+          return [];
+        });
+    });
   }
 
   function showLauncher() {
