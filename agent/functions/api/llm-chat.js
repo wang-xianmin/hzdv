@@ -35,7 +35,7 @@ import {
   resolveApiKey,
 } from "../lib/openai-compat.js";
 import { detectTextLang, normalizeUiLang } from "../lib/tier1.js";
-import { classifyIntent } from "../lib/intent.js";
+import { classifyIntent, intentChannelSuffix } from "../lib/intent.js";
 import {
   clientCountryFromRequest,
   formatRouteModeNote,
@@ -845,25 +845,31 @@ async function handleLlmChat(env, body, reqOpts) {
     const provided =
       body.intent && typeof body.intent === "object"
         ? body.intent
-        : { tier: null, web: false, latencyMs: 0, error: null, raw: "" };
+        : {
+            tier: null,
+            catalog: false,
+            web: false,
+            latencyMs: 0,
+            error: null,
+            raw: "",
+          };
     const tierNum = Number(provided.tier);
+    const catalog = !!provided.catalog;
     intent = {
       tier: tierNum === 1 || tierNum === 2 || tierNum === 3 ? tierNum : null,
-      web: !!provided.web,
+      catalog,
+      web: catalog ? false : !!provided.web,
       latencyMs: Number(provided.latencyMs) || 0,
       error: provided.error || null,
       raw: String(provided.raw || ""),
     };
+    const ch = intentChannelSuffix(intent);
     notes.push(
       uiLang === "en"
         ? "③ Generate: using intent from step 1 → " +
-          (intent.tier
-            ? "tier" + intent.tier + (intent.web ? " +web" : "")
-            : "none")
+          (intent.tier ? "tier" + intent.tier + ch : "none")
         : "③ 生成：沿用第①步意图 → " +
-          (intent.tier
-            ? "tier" + intent.tier + (intent.web ? " +web" : "")
-            : "无有效分级")
+          (intent.tier ? "tier" + intent.tier + ch : "无有效分级")
     );
   } else {
     const classifyText =
@@ -895,18 +901,19 @@ async function handleLlmChat(env, body, reqOpts) {
       country,
     });
     if (intent.tier) {
+      const ch = intentChannelSuffix(intent);
       notes.push(
         uiLang === "en"
           ? "Intent → tier" +
             intent.tier +
-            (intent.web ? " +web" : "") +
+            ch +
             " · " +
             intent.latencyMs +
             "ms" +
             (intent.raw ? ' · raw "' + intent.raw + '"' : "")
           : "意图分类 → tier" +
             intent.tier +
-            (intent.web ? " +web" : "") +
+            ch +
             " · " +
             intent.latencyMs +
             "ms" +
@@ -978,8 +985,8 @@ async function handleLlmChat(env, body, reqOpts) {
     };
   } else {
     web = await resolveWebContext(env, message, replyLang, {
-      force: forceWeb || !!intent.web,
-      intentWeb: !!intent.web,
+      force: forceWeb || (!!intent.web && !intent.catalog),
+      intentWeb: !!intent.web && !intent.catalog,
       systemSettings,
       timeoutMs: 12000,
     });

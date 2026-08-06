@@ -5,7 +5,7 @@
  *   INTENT_SERVICE_URL / INTENT_API_KEY
  * 方案二（cf）：CF 直调云端 7B（优先模型库 Qwen2.5-7B / 否则 SILICONFLOW）
  *
- * 输出：tier1|tier2|tier3，可选 web
+ * 输出：tier1|tier2|tier3，可选通道 catalog | web（互斥；不加则为 chat）
  */
 
 import {
@@ -20,14 +20,18 @@ import { isCompanyCatalogQuery } from "./catalog-query-intent.js";
 export { isCompanyCatalogQuery } from "./catalog-query-intent.js";
 
 const CLASSIFY_PROMPT =
-  "你是路由分类器。给用户消息分级，只输出一行：tier1、tier2、tier3，需要联网时在后面加空格和 web。\n" +
+  "你是路由分类器。给用户消息分级，只输出一行。\n" +
+  "格式：tier1|tier2|tier3，后面可加空格和通道标签 catalog 或 web（二者互斥，不能同时出现）。\n" +
   "tier1：打招呼、闲聊、寒暄。\n" +
-  "tier2：常规任务：翻译、总结、解释、一般知识、网站功能咨询、询问本站/本公司业务与目录。\n" +
+  "tier2：常规任务（翻译、总结、解释、一般知识、网站功能、站内目录等）。\n" +
   "tier3：多步推理/长文/编程/方案规划。\n" +
-  "web：必须查最新新闻、实时数据、股价、天气、赛果、外部厂商刚发布的产品新闻等；纯概念解释不要加 web。\n" +
-  "重要：问本站/本公司有什么东西（产品、单品、方案、系统集成、案例、例子等说法均可），一律 tier2，禁止加 web。" +
-  "不要试图区分「产品/方案/案例」——那是目录检索的事，你只负责不要联网。\n" +
-  "示例输出：tier1 / tier2 / tier3 / tier2 web / tier3 web";
+  "通道（在 tier 之后）：\n" +
+  "- catalog：本站产品/方案/案例目录、主展区展示与切换（有什么产品、换方案、回到产品展示、看看案例等）。走站内目录，禁止 web。\n" +
+  "- web：必须查外网最新新闻、实时数据、股价、天气、赛果、外部厂商新闻等。\n" +
+  "- 不加通道：普通问答/翻译/概念解释（chat）。\n" +
+  "重要：涉及本公司/本站目录或主展区导航，一律加 catalog，绝不要加 web。" +
+  "产品/方案/案例用哪一类由目录检索决定，你只标 catalog。\n" +
+  "示例输出：tier1 / tier2 / tier2 catalog / tier2 web / tier3 / tier3 web";
 
 const FEW_SHOT = [
   ["你好", "tier1"],
@@ -35,17 +39,36 @@ const FEW_SHOT = [
   ["帮我把这段话翻译成英文：今天天气不错", "tier2"],
   ["什么是量子纠缠？", "tier2"],
   ["网站上怎么切换语言", "tier2"],
-  ["你们有什么产品", "tier2"],
-  ["你们有哪些单品", "tier2"],
-  ["有没有系统集成的例子", "tier2"],
-  ["迪微有什么产品？", "tier2"],
-  ["有没有装配线方案", "tier2"],
+  ["你们有什么产品", "tier2 catalog"],
+  ["你们有哪些单品", "tier2 catalog"],
+  ["有没有系统集成的例子", "tier2 catalog"],
+  ["迪微有什么产品？", "tier2 catalog"],
+  ["有没有装配线方案", "tier2 catalog"],
+  ["换方案", "tier2 catalog"],
+  ["回到产品展示", "tier2 catalog"],
+  ["再看看产品", "tier2 catalog"],
+  ["切换到案例", "tier2 catalog"],
   ["今天有什么科技新闻", "tier2 web"],
   ["苹果现在股价多少", "tier2 web"],
   ["latest OpenAI model release news", "tier2 web"],
   ["写一个 Python 快速排序并解释时间复杂度", "tier3"],
   ["帮我规划一个三个月的机器学习学习路线", "tier3"],
 ];
+
+/** 从带【近期对话】包装的分类输入中取出当前用户句 */
+function currentUserUtterance(message) {
+  const s = String(message || "");
+  const m = s.match(/【当前】\s*\n?([\s\S]*)$/);
+  return (m ? m[1] : s).trim();
+}
+
+/** 笔记用：+catalog / +web / 空 */
+export function intentChannelSuffix(intent) {
+  if (!intent) return "";
+  if (intent.catalog) return " +catalog";
+  if (intent.web) return " +web";
+  return "";
+}
 
 export function intentTarget(env) {
   const baseUrl = normalizeOpenAiCompatBase(env.INTENT_SERVICE_URL);
@@ -110,8 +133,11 @@ function parseClassify(text) {
   const s = String(text || "").toLowerCase();
   const m = s.match(/tier\s*([123])/);
   const tier = m ? Number(m[1]) : null;
-  const web = /\bweb\b/.test(s) || /联网|搜网/.test(s);
-  return { tier, web: !!(tier && web) };
+  // catalog 优先于 web（互斥）
+  const catalog = /\bcatalog\b/.test(s) || /目录/.test(s);
+  const web =
+    !catalog && (!!tier) && (/\bweb\b/.test(s) || /联网|搜网/.test(s));
+  return { tier, catalog: !!(tier && catalog), web };
 }
 
 /**
@@ -120,6 +146,7 @@ function parseClassify(text) {
  * @param {object[]} [opts.models]  CF 模式选 7B 用
  * @returns {Promise<{
  *   tier: 1|2|3|null,
+ *   catalog: boolean,
  *   web: boolean,
  *   latencyMs: number,
  *   error: string|null,
@@ -146,6 +173,7 @@ export async function classifyIntent(env, message, opts) {
     if (!target) {
       return {
         tier: null,
+        catalog: false,
         web: false,
         latencyMs: 0,
         error:
@@ -163,6 +191,7 @@ export async function classifyIntent(env, message, opts) {
     if (!target) {
       return {
         tier: null,
+        catalog: false,
         web: false,
         latencyMs: 0,
         error: "分类器未配置（INTENT_SERVICE_URL / INTENT_API_KEY）",
@@ -187,7 +216,7 @@ export async function classifyIntent(env, message, opts) {
       { role: "user", content: String(message || "").slice(0, 800) },
     ],
     temperature: 0,
-    max_tokens: 16,
+    max_tokens: 24,
     timeoutMs,
     extraBody,
     // CF 模式禁止经 VPS 代理
@@ -212,6 +241,7 @@ export async function classifyIntent(env, message, opts) {
     }
     return {
       tier: null,
+      catalog: false,
       web: false,
       latencyMs: result.latencyMs,
       error: err,
@@ -225,6 +255,7 @@ export async function classifyIntent(env, message, opts) {
   if (!parsed.tier) {
     return {
       tier: null,
+      catalog: false,
       web: false,
       latencyMs: result.latencyMs,
       error: "分类器输出无法解析",
@@ -234,13 +265,18 @@ export async function classifyIntent(env, message, opts) {
     };
   }
   let tier = parsed.tier;
+  let catalog = parsed.catalog;
   let web = parsed.web;
-  if (isCompanyCatalogQuery(message)) {
+  // 规则兜底：站内目录问句强制 catalog，清掉 web
+  if (isCompanyCatalogQuery(currentUserUtterance(message))) {
+    catalog = true;
     web = false;
     if (!tier || tier === 1) tier = 2;
   }
+  if (catalog) web = false;
   return {
     tier,
+    catalog,
     web,
     latencyMs: result.latencyMs,
     error: null,

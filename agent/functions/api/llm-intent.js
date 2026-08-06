@@ -3,7 +3,7 @@
  * 仅跑意图分类（短请求），供前端先展示跟踪，再另调 /api/llm-chat 生成回复。
  *
  * Body: { phone, message, lang?, ocr? }
- * Returns: { success, intent: { tier, web, latencyMs, raw, error }, notes, model }
+ * Returns: { success, intent: { tier, catalog, web, latencyMs, raw, error }, notes, model }
  */
 
 import {
@@ -12,7 +12,7 @@ import {
   pickKvBinding,
 } from "../lib/host.js";
 import { detectTextLang, normalizeUiLang } from "../lib/tier1.js";
-import { classifyIntent } from "../lib/intent.js";
+import { classifyIntent, intentChannelSuffix } from "../lib/intent.js";
 import {
   clientCountryFromRequest,
   formatRouteModeNote,
@@ -119,19 +119,20 @@ export async function onRequest(context) {
           : "① 分类器 → " + (intent.label || intent.via || "")
       );
     }
+    const ch = intentChannelSuffix(intent);
     if (intent.tier) {
       notes.push(
         uiLang === "en"
           ? "① Intent → tier" +
             intent.tier +
-            (intent.web ? " +web" : "") +
+            ch +
             " · " +
             intent.latencyMs +
             "ms" +
             (intent.raw ? ' · raw "' + intent.raw + '"' : "")
           : "① 意图 → tier" +
             intent.tier +
-            (intent.web ? " +web" : "") +
+            ch +
             " · " +
             intent.latencyMs +
             "ms" +
@@ -157,13 +158,17 @@ export async function onRequest(context) {
       );
     }
     notes.push(
-      intent.web
+      intent.catalog
         ? uiLang === "en"
-          ? "Step 1/3 intent done → next: web search"
-          : "① 意图完成 → 下一步：联网检索"
-        : uiLang === "en"
-          ? "Step 1/2 intent done → next: generate"
-          : "① 意图完成 → 下一步：生成回答"
+          ? "Step 1 intent done → next: site catalog / showcase"
+          : "① 意图完成 → 下一步：站内目录 / 主展区"
+        : intent.web
+          ? uiLang === "en"
+            ? "Step 1/3 intent done → next: web search"
+            : "① 意图完成 → 下一步：联网检索"
+          : uiLang === "en"
+            ? "Step 1/2 intent done → next: generate"
+            : "① 意图完成 → 下一步：生成回答"
     );
 
     return jsonResponse({
@@ -173,6 +178,7 @@ export async function onRequest(context) {
       routeDecision,
       intent: {
         tier: intent.tier,
+        catalog: !!intent.catalog,
         web: !!intent.web,
         latencyMs: intent.latencyMs || 0,
         raw: intent.raw || "",

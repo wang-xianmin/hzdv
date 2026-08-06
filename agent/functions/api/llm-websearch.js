@@ -65,7 +65,8 @@ export async function onRequest(context) {
   const uiLang = normalizeUiLang(body.lang || body.locale || "zh");
   const replyLang = detectTextLang(message, uiLang);
   const forceWeb = body.webSearch === true || body.forceWeb === true;
-  const intentWeb = !!(body.intent && body.intent.web);
+  const intentWeb =
+    !!(body.intent && body.intent.web) && !(body.intent && body.intent.catalog);
   const want = forceWeb || intentWeb || heuristicNeedsWeb(message);
   const notes = [];
 

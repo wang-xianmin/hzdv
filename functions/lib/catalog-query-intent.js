@@ -10,6 +10,10 @@ const OUR_SITE =
 const BROWSE_ASK =
   /有什么|有哪些|都有什么|介绍一下|看看|列一下|展示一下|有没有|能否介绍|想了解/;
 
+/** 主展区切换 / 返回类说法（追问记忆） */
+const SHOWCASE_NAV =
+  /回到|返回|再看|再来|换回|换成|换到|换个|切换|切到|打开|展示|列表|缩略图|主展区|目录页|看下|看一下|换/;
+
 const DEFAULT_MAP = {
   product: ["产品", "单品", "设备", "阀门", "仪表", "模块", "配件", "货品"],
   solution: [
@@ -67,13 +71,24 @@ export function detectCatalogKind(message, synonymMap) {
   return best;
 }
 
+/** 短句导航：产品 / 换方案 / 回到案例页 */
+function isShortCatalogNav(s) {
+  return /^(请|帮我|给我)?(再)?(看|换|切|回|返|打开|展示)?(到|回|成|个)?(本站|你们|咱们|公司)?(的)?(产品|方案|案例|系统集成)(展示页面|展示页|展示区|展示|列表|页面|页|目录|缩略图)?(吧|啊|呀|呢|吗)?[？?！!\.。]*$/i.test(
+    String(s || "").trim()
+  );
+}
+
 export function isBrowseCatalogQuery(message, synonymMap) {
   const s = String(message || "").trim();
   if (!s) return false;
   const noun = buildCatalogNounRegex(synonymMap);
+  const kind = detectCatalogKind(s, synonymMap);
   if (BROWSE_ASK.test(s) && noun.test(s)) return true;
   if (noun.test(s) && /(列表|一览|目录|清单)/.test(s)) return true;
   if (OUR_SITE.test(s) && BROWSE_ASK.test(s)) return true;
+  // 「回到产品展示」「换方案」→ 浏览对应类型，不要走向量/外网
+  if (kind && SHOWCASE_NAV.test(s)) return true;
+  if (isShortCatalogNav(s)) return true;
   return false;
 }
 
@@ -82,8 +97,11 @@ export function isCompanyCatalogQuery(message, synonymMap) {
   if (!s) return false;
   if (isBrowseCatalogQuery(s, synonymMap)) return true;
   const noun = buildCatalogNounRegex(synonymMap);
+  const kind = detectCatalogKind(s, synonymMap);
   if (OUR_SITE.test(s) && noun.test(s)) return true;
   if (BROWSE_ASK.test(s) && noun.test(s)) return true;
+  if (kind && SHOWCASE_NAV.test(s)) return true;
+  if (isShortCatalogNav(s)) return true;
   if (
     /(有没有|有吗|推荐|适合|用于).{0,20}(装配|产线|阀门|仪表|洁净|模块|工位)/.test(
       s
@@ -94,4 +112,4 @@ export function isCompanyCatalogQuery(message, synonymMap) {
   return false;
 }
 
-export { DEFAULT_MAP as DEFAULT_CATALOG_SYNONYM_MAP };
+export { DEFAULT_MAP as DEFAULT_CATALOG_SYNONYM_MAP, SHOWCASE_NAV };

@@ -2719,7 +2719,9 @@
             }
 
             var intentObj = ij.intent || null;
-            var companyCatalog = isCompanyCatalogQuery(reqBody.message || "");
+            var intentCatalog = !!(intentObj && intentObj.catalog);
+            var companyCatalog =
+              intentCatalog || isCompanyCatalogQuery(reqBody.message || "");
             var needWeb =
               !companyCatalog &&
               (!!(intentObj && intentObj.web) ||
@@ -2727,11 +2729,14 @@
                   reqBody.message || ""
                 ));
             if (companyCatalog && intentObj) {
-              intentObj = Object.assign({}, intentObj, { web: false });
+              intentObj = Object.assign({}, intentObj, {
+                catalog: true,
+                web: false,
+              });
               allNotes.push(
                 t(
-                  "① 本站产品/方案问句 → 跳过联网，改用产品目录",
-                  "① Company catalog question → skip web, use site catalog"
+                  "① 通道 catalog → 跳过联网，改用产品目录",
+                  "① Channel catalog → skip web, use site catalog"
                 )
               );
             }
@@ -2739,8 +2744,14 @@
             setThinkingBusy(needWeb ? 2 : 3, {
               verbose: needWeb
                 ? t("② 正在联网检索…", "② Searching the web…")
-                : t("③ 正在生成回答…", "③ Generating answer…"),
-              badge: needWeb ? "Auto · ②搜网" : "Auto · ③生成",
+                : companyCatalog
+                  ? t("③ 正在查询产品目录…", "③ Querying site catalog…")
+                  : t("③ 正在生成回答…", "③ Generating answer…"),
+              badge: needWeb
+                ? "Auto · ②搜网"
+                : companyCatalog
+                  ? "Auto · 目录"
+                  : "Auto · ③生成",
             });
 
             var afterWeb = Promise.resolve({
@@ -2790,9 +2801,16 @@
             }
 
             return afterWeb.then(function (webInfo) {
-              return Promise.resolve(catalogPromise || []).then(function (
-                catalogItems
-              ) {
+              var catalogWait = Promise.resolve(catalogPromise || []);
+              if (companyCatalog) {
+                catalogWait = catalogWait.then(function (items) {
+                  if (items && items.length) return items;
+                  return searchCatalogForShowcase(reqBody.message || "", {
+                    forceBrowse: true,
+                  });
+                });
+              }
+              return catalogWait.then(function (catalogItems) {
                 if (catalogItems && catalogItems.length) {
                   allNotes.push(
                     t(
@@ -2966,6 +2984,8 @@
     /你们|咱们|咱家|贵司|本公司|本站|迪微|HZDV|hzdv|贵公司|你们公司/i;
   var BROWSE_ASK =
     /有什么|有哪些|都有什么|介绍一下|看看|列一下|展示一下|有没有|能否介绍|想了解/;
+  var SHOWCASE_NAV =
+    /回到|返回|再看|再来|换回|换成|换到|换个|切换|切到|打开|展示|列表|缩略图|主展区|目录页|看下|看一下|换/;
   var DEFAULT_CATALOG_MAP = {
     product: ["产品", "单品", "设备", "阀门", "仪表", "模块", "配件", "货品", "商品"],
     solution: [
@@ -3047,13 +3067,22 @@
       });
   }
 
+  function isShortCatalogNav(s) {
+    return /^(请|帮我|给我)?(再)?(看|换|切|回|返|打开|展示)?(到|回|成|个)?(本站|你们|咱们|公司)?(的)?(产品|方案|案例|系统集成)(展示页面|展示页|展示区|展示|列表|页面|页|目录|缩略图)?(吧|啊|呀|呢|吗)?[？?！!\.。]*$/i.test(
+      String(s || "").trim()
+    );
+  }
+
   function isBrowseCatalogQuery(message) {
     var s = String(message || "").trim();
     if (!s) return false;
     var noun = catalogNounRegex();
+    var kind = detectCatalogKind(s);
     if (BROWSE_ASK.test(s) && noun.test(s)) return true;
     if (noun.test(s) && /(列表|一览|目录|清单)/.test(s)) return true;
     if (OUR_SITE.test(s) && BROWSE_ASK.test(s)) return true;
+    if (kind && SHOWCASE_NAV.test(s)) return true;
+    if (isShortCatalogNav(s)) return true;
     return false;
   }
 
@@ -3062,8 +3091,11 @@
     if (!s) return false;
     if (isBrowseCatalogQuery(s)) return true;
     var noun = catalogNounRegex();
+    var kind = detectCatalogKind(s);
     if (OUR_SITE.test(s) && noun.test(s)) return true;
     if (BROWSE_ASK.test(s) && noun.test(s)) return true;
+    if (kind && SHOWCASE_NAV.test(s)) return true;
+    if (isShortCatalogNav(s)) return true;
     if (
       /(有没有|有吗|推荐|适合|用于).{0,20}(装配|产线|阀门|仪表|洁净|模块|工位)/.test(
         s
@@ -3082,11 +3114,12 @@
   }
 
   /** @returns {Promise<object[]>} */
-  function searchCatalogForShowcase(query) {
+  function searchCatalogForShowcase(query, opts) {
     var q = String(query || "").trim();
     if (!q) return Promise.resolve([]);
+    var forceBrowse = !!(opts && opts.forceBrowse);
     return ensureSynonymMap().then(function () {
-      var browse = isBrowseCatalogQuery(q);
+      var browse = forceBrowse || isBrowseCatalogQuery(q);
       var kind = detectCatalogKind(q);
       var kindQs = kind ? "&kind=" + encodeURIComponent(kind) : "";
       var url = browse
