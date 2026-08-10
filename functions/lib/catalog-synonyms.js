@@ -1,5 +1,5 @@
 /**
- * 目录同义词（D1）：规范词 product|solution|case → 用户可维护的说法列表
+ * 目录同义词（D1）：规范词 product|solution|case|service → 用户可维护的说法列表
  *
  * - 问句识别 / 浏览回退：读本表
  * - 重建向量索引：把同义词写入嵌入文本（改完同义词后应重建索引）
@@ -7,11 +7,12 @@
  */
 
 import { ensureCatalogTables } from "./catalog-d1.js";
+import { CATALOG_KIND_KEYS } from "./catalog-query-intent.js";
 
 const CREATE_SYNONYMS_SQL = `
 CREATE TABLE IF NOT EXISTS catalog_synonyms (
   canonical TEXT PRIMARY KEY
-    CHECK (canonical IN ('product', 'solution', 'case')),
+    CHECK (canonical IN ('product', 'solution', 'case', 'service')),
   aliases_json TEXT NOT NULL DEFAULT '[]',
   updated_at INTEGER NOT NULL
 )`;
@@ -37,12 +38,28 @@ const DEFAULT_ROWS = [
     canonical: "case",
     aliases: ["案例", "例子", "实例", "应用案例", "成功案例", "项目案例", "样板"],
   },
+  {
+    canonical: "service",
+    aliases: [
+      "服务",
+      "售后",
+      "质保",
+      "保修",
+      "维修",
+      "培训",
+      "安装调试",
+      "技术支持",
+      "售后服务",
+      "客户服务",
+    ],
+  },
 ];
 
 const LABEL_ZH = {
   product: "产品",
   solution: "方案",
   case: "案例",
+  service: "服务",
 };
 
 function nowMs() {
@@ -62,10 +79,50 @@ function parseAliases(raw) {
   }
 }
 
+/** 旧表 CHECK 无 service 时重建表结构 */
+async function migrateSynonymsAllowService(d1) {
+  try {
+    await d1
+      .prepare(
+        `INSERT INTO catalog_synonyms (canonical, aliases_json, updated_at)
+         VALUES ('service', '[]', 0)`
+      )
+      .run();
+    await d1
+      .prepare(`DELETE FROM catalog_synonyms WHERE canonical = 'service' AND updated_at = 0`)
+      .run();
+    return;
+  } catch (e) {
+    // CHECK 拒绝 service → 重建
+  }
+  await d1
+    .prepare(
+      `CREATE TABLE IF NOT EXISTS catalog_synonyms_v2 (
+        canonical TEXT PRIMARY KEY
+          CHECK (canonical IN ('product', 'solution', 'case', 'service')),
+        aliases_json TEXT NOT NULL DEFAULT '[]',
+        updated_at INTEGER NOT NULL
+      )`
+    )
+    .run();
+  await d1
+    .prepare(
+      `INSERT OR IGNORE INTO catalog_synonyms_v2 (canonical, aliases_json, updated_at)
+       SELECT canonical, aliases_json, updated_at FROM catalog_synonyms
+       WHERE canonical IN ('product', 'solution', 'case', 'service')`
+    )
+    .run();
+  await d1.prepare(`DROP TABLE catalog_synonyms`).run();
+  await d1
+    .prepare(`ALTER TABLE catalog_synonyms_v2 RENAME TO catalog_synonyms`)
+    .run();
+}
+
 export async function ensureCatalogSynonymTable(d1) {
   if (!d1) throw new Error("D1 not configured");
   await ensureCatalogTables(d1);
   await d1.prepare(CREATE_SYNONYMS_SQL).run();
+  await migrateSynonymsAllowService(d1);
   for (const row of DEFAULT_ROWS) {
     const existing = await d1
       .prepare(`SELECT canonical FROM catalog_synonyms WHERE canonical = ?`)
@@ -91,6 +148,7 @@ export async function listCatalogSynonyms(d1) {
          WHEN 'product' THEN 1
          WHEN 'solution' THEN 2
          WHEN 'case' THEN 3
+         WHEN 'service' THEN 4
          ELSE 9 END`
     )
     .all();
@@ -100,12 +158,12 @@ export async function listCatalogSynonyms(d1) {
     aliases: parseAliases(r.aliases_json),
     updated_at: Number(r.updated_at) || 0,
   }));
-  // 保证三行都在
+  // 保证四行都在
   const by = {};
   rows.forEach((r) => {
     by[r.canonical] = r;
   });
-  return ["product", "solution", "case"].map((c) => {
+  return CATALOG_KIND_KEYS.map((c) => {
     if (by[c]) return by[c];
     const def = DEFAULT_ROWS.find((d) => d.canonical === c);
     return {
@@ -117,10 +175,10 @@ export async function listCatalogSynonyms(d1) {
   });
 }
 
-/** @returns {{ product: string[], solution: string[], case: string[] }} */
+/** @returns {{ product: string[], solution: string[], case: string[], service: string[] }} */
 export async function getCatalogSynonymMap(d1) {
   const rows = await listCatalogSynonyms(d1);
-  const map = { product: [], solution: [], case: [] };
+  const map = { product: [], solution: [], case: [], service: [] };
   for (const r of rows) {
     const label = LABEL_ZH[r.canonical] || "";
     const set = new Set([label, ...(r.aliases || [])].filter(Boolean));
@@ -135,7 +193,7 @@ export async function saveCatalogSynonyms(d1, rows) {
   const t = nowMs();
   for (const raw of list) {
     const canonical = String((raw && raw.canonical) || "").trim();
-    if (!["product", "solution", "case"].includes(canonical)) continue;
+    if (!CATALOG_KIND_KEYS.includes(canonical)) continue;
     const aliases = parseAliases(
       JSON.stringify(
         Array.isArray(raw.aliases)
@@ -162,8 +220,7 @@ export async function saveCatalogSynonyms(d1, rows) {
 
 /** 嵌入用：某 kind 的同义词串 */
 export function synonymTextForKind(synonymMap, kind) {
-  const k =
-    kind === "solution" ? "solution" : kind === "case" ? "case" : "product";
+  const k = CATALOG_KIND_KEYS.includes(kind) ? kind : "product";
   const list = (synonymMap && synonymMap[k]) || [];
   return list.join(" ");
 }
@@ -172,7 +229,7 @@ export function synonymTextForKind(synonymMap, kind) {
 export function flattenSynonymTerms(synonymMap) {
   const out = [];
   if (!synonymMap) return out;
-  for (const k of ["product", "solution", "case"]) {
+  for (const k of CATALOG_KIND_KEYS) {
     for (const a of synonymMap[k] || []) {
       if (a && out.indexOf(a) < 0) out.push(a);
     }

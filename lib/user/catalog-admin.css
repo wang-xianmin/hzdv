@@ -364,3 +364,65 @@
 .catalog-admin-synonyms[hidden] {
   display: none !important;
 }
+
+.catalog-admin-qa-list {
+  max-height: 52vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.catalog-admin-qa-card {
+  border: 1px solid #e6e2d8;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #faf9f6;
+}
+
+.catalog-admin-qa-meta {
+  font-size: 12px;
+  color: #666;
+  margin-bottom: 6px;
+}
+
+.catalog-admin-qa-q,
+.catalog-admin-qa-a,
+.catalog-admin-qa-hits {
+  font-size: 13px;
+  line-height: 1.45;
+  margin-bottom: 6px;
+  word-break: break-word;
+}
+
+.catalog-admin-qa-hits {
+  color: #555;
+}
+
+.agent-qa-admin-dialog {
+  width: min(920px, 96vw);
+}
+
+.agent-qa-admin-list {
+  flex: 1;
+  min-height: 0;
+  margin: 0 18px 12px;
+  max-height: none;
+}
+
+.agent-qa-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #444;
+  margin-left: 4px;
+}
+
+.agent-qa-filter select {
+  font: inherit;
+  padding: 4px 8px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: #fff;
+}

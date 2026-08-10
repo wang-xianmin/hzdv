@@ -2,6 +2,7 @@
  * 目录问句识别
  * - 默认内置同义词（无 D1 时兜底）
  * - 有 D1 同义词表时用 loadCatalogQueryMatchers(d1)
+ * - 细类：product | solution | case | service
  */
 
 const OUR_SITE =
@@ -13,6 +14,8 @@ const BROWSE_ASK =
 /** 主展区切换 / 返回类说法（追问记忆） */
 const SHOWCASE_NAV =
   /回到|返回|再看|再来|换回|换成|换到|换个|切换|切到|打开|展示|列表|缩略图|主展区|目录页|看下|看一下|换/;
+
+export const CATALOG_KIND_KEYS = ["product", "solution", "case", "service"];
 
 const DEFAULT_MAP = {
   product: ["产品", "单品", "设备", "阀门", "仪表", "模块", "配件", "货品"],
@@ -26,6 +29,18 @@ const DEFAULT_MAP = {
     "交钥匙",
   ],
   case: ["案例", "例子", "实例", "应用案例", "成功案例", "项目案例", "样板"],
+  service: [
+    "服务",
+    "售后",
+    "质保",
+    "保修",
+    "维修",
+    "培训",
+    "安装调试",
+    "技术支持",
+    "售后服务",
+    "客户服务",
+  ],
 };
 
 function escapeRegExp(s) {
@@ -35,7 +50,7 @@ function escapeRegExp(s) {
 export function buildCatalogNounRegex(synonymMap) {
   const map = synonymMap || DEFAULT_MAP;
   const terms = [];
-  for (const k of ["product", "solution", "case"]) {
+  for (const k of CATALOG_KIND_KEYS) {
     for (const a of map[k] || []) {
       const t = String(a || "").trim();
       if (t && terms.indexOf(t) < 0) terms.push(t);
@@ -43,12 +58,12 @@ export function buildCatalogNounRegex(synonymMap) {
   }
   terms.push("目录", "型号库", "型号");
   terms.sort((a, b) => b.length - a.length);
-  if (!terms.length) return /产品|方案|案例/;
+  if (!terms.length) return /产品|方案|案例|服务/;
   return new RegExp(terms.map(escapeRegExp).join("|"));
 }
 
 /**
- * 从问句推断目录类型：product / solution / case；无法判断则 null
+ * 从问句推断目录类型：product / solution / case / service；无法判断则 null
  * 多种名词同时出现时，取问句中最先出现的一类。
  */
 export function detectCatalogKind(message, synonymMap) {
@@ -57,7 +72,7 @@ export function detectCatalogKind(message, synonymMap) {
   const map = synonymMap || DEFAULT_MAP;
   let best = null;
   let bestIdx = Infinity;
-  for (const kind of ["product", "solution", "case"]) {
+  for (const kind of CATALOG_KIND_KEYS) {
     for (const a of map[kind] || []) {
       const t = String(a || "").trim();
       if (!t) continue;
@@ -71,9 +86,9 @@ export function detectCatalogKind(message, synonymMap) {
   return best;
 }
 
-/** 短句导航：产品 / 换方案 / 回到案例页 */
+/** 短句导航：产品 / 换方案 / 回到案例页 / 看看服务 */
 function isShortCatalogNav(s) {
-  return /^(请|帮我|给我)?(再)?(看|换|切|回|返|打开|展示)?(到|回|成|个)?(本站|你们|咱们|公司)?(的)?(产品|方案|案例|系统集成)(展示页面|展示页|展示区|展示|列表|页面|页|目录|缩略图)?(吧|啊|呀|呢|吗)?[？?！!\.。]*$/i.test(
+  return /^(请|帮我|给我)?(再)?(看|换|切|回|返|打开|展示)?(到|回|成|个)?(本站|你们|咱们|公司)?(的)?(产品|方案|案例|服务|系统集成|售后|质保|培训)(展示页面|展示页|展示区|展示|列表|页面|页|目录|缩略图|说明)?(吧|啊|呀|呢|吗)?[？?！!\.。]*$/i.test(
     String(s || "").trim()
   );
 }
@@ -109,7 +124,49 @@ export function isCompanyCatalogQuery(message, synonymMap) {
   ) {
     return true;
   }
+  if (
+    /(售后|质保|保修|维修|培训|安装调试|技术支持|怎么保修|保修多久|如何报修)/.test(
+      s
+    )
+  ) {
+    return true;
+  }
   return false;
+}
+
+/**
+ * 根据命中条目投票细类；无命中则回退问句 detectCatalogKind；再不行 other
+ * @returns {{ category: string, category_source: string }}
+ */
+export function resolveEnterpriseCategory(message, hits, synonymMap) {
+  const list = Array.isArray(hits) ? hits : [];
+  if (list.length) {
+    const counts = Object.create(null);
+    for (const it of list) {
+      const k = String((it && it.kind) || "product");
+      if (k === "service") counts.service = (counts.service || 0) + 1;
+      else if (k === "solution") counts.solution = (counts.solution || 0) + 1;
+      else if (k === "case") counts.case = (counts.case || 0) + 1;
+      else counts.product = (counts.product || 0) + 1;
+    }
+    let best = "product";
+    let bestN = -1;
+    for (const k of CATALOG_KIND_KEYS) {
+      const n = counts[k] || 0;
+      if (n > bestN) {
+        bestN = n;
+        best = k;
+      }
+    }
+    if (bestN > 0) {
+      return { category: best, category_source: "hits" };
+    }
+  }
+  const fromQ = detectCatalogKind(message, synonymMap);
+  if (fromQ) {
+    return { category: fromQ, category_source: "keyword" };
+  }
+  return { category: "other", category_source: "fallback" };
 }
 
 export { DEFAULT_MAP as DEFAULT_CATALOG_SYNONYM_MAP, SHOWCASE_NAV };

@@ -2412,6 +2412,20 @@
           modelNote: note,
           modelMeta: j.model || null,
         };
+        try {
+          var qLog = (reqBody && reqBody.message) || "";
+          if (qLog && isCompanyCatalogQuery(qLog)) {
+            logEnterpriseQa({
+              question: qLog,
+              reply_text: String(j.reply),
+              answer_mode: "prose",
+              hits: [],
+              intent_catalog: true,
+              model_badge: badge,
+              enterprise: true,
+            });
+          }
+        } catch (eLog) {}
       } else {
         var errText = j.error || "";
         if (!errText && j.upstreamStatus) errText = "HTTP " + j.upstreamStatus;
@@ -2805,18 +2819,59 @@
               if (companyCatalog) {
                 catalogWait = catalogWait.then(function (items) {
                   if (items && items.length) return items;
+                  if (lastCatalogMeta && lastCatalogMeta.gold) {
+                    return items || [];
+                  }
                   return searchCatalogForShowcase(reqBody.message || "", {
                     forceBrowse: true,
                   });
                 });
               }
               return catalogWait.then(function (catalogItems) {
-                if (catalogItems && catalogItems.length) {
+                var gold = lastCatalogMeta && lastCatalogMeta.gold;
+                if (gold && gold.reply_text && !(catalogItems && catalogItems.length)) {
+                  var goldText = String(gold.reply_text);
                   allNotes.push(
                     t(
-                      "③ 目录命中 → 主展区展示，对话仅短提示",
-                      "③ Catalog hits → showcase; short chat tip only"
+                      "③ 黄金标准答命中（无展区条目）",
+                      "③ Gold QA hit (no showcase items)"
                     )
+                  );
+                  clearThinkPulse();
+                  messages[thinkingIdx] = {
+                    role: "assistant",
+                    text: goldText,
+                    model: "auto",
+                    modelBadge: "Auto · 标准答",
+                    modelNote: wantPipelineTrace()
+                      ? formatPipelineNote({ notes: allNotes })
+                      : "",
+                  };
+                  renderThread();
+                  logEnterpriseQa({
+                    question: reqBody.message || "",
+                    reply_text: goldText,
+                    answer_mode: "gold",
+                    hits: [],
+                    category: gold.category,
+                    intent_catalog: true,
+                    intent_tier: intentObj && intentObj.tier,
+                    model_badge: "Auto · 标准答",
+                    enterprise: true,
+                  });
+                  return null;
+                }
+                if (catalogItems && catalogItems.length) {
+                  allNotes.push(
+                    gold
+                      ? t(
+                          "③ 黄金标准答 + 主展区",
+                          "③ Gold QA + showcase"
+                        )
+                      : t(
+                          "③ 目录命中 → 主展区展示，对话仅短提示",
+                          "③ Catalog hits → showcase; short chat tip only"
+                        )
                   );
                   if (wantPipelineTrace()) {
                     messages[thinkingIdx].modelNote = formatPipelineNote({
@@ -2824,19 +2879,34 @@
                     });
                   }
                   clearThinkPulse();
+                  var tipText =
+                    gold && gold.reply_text
+                      ? String(gold.reply_text)
+                      : t(
+                          "相关产品/方案已在左侧展示区列出，点击缩略图可查看详情。",
+                          "Matching products/solutions are in the showcase — tap a thumbnail for details."
+                        );
                   messages[thinkingIdx] = {
                     role: "assistant",
-                    text: t(
-                      "相关产品/方案已在左侧展示区列出，点击缩略图可查看详情。",
-                      "Matching products/solutions are in the showcase — tap a thumbnail for details."
-                    ),
+                    text: tipText,
                     model: "auto",
-                    modelBadge: "Auto · 目录",
+                    modelBadge: gold ? "Auto · 标准答" : "Auto · 目录",
                     modelNote: wantPipelineTrace()
                       ? formatPipelineNote({ notes: allNotes })
                       : "",
                   };
                   renderThread();
+                  logEnterpriseQa({
+                    question: reqBody.message || "",
+                    reply_text: tipText,
+                    answer_mode: gold ? "gold" : "showcase_pointer",
+                    hits: catalogItems,
+                    category: gold && gold.category,
+                    intent_catalog: true,
+                    intent_tier: intentObj && intentObj.tier,
+                    model_badge: gold ? "Auto · 标准答" : "Auto · 目录",
+                    enterprise: true,
+                  });
                   return null;
                 }
                 if (companyCatalog) {
@@ -2852,12 +2922,13 @@
                     });
                   }
                   clearThinkPulse();
+                  var missText = t(
+                    "目录里暂未匹配到相关产品/方案。请确认产品目录有已启用条目；若刚录入，可在运维里点「重建向量索引」后再试。",
+                    "No matching catalog items. Ensure active catalog entries exist; after edits, rebuild the vector index."
+                  );
                   messages[thinkingIdx] = {
                     role: "assistant",
-                    text: t(
-                      "目录里暂未匹配到相关产品/方案。请确认产品目录有已启用条目；若刚录入，可在运维里点「重建向量索引」后再试。",
-                      "No matching catalog items. Ensure active catalog entries exist; after edits, rebuild the vector index."
-                    ),
+                    text: missText,
                     model: "auto",
                     modelBadge: "Auto · 目录",
                     modelNote: wantPipelineTrace()
@@ -2865,6 +2936,16 @@
                       : "",
                   };
                   renderThread();
+                  logEnterpriseQa({
+                    question: reqBody.message || "",
+                    reply_text: missText,
+                    answer_mode: "catalog_miss",
+                    hits: [],
+                    intent_catalog: true,
+                    intent_tier: intentObj && intentObj.tier,
+                    model_badge: "Auto · 目录",
+                    enterprise: true,
+                  });
                   return null;
                 }
 
@@ -2980,6 +3061,12 @@
 
   // 前端先用内置同义词；启动后拉 D1 表覆盖（/api/catalog-public?synonyms=1）
   var synonymMapCache = null;
+  var agentSessionId =
+    "s" +
+    String(Date.now()) +
+    Math.random().toString(16).slice(2, 8);
+  /** 最近一次目录检索的附加信息（黄金答等） */
+  var lastCatalogMeta = { mode: "", gold: null };
   var OUR_SITE =
     /你们|咱们|咱家|贵司|本公司|本站|迪微|HZDV|hzdv|贵公司|你们公司/i;
   var BROWSE_ASK =
@@ -2998,9 +3085,23 @@
       "交钥匙",
     ],
     case: ["案例", "例子", "实例", "应用案例", "成功案例", "项目案例", "样板"],
+    service: [
+      "服务",
+      "售后",
+      "质保",
+      "保修",
+      "维修",
+      "培训",
+      "安装调试",
+      "技术支持",
+      "售后服务",
+      "客户服务",
+    ],
   };
   var DEFAULT_CATALOG_NOUN =
-    /产品|单品|设备|阀门|仪表|模块|配件|型号|货品|商品|方案|系统集成|成套|产线|装配线|集成系统|交钥匙|案例|例子|实例|应用案例|成功案例|项目案例|目录|型号库/;
+    /产品|单品|设备|阀门|仪表|模块|配件|型号|货品|商品|方案|系统集成|成套|产线|装配线|集成系统|交钥匙|案例|例子|实例|应用案例|成功案例|项目案例|服务|售后|质保|保修|维修|培训|技术支持|目录|型号库/;
+
+  var CATALOG_KIND_KEYS = ["product", "solution", "case", "service"];
 
   function escapeRegExp(s) {
     return String(s || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -3013,7 +3114,7 @@
   function catalogNounRegex() {
     var map = activeSynonymMap();
     var terms = [];
-    ["product", "solution", "case"].forEach(function (k) {
+    CATALOG_KIND_KEYS.forEach(function (k) {
       (map[k] || []).forEach(function (a) {
         var t = String(a || "").trim();
         if (t && terms.indexOf(t) < 0) terms.push(t);
@@ -3031,14 +3132,14 @@
     }
   }
 
-  /** @returns {"product"|"solution"|"case"|null} */
+  /** @returns {"product"|"solution"|"case"|"service"|null} */
   function detectCatalogKind(message) {
     var s = String(message || "").trim();
     if (!s) return null;
     var map = activeSynonymMap();
     var best = null;
     var bestIdx = Infinity;
-    ["product", "solution", "case"].forEach(function (kind) {
+    CATALOG_KIND_KEYS.forEach(function (kind) {
       (map[kind] || []).forEach(function (a) {
         var t = String(a || "").trim();
         if (!t) return;
@@ -3068,7 +3169,7 @@
   }
 
   function isShortCatalogNav(s) {
-    return /^(请|帮我|给我)?(再)?(看|换|切|回|返|打开|展示)?(到|回|成|个)?(本站|你们|咱们|公司)?(的)?(产品|方案|案例|系统集成)(展示页面|展示页|展示区|展示|列表|页面|页|目录|缩略图)?(吧|啊|呀|呢|吗)?[？?！!\.。]*$/i.test(
+    return /^(请|帮我|给我)?(再)?(看|换|切|回|返|打开|展示)?(到|回|成|个)?(本站|你们|咱们|公司)?(的)?(产品|方案|案例|服务|系统集成|售后|质保|培训)(展示页面|展示页|展示区|展示|列表|页面|页|目录|缩略图|说明)?(吧|啊|呀|呢|吗)?[？?！!\.。]*$/i.test(
       String(s || "").trim()
     );
   }
@@ -3103,19 +3204,57 @@
     ) {
       return true;
     }
+    if (
+      /(售后|质保|保修|维修|培训|安装调试|技术支持|怎么保修|保修多久|如何报修)/.test(
+        s
+      )
+    ) {
+      return true;
+    }
     return false;
   }
 
   function filterItemsByKind(items, kind) {
-    if (!kind || !items || !items.length) return items || [];
+    if (!kind || kind === "service" || !items || !items.length) {
+      return items || [];
+    }
     return items.filter(function (it) {
       return String((it && it.kind) || "product") === kind;
     });
   }
 
+  /** 企业问答打点（失败静默）；仅企业相关 */
+  function logEnterpriseQa(payload) {
+    try {
+      var phone = currentPhone();
+      if (!phone || !payload || !payload.question) return;
+      var body = {
+        phone: phone,
+        question: String(payload.question || "").slice(0, 4000),
+        reply_text: String(payload.reply_text || "").slice(0, 8000),
+        answer_mode: payload.answer_mode || "prose",
+        hits: Array.isArray(payload.hits) ? payload.hits : [],
+        category: payload.category || undefined,
+        intent_catalog: payload.intent_catalog !== false,
+        intent_tier: payload.intent_tier,
+        session_id: agentSessionId,
+        model_badge: payload.model_badge || "",
+        locale: global.currentLang === "en" ? "en" : "zh",
+        enterprise: !!payload.enterprise,
+      };
+      fetch("/api/agent-qa-log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify(body),
+      }).catch(function () {});
+    } catch (e) {}
+  }
+
   /** @returns {Promise<object[]>} */
   function searchCatalogForShowcase(query, opts) {
     var q = String(query || "").trim();
+    lastCatalogMeta = { mode: "", gold: null };
     if (!q) return Promise.resolve([]);
     var forceBrowse = !!(opts && opts.forceBrowse);
     return ensureSynonymMap().then(function () {
@@ -3133,6 +3272,21 @@
           return r.json();
         })
         .then(function (j) {
+          if (j && j.mode === "qa_gold" && j.gold) {
+            lastCatalogMeta = { mode: "qa_gold", gold: j.gold };
+            var goldItems = Array.isArray(j.items) ? j.items : [];
+            if (goldItems.length) {
+              try {
+                if (
+                  global.SolutionShowcase &&
+                  typeof global.SolutionShowcase.showHits === "function"
+                ) {
+                  global.SolutionShowcase.showHits(goldItems, q);
+                }
+              } catch (eShow) {}
+            }
+            return goldItems;
+          }
           var items = j && Array.isArray(j.items) ? j.items : [];
           items = filterItemsByKind(items, kind);
           if (
@@ -3155,10 +3309,14 @@
                 return [];
               });
           }
+          lastCatalogMeta = {
+            mode: (j && j.mode) || "",
+            gold: null,
+          };
           return items;
         })
         .then(function (items) {
-          if (items && items.length) {
+          if (items && items.length && lastCatalogMeta.mode !== "qa_gold") {
             try {
               if (
                 global.SolutionShowcase &&

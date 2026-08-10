@@ -6,6 +6,10 @@
 import { catalogItemEmbeddingText } from "./catalog-d1.js";
 import { getCatalogSynonymMap } from "./catalog-synonyms.js";
 import { pickD1Binding } from "./cloudflare-bindings.js";
+import {
+  goldEmbeddingTexts,
+  qaVectorId,
+} from "./agent-qa-d1.js";
 
 export const CATALOG_EMBED_MODEL = "@cf/google/embeddinggemma-300m";
 export const CATALOG_EMBED_DIMS = 768;
@@ -187,6 +191,100 @@ export async function queryCatalogVectors(env, queryText, opts) {
     topK,
     returnMetadata: "all",
     filter,
+  });
+  const matches = (res && res.matches) || [];
+  return {
+    model: CATALOG_EMBED_MODEL,
+    matches: matches.map((m) => ({
+      id: m.id,
+      score: m.score,
+      metadata: m.metadata || {},
+    })),
+  };
+}
+
+function truncateMetaQa(s, n) {
+  const t = String(s || "").trim();
+  if (t.length <= n) return t;
+  return t.slice(0, n);
+}
+
+/**
+ * 将黄金问答写入 Vectorize（仅人工发布后调用）
+ * 向量 id：qa:<gold_id>；嵌入文本为规范问（变体另写附加向量 qa:<id>:vN）
+ */
+export async function indexQaGold(env, gold) {
+  const ai = pickAiBinding(env);
+  const index = pickVectorizeBinding(env);
+  if (!ai) throw new Error("缺少 AI 绑定");
+  if (!index) throw new Error("缺少 Vectorize 绑定");
+  if (!gold || !gold.id) throw new Error("缺少 gold");
+
+  const texts = goldEmbeddingTexts(gold);
+  if (!texts.length) throw new Error("无可嵌入的问题文本");
+
+  const vectors = await embedTexts(ai, texts);
+  const baseId = qaVectorId(gold.id);
+  const records = texts.map((text, i) => ({
+    id: i === 0 ? baseId : baseId + ":v" + i,
+    values: vectors[i],
+    metadata: {
+      source: "qa_gold",
+      gold_id: String(gold.id),
+      category: String(gold.category || "other"),
+      answer_kind: String(gold.answer_kind || "prose"),
+      is_active: gold.is_active === false ? 0 : 1,
+      question: truncateMetaQa(text, 200),
+      bind_item_ids: truncateMetaQa(
+        JSON.stringify(gold.bind_item_ids || []),
+        400
+      ),
+    },
+  }));
+  await index.upsert(records);
+  return {
+    upserted: records.length,
+    vector_ids: records.map((r) => r.id),
+    model: CATALOG_EMBED_MODEL,
+  };
+}
+
+export async function deleteQaGoldVectors(env, gold) {
+  const index = pickVectorizeBinding(env);
+  if (!index) throw new Error("缺少 Vectorize 绑定");
+  const baseId = gold && gold.vector_id ? gold.vector_id : qaVectorId(gold && gold.id);
+  const texts = goldEmbeddingTexts(gold || {});
+  const ids = [baseId];
+  for (let i = 1; i < Math.max(texts.length, 1); i++) {
+    ids.push(baseId + ":v" + i);
+  }
+  // 多留几个变体槽位，避免旧变体残留
+  for (let i = texts.length; i < 8; i++) {
+    ids.push(baseId + ":v" + i);
+  }
+  try {
+    await index.deleteByIds(ids);
+    return { deleted: ids.length };
+  } catch (e) {
+    return { deleted: 0, error: String((e && e.message) || e) };
+  }
+}
+
+/** 查询黄金问答向量（人工纠错回灌后） */
+export async function queryQaGoldVectors(env, queryText, opts) {
+  const ai = pickAiBinding(env);
+  const index = pickVectorizeBinding(env);
+  if (!ai) throw new Error("缺少 AI 绑定");
+  if (!index) throw new Error("缺少 Vectorize 绑定");
+  const q = String(queryText || "").trim();
+  if (!q) throw new Error("缺少查询文本");
+
+  const [values] = await embedTexts(ai, [q]);
+  const topK = Math.min(10, Math.max(1, Number(opts && opts.topK) || 3));
+  const res = await index.query(values, {
+    topK,
+    returnMetadata: "all",
+    filter: { source: "qa_gold" },
   });
   const matches = (res && res.matches) || [];
   return {
