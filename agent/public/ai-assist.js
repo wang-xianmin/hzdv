@@ -1400,6 +1400,8 @@
   var modelLabelEl = null;
   var visible = false;
   var opened = false;
+  /** 手机（≤768px）答完后收起 Agent，让主展区占满屏 */
+  var mobileCollapseTimer = null;
   var messages = [];
   var selectedModelId = "auto";
 
@@ -2194,6 +2196,7 @@
   function submitPrompt(text) {
     var q = String(text || "").trim();
     if (!q) return;
+    cancelMobileCollapse();
     if (!opened) openChat();
     var phone = currentPhone();
     var want = selectedModelId;
@@ -2426,6 +2429,7 @@
             });
           }
         } catch (eLog) {}
+        collapseAgentAfterReplyOnMobile();
       } else {
         var errText = j.error || "";
         if (!errText && j.upstreamStatus) errText = "HTTP " + j.upstreamStatus;
@@ -2859,6 +2863,7 @@
                     model_badge: "Auto · 标准答",
                     enterprise: true,
                   });
+                  collapseAgentAfterReplyOnMobile();
                   return null;
                 }
                 if (catalogItems && catalogItems.length) {
@@ -2907,6 +2912,7 @@
                     model_badge: gold ? "Auto · 标准答" : "Auto · 目录",
                     enterprise: true,
                   });
+                  collapseAgentAfterReplyOnMobile();
                   return null;
                 }
                 if (companyCatalog) {
@@ -2946,6 +2952,7 @@
                     model_badge: "Auto · 目录",
                     enterprise: true,
                   });
+                  collapseAgentAfterReplyOnMobile();
                   return null;
                 }
 
@@ -3360,19 +3367,82 @@
     dispatchAgentVisible();
   }
 
+  function isNarrowPhone() {
+    try {
+      if (window.matchMedia && window.matchMedia("(max-width: 768px)").matches) {
+        return true;
+      }
+    } catch (e) {}
+    var w = 0;
+    try {
+      w =
+        (window.visualViewport && window.visualViewport.width) ||
+        document.documentElement.clientWidth ||
+        window.innerWidth ||
+        0;
+    } catch (e2) {
+      w = Number(window.innerWidth) || 0;
+    }
+    if (Number(w) <= 768) return true;
+    try {
+      var sc = document.getElementById("site-content");
+      if (
+        sc &&
+        document.body.classList.contains("workspace-agent-open") &&
+        window.getComputedStyle(sc).display === "none"
+      ) {
+        return true;
+      }
+    } catch (e3) {}
+    return false;
+  }
+
+  function cancelMobileCollapse() {
+    if (mobileCollapseTimer) {
+      clearTimeout(mobileCollapseTimer);
+      mobileCollapseTimer = null;
+    }
+  }
+
+  /** 窄屏（含 Mac 缩窗口 ≤768px）答完后立刻收起 Agent，露出主展区 */
+  function collapseAgentAfterReplyOnMobile() {
+    cancelMobileCollapse();
+    if (!isNarrowPhone()) return;
+    mobileCollapseTimer = setTimeout(function () {
+      mobileCollapseTimer = null;
+      hideAll();
+    }, 80);
+  }
+
   function hideAll() {
-    if (!root) return;
-    if (asrMic.recording) stopMicCapture();
+    cancelMobileCollapse();
     visible = false;
     opened = false;
-    closeModelMenu();
-    closePlusMenuSafe();
-    closeLightbox();
-    clearAttachment();
-    root.classList.remove("is-visible", "is-open");
-    root.setAttribute("aria-hidden", "true");
-    syncNavActive();
-    dispatchAgentVisible();
+    try {
+      if (asrMic && asrMic.recording) stopMicCapture();
+    } catch (e0) {}
+    try {
+      closeModelMenu();
+    } catch (e1) {}
+    try {
+      closePlusMenuSafe();
+    } catch (e2) {}
+    try {
+      closeLightbox();
+    } catch (e3) {}
+    try {
+      clearAttachment();
+    } catch (e4) {}
+    if (root) {
+      root.classList.remove("is-visible", "is-open");
+      root.setAttribute("aria-hidden", "true");
+    }
+    try {
+      syncNavActive();
+    } catch (e5) {}
+    try {
+      dispatchAgentVisible();
+    } catch (e6) {}
   }
 
   function openChat() {

@@ -38,7 +38,7 @@ body.workspace-agent-open #site-content {
   overflow: hidden;
 }
 
-body.workspace-agent-open .ai-assist {
+body.workspace-agent-open .ai-assist.is-visible {
   display: flex !important;
   left: auto;
   right: 0;
@@ -141,6 +141,12 @@ body.workspace-agent-open .ai-assist.is-open.is-chatting .ai-assist__panel {
 
   body.workspace-agent-open #site-content {
     display: none !important;
+  }
+
+  /* 答完收起后：即使残留 workspace-agent-open 也必须藏掉 Agent */
+  .ai-assist:not(.is-visible) {
+    display: none !important;
+    pointer-events: none !important;
   }
 
   body.workspace-has-showcase:not(.workspace-agent-open) #site-content {
