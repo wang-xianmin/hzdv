@@ -113,6 +113,30 @@ export function refineWebQuery(message, rules) {
   }
 
   if (
+    /the\s*economist|\beconomist\b|经济学人|economist\.com/i.test(s)
+  ) {
+    return {
+      query: "The Economist latest articles",
+      includeDomains: ["economist.com"],
+      timeRange: "week",
+      refined: true,
+      hint: "builtin:Economist",
+    };
+  }
+
+  if (
+    /bloomberg(\s+business)?|bloomberg\.com|彭博(社|商业|新闻)?/i.test(s)
+  ) {
+    return {
+      query: "Bloomberg Business latest news",
+      includeDomains: ["bloomberg.com"],
+      timeRange: "day",
+      refined: true,
+      hint: "builtin:Bloomberg",
+    };
+  }
+
+  if (
     /(今天|今日|最新).*(科技|技术|IT|互联网).*(新闻|资讯|热点|头条)/i.test(s) ||
     /(科技|技术).*(新闻|资讯).*(今天|今日|最新)/i.test(s)
   ) {
@@ -134,6 +158,181 @@ export function refineWebQuery(message, rules) {
     refined: false,
     hint: "",
   };
+}
+
+function wantsEconomistSource(refined, message) {
+  const domains = (refined && refined.includeDomains) || [];
+  if (domains.some((d) => /economist\.com/i.test(String(d)))) {
+    return true;
+  }
+  const hint = String((refined && refined.hint) || "");
+  if (/Economist|经济学人/i.test(hint)) return true;
+  return /the\s*economist|\beconomist\b|经济学人|economist\.com/i.test(
+    String(message || "")
+  );
+}
+
+function decodeXmlText(raw) {
+  let s = String(raw || "");
+  s = s.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/gi, "$1");
+  s = s.replace(/<[^>]+>/g, " ");
+  s = s
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_, n) => {
+      const code = Number(n);
+      return code ? String.fromCharCode(code) : "";
+    });
+  return s.replace(/\s+/g, " ").trim();
+}
+
+function parseRssItems(xml, maxResults) {
+  const blocks = String(xml || "").match(/<item[\s\S]*?<\/item>/gi) || [];
+  const results = [];
+  for (const block of blocks) {
+    if (results.length >= maxResults) break;
+    const title = decodeXmlText(
+      (block.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || ""
+    );
+    let url = decodeXmlText(
+      (block.match(/<link[^>]*>([\s\S]*?)<\/link>/i) || [])[1] || ""
+    );
+    if (!url) {
+      url = decodeXmlText(
+        (block.match(/<guid[^>]*>([\s\S]*?)<\/guid>/i) || [])[1] || ""
+      );
+    }
+    const desc = decodeXmlText(
+      (block.match(/<description[^>]*>([\s\S]*?)<\/description>/i) || [])[1] ||
+        ""
+    );
+    if (!title || !url) continue;
+    if (!/^https?:\/\//i.test(url)) continue;
+    results.push({
+      title: title.slice(0, 300),
+      url: url.slice(0, 500),
+      content: desc.slice(0, 500),
+    });
+  }
+  return results;
+}
+
+function wantsBloombergSource(refined, message) {
+  const domains = (refined && refined.includeDomains) || [];
+  if (domains.some((d) => /bloomberg\.com/i.test(String(d)))) {
+    return true;
+  }
+  const hint = String((refined && refined.hint) || "");
+  if (/Bloomberg|彭博/i.test(hint)) return true;
+  return /bloomberg(\s+business)?|bloomberg\.com|彭博(社|商业|新闻)?/i.test(
+    String(message || "")
+  );
+}
+
+async function fetchRssFeedList(feeds, opts) {
+  const source = (opts && opts.source) || "rss";
+  const label = (opts && opts.label) || "RSS";
+  const maxResults = clampInt((opts && opts.maxResults) || 8, 1, 15, 8);
+  const timeoutMs = clampInt(
+    (opts && opts.timeoutMs) || 10000,
+    3000,
+    20000,
+    10000
+  );
+  const started = Date.now();
+  const ctrl =
+    typeof AbortController !== "undefined" ? new AbortController() : null;
+  const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
+  const errors = [];
+  const list = Array.isArray(feeds) ? feeds : [];
+
+  try {
+    for (const feed of list) {
+      try {
+        const res = await fetch(feed, {
+          signal: ctrl ? ctrl.signal : undefined,
+          headers: {
+            Accept: "application/rss+xml, application/xml, text/xml, */*",
+            "User-Agent": "hzdv-agent/1.0 (websearch refine)",
+          },
+        });
+        if (!res.ok) {
+          errors.push(feed + " HTTP " + res.status);
+          continue;
+        }
+        const xml = await res.text();
+        const results = parseRssItems(xml, maxResults);
+        if (results.length) {
+          return {
+            ok: true,
+            query: label + " " + feed,
+            results,
+            latencyMs: Date.now() - started,
+            source,
+          };
+        }
+        errors.push(feed + " empty");
+      } catch (eFeed) {
+        errors.push(
+          feed +
+            " " +
+            (eFeed && eFeed.name === "AbortError"
+              ? "timeout"
+              : String((eFeed && eFeed.message) || eFeed))
+        );
+      }
+    }
+    return {
+      ok: false,
+      query: label,
+      results: [],
+      latencyMs: Date.now() - started,
+      error: errors.join("; ") || label + " empty",
+      source,
+    };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+const ECONOMIST_RSS = [
+  "https://www.economist.com/latest/rss.xml",
+  "https://www.economist.com/the-world-this-week/rss.xml",
+  "https://www.economist.com/finance-and-economics/rss.xml",
+];
+
+const BLOOMBERG_RSS = [
+  "https://feeds.bloomberg.com/markets/news.rss",
+  "https://feeds.bloomberg.com/economics/news.rss",
+  "https://feeds.bloomberg.com/technology/news.rss",
+  "https://feeds.bloomberg.com/bview/news.rss",
+];
+
+/**
+ * The Economist 公开 RSS（无官方开放 JSON API；比 Tavily 抓站更稳）
+ */
+export async function fetchEconomistLatest(opts) {
+  return fetchRssFeedList(ECONOMIST_RSS, {
+    source: "economist",
+    label: "The Economist RSS",
+    maxResults: opts && opts.maxResults,
+    timeoutMs: opts && opts.timeoutMs,
+  });
+}
+
+/**
+ * Bloomberg 公开 RSS（Business / Markets）
+ */
+export async function fetchBloombergLatest(opts) {
+  return fetchRssFeedList(BLOOMBERG_RSS, {
+    source: "bloomberg",
+    label: "Bloomberg RSS",
+    maxResults: opts && opts.maxResults,
+    timeoutMs: opts && opts.timeoutMs,
+  });
 }
 
 function wantsHnSource(refined, message) {
@@ -308,6 +507,40 @@ export async function searchTavily(env, query, opts) {
     // HN API 失败再回落 Tavily
   }
 
+  // 经济学人：走公开 RSS，失败再回落 Tavily
+  if (wantsEconomistSource(refined, query)) {
+    const eco = await fetchEconomistLatest({
+      maxResults: Math.min(Math.max(maxResults, 8), 12),
+      timeoutMs: (opts && opts.timeoutMs) || 10000,
+    });
+    if (eco.ok) {
+      return {
+        ...eco,
+        refine: Object.assign({}, refined, {
+          refined: true,
+          hint: (refined.hint || "Economist") + "+rss",
+        }),
+      };
+    }
+  }
+
+  // 彭博商业：走公开 RSS，失败再回落 Tavily
+  if (wantsBloombergSource(refined, query)) {
+    const bb = await fetchBloombergLatest({
+      maxResults: Math.min(Math.max(maxResults, 8), 12),
+      timeoutMs: (opts && opts.timeoutMs) || 10000,
+    });
+    if (bb.ok) {
+      return {
+        ...bb,
+        refine: Object.assign({}, refined, {
+          refined: true,
+          hint: (refined.hint || "Bloomberg") + "+rss",
+        }),
+      };
+    }
+  }
+
   if (!apiKey) {
     return {
       ok: false,
@@ -439,7 +672,14 @@ export function formatWebContext(pack, replyLang) {
   if (!pack || !pack.results || !pack.results.length) return "";
   const lines = [];
   const en = replyLang === "en";
-  const via = pack.source === "hn" ? "Hacker News API" : "Tavily";
+  const via =
+    pack.source === "hn"
+      ? "Hacker News API"
+      : pack.source === "economist"
+        ? "The Economist RSS"
+        : pack.source === "bloomberg"
+          ? "Bloomberg RSS"
+          : "Tavily";
   lines.push(
     en
       ? "CURRENT materials (via " +

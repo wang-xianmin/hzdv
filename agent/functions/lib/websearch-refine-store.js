@@ -112,6 +112,34 @@ export function defaultWebsearchRefineSeed() {
       timeRange: "day",
     },
     {
+      label: "The Economist 经济学人",
+      keywords: [
+        "economist",
+        "the economist",
+        "经济学人",
+        "经济学人杂志",
+        "economist.com",
+      ],
+      query: "The Economist latest articles",
+      includeDomains: ["economist.com"],
+      timeRange: "week",
+    },
+    {
+      label: "Bloomberg Business 彭博商业",
+      keywords: [
+        "bloomberg",
+        "bloomberg business",
+        "bloomberg.com",
+        "彭博",
+        "彭博社",
+        "彭博商业",
+        "彭博新闻",
+      ],
+      query: "Bloomberg Business latest news",
+      includeDomains: ["bloomberg.com"],
+      timeRange: "day",
+    },
+    {
       label: "科技新闻（英文检索）",
       keywords: ["tech news", "科技新闻", "技术新闻", "IT新闻", "今日科技"],
       query: "top technology news today",
@@ -125,6 +153,66 @@ export function sortRefineRules(rules) {
   return (rules || [])
     .slice()
     .sort((a, b) => (a.order || 0) - (b.order || 0) || String(a.id).localeCompare(String(b.id)));
+}
+
+function ruleText(r) {
+  return (
+    (r.keywords || []).join(" ") +
+    " " +
+    (r.includeDomains || []).join(" ") +
+    " " +
+    String(r.label || "")
+  ).toLowerCase();
+}
+
+const EXTRA_SITE_SEEDS = [
+  {
+    match: /economist|经济学人/,
+    rule: {
+      label: "The Economist 经济学人",
+      keywords: [
+        "economist",
+        "the economist",
+        "经济学人",
+        "经济学人杂志",
+        "economist.com",
+      ],
+      query: "The Economist latest articles",
+      includeDomains: ["economist.com"],
+      timeRange: "week",
+    },
+  },
+  {
+    match: /bloomberg|彭博/,
+    rule: {
+      label: "Bloomberg Business 彭博商业",
+      keywords: [
+        "bloomberg",
+        "bloomberg business",
+        "bloomberg.com",
+        "彭博",
+        "彭博社",
+        "彭博商业",
+        "彭博新闻",
+      ],
+      query: "Bloomberg Business latest news",
+      includeDomains: ["bloomberg.com"],
+      timeRange: "day",
+    },
+  },
+];
+
+/** 已有 KV 规则时补上站点源（不覆盖用户改过的条目） */
+export function ensureDefaultSiteRefineRules(rules) {
+  let list = Array.isArray(rules) ? rules.slice() : [];
+  for (const extra of EXTRA_SITE_SEEDS) {
+    if (list.some((r) => extra.match.test(ruleText(r)))) continue;
+    const row = normalizeRefineRule(extra.rule, list.length);
+    row.order =
+      list.length === 0 ? 0 : Math.max(...list.map((x) => Number(x.order) || 0)) + 1;
+    list.push(row);
+  }
+  return reindexRefineOrders(list);
 }
 
 export function reindexRefineOrders(rules) {
@@ -151,9 +239,17 @@ export async function loadWebsearchRefineRules(kv) {
     } catch (e2) {}
     return { rules, seeded: true, updatedAt: Date.now() };
   }
-  const rules = reindexRefineOrders(
-    raw.rules.map((r, i) => normalizeRefineRule(r, i))
+  const rules = ensureDefaultSiteRefineRules(
+    reindexRefineOrders(raw.rules.map((r, i) => normalizeRefineRule(r, i)))
   );
+  if (rules.length !== raw.rules.length) {
+    try {
+      await kv.put(
+        WEBSEARCH_REFINE_KV_KEY,
+        JSON.stringify({ rules, updatedAt: Date.now() })
+      );
+    } catch (ePut) {}
+  }
   return {
     rules,
     seeded: false,

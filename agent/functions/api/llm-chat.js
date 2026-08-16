@@ -9,6 +9,8 @@
  * Auto：先用 VPS 上的 Qwen2.5-1.5B 分类器给消息定级（见 lib/intent.js），
  * 再按模型库（KV）里对应梯队的排序依次尝试：
  *   tier1 → [1,2,3]，tier2 → [2,3,1]，tier3 → [3,2,1]
+ * 点选第一梯队模型（如 Gemini）：仍走 Auto 编排（意图/目录/联网），
+ * 生成把该模型插到第一梯队队首；意图分类仍按强制VPS/强制CF/自动的地理选路。
  * 分类器标 web、关键词启发式或 body.webSearch=true 时先 Tavily 搜网再注入 system。
  * 前端 Auto 推荐：先 POST /api/llm-intent，再本接口并带 body.intent 复用分类结果（缩短单次墙钟）。
  * 若配置 LLM_PROXY_SERVICE_URL，③ 生成经 VPS llm-proxy 转发云端（意图分类仍走 INTENT_*）。
@@ -133,6 +135,15 @@ function registryCandidates(env, models, tierOrder, preferVision) {
     }
   }
   return out;
+}
+
+/** 用户点选第一梯队模型时插到队首（失败再回落库内其它模型） */
+function prependPinnedT1(queue, pinned, viaTag) {
+  if (!pinned) return queue || [];
+  const rest = (queue || []).filter(
+    (q) => q && q.target && q.target.id !== pinned.id
+  );
+  return [{ target: pinned, via: viaTag || "pin→t1" }, ...rest];
 }
 
 function normalizeWebResults(pack) {
@@ -755,11 +766,18 @@ async function handleLlmChat(env, body, reqOpts) {
   const routeDecision = resolveRouteDecision(systemSettings, env, routeOpts);
   const routeMode = routeDecision.mode;
 
+  let pinnedT1 = null;
   if (wantId !== "auto") {
     const hit = (models || []).find((m) => m.id === wantId);
     if (!hit) {
       return jsonResponse({ success: false, error: "模型不存在：" + wantId }, 404);
     }
+    if (Number(hit.tier) === 1) {
+      pinnedT1 = hit;
+    }
+  }
+  if (wantId !== "auto" && !pinnedT1) {
+    const hit = (models || []).find((m) => m.id === wantId);
     const useVision = !!(ocr.needsVision && ocr.visionImages && ocr.visionImages.length);
     const forceWeb = body.webSearch === true || body.forceWeb === true;
     const web = await resolveWebContext(env, message, replyLang, {
@@ -833,6 +851,17 @@ async function handleLlmChat(env, body, reqOpts) {
       uiLang === "en"
         ? "③ Generate: CF → cloud LLM (no VPS proxy)"
         : "③ 生成：CF 直调云端（不经 VPS proxy）"
+    );
+  }
+  if (pinnedT1) {
+    notes.push(
+      uiLang === "en"
+        ? "③ Generate T1 pinned → " +
+          (pinnedT1.label || pinnedT1.modelId) +
+          " (picker; intent still follows VPS/CF/auto)"
+        : "③ 生成第一梯队指定 → " +
+          (pinnedT1.label || pinnedT1.modelId) +
+          "（用户点选；意图分类仍走强制VPS/CF/自动）"
     );
   }
 
@@ -1036,7 +1065,10 @@ async function handleLlmChat(env, body, reqOpts) {
   const hasVisionPages = !!(ocr.visionImages && ocr.visionImages.length);
   // 仅当意图落到 tier3 且有整页渲图时，同梯队内优先带视觉的模型；
   // tier2 / 无视觉的 tier3（如 deepseek-v4-pro）照常可用，callModel 会按 caps.vision 决定是否附图。
-  const preferVision = ocr.present && hasVisionPages && routeTier >= 3;
+  const preferVision =
+    ocr.present &&
+    hasVisionPages &&
+    (routeTier >= 3 || !!(pinnedT1 && pinnedT1.caps && pinnedT1.caps.vision));
   const useVision = hasVisionPages;
   if (ocr.present && hasVisionPages) {
     notes.push(
@@ -1050,8 +1082,8 @@ async function handleLlmChat(env, body, reqOpts) {
     );
   }
 
-  // 有附件或已搜网时不预热 tier1：上下文已变，预热会答非所问
-  const primary = ocr.present || webCtx ? null : tier1Cands[0] || null;
+  // 有附件、已搜网或点选了第一梯队时不预热库内默认 T1
+  const primary = ocr.present || webCtx || pinnedT1 ? null : tier1Cands[0] || null;
   const primaryPromise = primary
     ? callModel(env, primary.target, message, replyLang, ocr, false, "", {
         systemSettings,
@@ -1190,6 +1222,9 @@ async function handleLlmChat(env, body, reqOpts) {
     queue = registryCandidates(env, models, [3, 2, 1], preferVision);
   } else {
     queue = [...tier1Cands, ...registryCandidates(env, models, [2, 3]).slice(0, 1)];
+  }
+  if (pinnedT1) {
+    queue = prependPinnedT1(queue, pinnedT1, "pin→t1");
   }
   if (!queue.length) {
     notes.push(

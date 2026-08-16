@@ -1423,11 +1423,26 @@
     return MODEL_OPTIONS[0];
   }
 
+  /** 点选第一梯队模型时仍走 Auto 编排，只是生成把该模型当 T1 */
+  function isTier1Selection(id) {
+    if (!id || id === "auto") return false;
+    var m = findModel(id);
+    return !!(m && m.id === id && Number(m.tier) === 1);
+  }
+
+  function pipelineTag(id) {
+    if (!id || id === "auto") return "Auto";
+    var m = findModel(id);
+    if (m && m.id === id) return m.label || m.modelId || id;
+    return "LLM";
+  }
+
   function capsDesc(caps, langEn) {
     var c = caps || {};
     var bits = [];
     if (c.vision) bits.push(langEn ? "Vision" : "视觉");
     if (c.video) bits.push(langEn ? "Video" : "视频");
+    if (c.audio) bits.push(langEn ? "Audio" : "音频");
     if (c.ocr) bits.push("OCR");
     if (!bits.length) bits.push(langEn ? "Text" : "文本");
     return bits.join(" · ");
@@ -2087,8 +2102,11 @@
       return sel && sel.id === "auto" ? "Auto" : (sel && sel.label) || "";
     }
     var name = meta.label || meta.modelId || "";
-    if (meta.via && String(meta.via).indexOf("auto") === 0) {
-      var tierTag = meta.tier ? " · T" + meta.tier : "";
+    var via = String(meta.via || "");
+    var tierTag = meta.tier ? " · T" + meta.tier : "";
+    if (via.indexOf("pin→") === 0) return name;
+    if (via.indexOf("auto") === 0) {
+      if (selectedId && selectedId !== "auto") return name + tierTag;
       return "Auto → " + name + tierTag;
     }
     return name;
@@ -2200,6 +2218,8 @@
     if (!opened) openChat();
     var phone = currentPhone();
     var want = selectedModelId;
+    var usePipe = want === "auto" || isTier1Selection(want);
+    var pipeTag = pipelineTag(want);
     if (!messages.length) {
       appendMessage(
         "assistant",
@@ -2227,7 +2247,7 @@
     }
 
     appendAssistant(t("思考中…1.", "Thinking…1."), {
-      modelBadge: want === "auto" ? "Auto · 1" : formatModelBadge(null, want),
+      modelBadge: usePipe ? pipeTag + " · 1" : formatModelBadge(null, want),
     });
     var thinkingIdx = messages.length - 1;
     var thinkMajor = 1;
@@ -2271,8 +2291,9 @@
             : base + thinkMajor + ".";
         messages[thinkingIdx].modelBadge =
           badge ||
-          (want === "auto"
-            ? "Auto · " +
+          (usePipe
+            ? pipeTag +
+              " · " +
               thinkMajor +
               (thinkMinor > 0 ? "." + thinkMinor : "")
             : formatModelBadge(null, want) || "LLM");
@@ -2287,14 +2308,14 @@
       }, 700);
     }
 
-    setThinkingBusy(want === "auto" ? 1 : 3, {
+    setThinkingBusy(usePipe ? 1 : 3, {
       verbose:
-        want === "auto"
+        usePipe
           ? t("① 正在意图分类…", "① Classifying intent…")
           : t("正在生成回答…", "Generating answer…"),
       badge:
-        want === "auto"
-          ? "Auto · ①意图"
+        usePipe
+          ? pipeTag + " · ①意图"
           : formatModelBadge(null, want),
     });
 
@@ -2498,7 +2519,7 @@
           "检测到超时，正在尝试自动拆步；若仍失败，请把问题拆成更小的几问…",
           "Timeout detected — trying auto split; if it still fails, please ask smaller questions…"
         ),
-        badge: "Auto · 恢复",
+        badge: pipeTag + " · 恢复",
       });
 
       // 打点可失败忽略
@@ -2519,7 +2540,7 @@
               "恢复：正在规划分步…",
               "Recovery: planning steps…"
             ),
-            badge: "Auto · 规划",
+            badge: pipeTag + " · 规划",
           });
           return postJson("/api/llm-plan", {
             phone: reqBody.phone,
@@ -2613,7 +2634,7 @@
                   "恢复 " + stepNo + "/" + steps.length + "：联网检索…",
                   "Recovery " + stepNo + "/" + steps.length + ": web search…"
                 ),
-                badge: "Auto · 恢复搜网",
+                badge: pipeTag + " · 恢复搜网",
               });
               return postJson("/api/llm-websearch", {
                 phone: reqBody.phone,
@@ -2643,7 +2664,7 @@
                   "恢复 " + stepNo + "/" + steps.length + "：生成…",
                   "Recovery " + stepNo + "/" + steps.length + ": generate…"
                 ),
-                badge: "Auto · 恢复生成",
+                badge: pipeTag + " · 恢复生成",
               });
               if (wantPipelineTrace()) {
                 messages[thinkingIdx].modelNote = formatPipelineNote({
@@ -2662,7 +2683,7 @@
               return postJson("/api/llm-chat", {
                 phone: reqBody.phone,
                 message: chatMsg,
-                modelId: "auto",
+                modelId: want,
                 lang: reqBody.lang,
                 ocr: reqBody.ocr,
                 systemSettings: reqBody.systemSettings,
@@ -2716,7 +2737,7 @@
     }
 
     var chain =
-      want === "auto"
+      usePipe
         ? postJson("/api/llm-intent", {
             phone: reqBody.phone,
             message: reqBody.message,
@@ -2766,10 +2787,10 @@
                   ? t("③ 正在查询产品目录…", "③ Querying site catalog…")
                   : t("③ 正在生成回答…", "③ Generating answer…"),
               badge: needWeb
-                ? "Auto · ②搜网"
+                ? pipeTag + " · ②搜网"
                 : companyCatalog
-                  ? "Auto · 目录"
-                  : "Auto · ③生成",
+                  ? pipeTag + " · 目录"
+                  : pipeTag + " · ③生成",
             });
 
             var afterWeb = Promise.resolve({
@@ -2846,7 +2867,7 @@
                     role: "assistant",
                     text: goldText,
                     model: "auto",
-                    modelBadge: "Auto · 标准答",
+                    modelBadge: pipeTag + " · 标准答",
                     modelNote: wantPipelineTrace()
                       ? formatPipelineNote({ notes: allNotes })
                       : "",
@@ -2860,7 +2881,7 @@
                     category: gold.category,
                     intent_catalog: true,
                     intent_tier: intentObj && intentObj.tier,
-                    model_badge: "Auto · 标准答",
+                    model_badge: pipeTag + " · 标准答",
                     enterprise: true,
                   });
                   collapseAgentAfterReplyOnMobile();
@@ -2895,7 +2916,7 @@
                     role: "assistant",
                     text: tipText,
                     model: "auto",
-                    modelBadge: gold ? "Auto · 标准答" : "Auto · 目录",
+                    modelBadge: gold ? pipeTag + " · 标准答" : pipeTag + " · 目录",
                     modelNote: wantPipelineTrace()
                       ? formatPipelineNote({ notes: allNotes })
                       : "",
@@ -2909,7 +2930,7 @@
                     category: gold && gold.category,
                     intent_catalog: true,
                     intent_tier: intentObj && intentObj.tier,
-                    model_badge: gold ? "Auto · 标准答" : "Auto · 目录",
+                    model_badge: gold ? pipeTag + " · 标准答" : pipeTag + " · 目录",
                     enterprise: true,
                   });
                   collapseAgentAfterReplyOnMobile();
@@ -2936,7 +2957,7 @@
                     role: "assistant",
                     text: missText,
                     model: "auto",
-                    modelBadge: "Auto · 目录",
+                    modelBadge: pipeTag + " · 目录",
                     modelNote: wantPipelineTrace()
                       ? formatPipelineNote({ notes: allNotes })
                       : "",
@@ -2949,7 +2970,7 @@
                     hits: [],
                     intent_catalog: true,
                     intent_tier: intentObj && intentObj.tier,
-                    model_badge: "Auto · 目录",
+                    model_badge: pipeTag + " · 目录",
                     enterprise: true,
                   });
                   collapseAgentAfterReplyOnMobile();
@@ -2958,7 +2979,7 @@
 
                 setThinkingBusy(3, {
                   verbose: t("③ 正在生成回答…", "③ Generating answer…"),
-                  badge: "Auto · ③生成",
+                  badge: pipeTag + " · ③生成",
                 });
                 if (wantPipelineTrace()) {
                   messages[thinkingIdx].modelNote = formatPipelineNote({

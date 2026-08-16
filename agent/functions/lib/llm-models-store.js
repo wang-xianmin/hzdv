@@ -129,6 +129,7 @@ export function normalizeCaps(raw) {
     text: c.text !== false,
     vision: !!c.vision,
     video: !!c.video,
+    audio: !!c.audio,
     ocr: !!c.ocr,
   };
 }
@@ -152,6 +153,9 @@ export function inferApiKeyEnvFromBaseUrl(baseUrl) {
   if (u.includes("siliconflow")) return "SILICONFLOW_API_KEY";
   if (u.includes("deepseek.com")) return "DEEPSEEK_API_KEY";
   if (u.includes("volces.com") || u.includes("ark.cn-")) return "ARK_API_KEY";
+  if (u.includes("googleapis.com") || u.includes("generativelanguage") || u.includes("gemini")) {
+    return "GEMINI_API_KEY";
+  }
   if (u.includes("deepseek")) return "DEEPSEEK_API_KEY";
   return "";
 }

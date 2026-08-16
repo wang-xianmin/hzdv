@@ -175,6 +175,34 @@ export async function onRequest(context) {
             pack.latencyMs +
             "ms）"
       );
+    } else if (pack.source === "economist") {
+      notes.push(
+        uiLang === "en"
+          ? "② Economist RSS: " +
+            pack.results.length +
+            " items (" +
+            pack.latencyMs +
+            "ms)"
+          : "② 经济学人 RSS：" +
+            pack.results.length +
+            " 条（" +
+            pack.latencyMs +
+            "ms）"
+      );
+    } else if (pack.source === "bloomberg") {
+      notes.push(
+        uiLang === "en"
+          ? "② Bloomberg RSS: " +
+            pack.results.length +
+            " items (" +
+            pack.latencyMs +
+            "ms)"
+          : "② 彭博 RSS：" +
+            pack.results.length +
+            " 条（" +
+            pack.latencyMs +
+            "ms）"
+      );
     } else {
       notes.push(
         uiLang === "en"

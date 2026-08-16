@@ -20,6 +20,15 @@
   color: #fff;
 }
 
+.site-header--overlay a.nav-ai-assist--icon {
+  color: #3b82f6;
+}
+
+.site-header--overlay a.nav-ai-assist--icon:hover,
+.site-header--overlay a.nav-ai-assist--icon.is-active {
+  color: #60a5fa;
+}
+
 .site-header--overlay .icon-btn {
   color: #fff;
 }

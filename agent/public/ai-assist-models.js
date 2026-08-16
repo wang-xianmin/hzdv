@@ -131,6 +131,7 @@
     var bits = [];
     if (c.vision) bits.push(t("视觉", "Vision"));
     if (c.video) bits.push(t("视频", "Video"));
+    if (c.audio) bits.push(t("音频", "Audio"));
     if (c.ocr) bits.push("OCR");
     if (!bits.length) bits.push(t("文本", "Text"));
     return bits.join(" · ");
@@ -219,6 +220,9 @@
           '<label><input type="checkbox" data-c="video" /> ' +
           t("视频", "Video") +
           "</label>" +
+          '<label><input type="checkbox" data-c="audio" /> ' +
+          t("音频", "Audio") +
+          "</label>" +
           '<label><input type="checkbox" data-c="ocr" /> OCR</label>' +
           '<label><input type="checkbox" data-c="enabled" /> ' +
           t("启用", "On") +
@@ -240,6 +244,7 @@
         card.querySelector('[data-f="apiKeyEnv"]').value = m.apiKeyEnv || "";
         card.querySelector('[data-c="vision"]').checked = !!(m.caps && m.caps.vision);
         card.querySelector('[data-c="video"]').checked = !!(m.caps && m.caps.video);
+        card.querySelector('[data-c="audio"]').checked = !!(m.caps && m.caps.audio);
         card.querySelector('[data-c="ocr"]').checked = !!(m.caps && m.caps.ocr);
         card.querySelector('[data-c="enabled"]').checked = m.enabled !== false;
         card.querySelector(".ai-models-caps-preview").textContent = capsLabel(m.caps);
@@ -308,6 +313,7 @@
         text: true,
         vision: card.querySelector('[data-c="vision"]').checked,
         video: card.querySelector('[data-c="video"]').checked,
+        audio: card.querySelector('[data-c="audio"]').checked,
         ocr: card.querySelector('[data-c="ocr"]').checked,
       },
     };
@@ -425,7 +431,7 @@
         modelId: "model-id",
         baseUrl: "https://api.example.com/v1",
         apiKeyEnv: "",
-        caps: { text: true, vision: false, video: tier === 3, ocr: false },
+        caps: { text: true, vision: false, video: tier === 3, audio: false, ocr: false },
       },
     }).then(function (x) {
       if (!x.ok || !x.data || !x.data.success) {
