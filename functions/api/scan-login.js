@@ -131,9 +131,25 @@ export async function onRequest(context) {
           return jsonResponse({ success: true });
         }
 
-        // 默认直接写入（手机扫码，不读旧数据，最快路径）
+        // 手机扫码：读旧会话做幂等，避免 Safari 后台页重载重复发信
         const data = body.data && typeof body.data === "object" ? { ...body.data } : {};
+        let prev = {};
+        try {
+          const raw = await kv.get(sid);
+          if (raw) {
+            const j = JSON.parse(raw);
+            if (j && typeof j === "object") prev = j;
+          }
+        } catch (ePrev) {}
+
+        const alreadyTriggered =
+          !!prev.emailSent ||
+          prev.pcStatus === "ok" ||
+          (prev.emailLoginPending === true &&
+            (prev.pcStatus === "processing" || prev.pcStatus === "ok"));
+
         const canTrigger =
+          !alreadyTriggered &&
           data.scanned &&
           data.phone &&
           data.email &&
@@ -145,12 +161,28 @@ export async function onRequest(context) {
           data.emailLoginPending = true;
         }
 
-        await kv.put(sid, JSON.stringify(data), {
+        // 重复 POST：保留已发信状态，勿覆盖成「未处理」
+        const toStore = alreadyTriggered
+          ? {
+              ...prev,
+              ...data,
+              emailSent: prev.emailSent,
+              pcStatus: prev.pcStatus || data.pcStatus,
+              emailLoginPending:
+                prev.emailLoginPending != null
+                  ? prev.emailLoginPending
+                  : data.emailLoginPending,
+              magicLinkSkipDup: true,
+              lastRescanAt: Date.now(),
+            }
+          : data;
+
+        await kv.put(sid, JSON.stringify(toStore), {
           expirationTtl: 300,
         });
 
         if (canTrigger) {
-          const job = triggerMagicLinkFromScan(request, env, sid, data);
+          const job = triggerMagicLinkFromScan(request, env, sid, toStore);
           if (typeof context.waitUntil === "function") {
             context.waitUntil(job);
           } else {
@@ -158,7 +190,10 @@ export async function onRequest(context) {
           }
         }
 
-        return jsonResponse({ success: true });
+        return jsonResponse({
+          success: true,
+          alreadyTriggered: alreadyTriggered || undefined,
+        });
       } catch {
         return jsonResponse({ success: false, msg: "Invalid JSON" }, 400);
       }

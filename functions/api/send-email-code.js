@@ -252,6 +252,32 @@ export async function onRequest(context) {
       return jsonResponse({ success: false, error: "Server KV not configured" }, 503);
     }
 
+    // 同一扫码会话已发过确认信则不再发（Safari 重载 / 重复触发）
+    try {
+      const existing = await kv.get(sessionId);
+      if (existing) {
+        const prev = JSON.parse(existing);
+        if (
+          prev &&
+          typeof prev === "object" &&
+          (prev.emailSent === true || prev.pcStatus === "ok")
+        ) {
+          return jsonResponse({
+            success: true,
+            mode: "magic_link",
+            skipped: "already_sent",
+            lang: uiLang,
+            message:
+              uiLang === "en"
+                ? "Confirmation email was already sent for this scan."
+                : "该扫码会话的确认邮件已发送过，未重复发送。",
+            phone: String(prev.phone || body.phone || "").trim() || undefined,
+            email,
+          });
+        }
+      }
+    } catch (eDup) {}
+
     if (!phone) {
       const found = await resolveIdentityByEmail(kv, env, email);
       if (!found) {

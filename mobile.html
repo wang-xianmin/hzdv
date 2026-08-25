@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="robots" content="noindex,nofollow" />
   <title>扫码确认</title>
   <style>
     * { box-sizing: border-box; }
@@ -46,6 +47,8 @@
       var phone = String(params.get("p") || "").trim();
       var email = String(params.get("e") || "").trim();
       var statusEl = document.getElementById("status");
+      /** 本页生命周期内只允许发起一次提交（含 pageshow / 重复脚本） */
+      var submitted = false;
 
       function t(zh, en) {
         return isEn ? en : zh;
@@ -56,6 +59,33 @@
         statusEl.className = "msg" + (kind ? " is-" + kind : "");
       }
 
+      function doneKey() {
+        return "hzdv:mobile-scan-done:v1:" + sessionId;
+      }
+
+      function wasAlreadyDone() {
+        try {
+          if (sessionStorage.getItem(doneKey()) === "1") return true;
+        } catch (e1) {}
+        try {
+          if (localStorage.getItem(doneKey()) === "1") return true;
+        } catch (e2) {}
+        return false;
+      }
+
+      function markDone() {
+        try {
+          sessionStorage.setItem(doneKey(), "1");
+        } catch (e1) {}
+        try {
+          localStorage.setItem(doneKey(), "1");
+        } catch (e2) {}
+      }
+
+      function showDoneOk() {
+        setStatus(t("请回到电脑查看提示", "Check the computer"), "ok");
+      }
+
       document.documentElement.lang = isEn ? "en" : "zh-CN";
 
       if (!sessionId) {
@@ -63,51 +93,87 @@
         return;
       }
 
-      setStatus(t("请稍候…", "Please wait…"), "pending");
+      /**
+       * Safari 常把扫码页留在后台；内存回收后再打开、从 bfcache 恢复、
+       * 或切回该标签时可能整页重载，导致再次 POST 并发信。
+       * 同一 sessionId 只提交一次。
+       */
+      function runSubmit() {
+        if (submitted) return;
+        if (wasAlreadyDone()) {
+          submitted = true;
+          showDoneOk();
+          return;
+        }
+        submitted = true;
+        // 先落标记再请求：避免重载窗口期重复发信；失败也不再自动重试
+        markDone();
+        setStatus(t("请稍候…", "Please wait…"), "pending");
 
-      var payload = {
-        sessionId: sessionId,
-        data: {
-          scanned: true,
-          scannedAt: Date.now(),
-          ua: navigator.userAgent || "",
-          lang: isEn ? "en" : "zh",
-          siteOrigin: window.location.origin || "",
-        },
-      };
-      if (phone) payload.data.phone = phone;
-      if (email) payload.data.email = email;
+        var payload = {
+          sessionId: sessionId,
+          data: {
+            scanned: true,
+            scannedAt: Date.now(),
+            ua: navigator.userAgent || "",
+            lang: isEn ? "en" : "zh",
+            siteOrigin: window.location.origin || "",
+          },
+        };
+        if (phone) payload.data.phone = phone;
+        if (email) payload.data.email = email;
 
-      fetch("/api/scan-login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        cache: "no-store",
-        body: JSON.stringify(payload),
-      })
-        .then(function (r) {
-          return r.text().then(function (text) {
-            var j = null;
-            if (text) {
-              try {
-                j = JSON.parse(text);
-              } catch (e) {}
+        fetch("/api/scan-login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          cache: "no-store",
+          body: JSON.stringify(payload),
+        })
+          .then(function (r) {
+            return r.text().then(function (text) {
+              var j = null;
+              if (text) {
+                try {
+                  j = JSON.parse(text);
+                } catch (e) {}
+              }
+              return { ok: r.ok, status: r.status, j: j };
+            });
+          })
+          .then(function (x) {
+            if (x.ok && x.j && x.j.success === true) {
+              showDoneOk();
+              return;
             }
-            return { ok: r.ok, status: r.status, j: j };
+            var msg =
+              (x.j && (x.j.msg || x.j.error)) ||
+              ("HTTP " + x.status);
+            setStatus(msg, "err");
+          })
+          .catch(function (err) {
+            setStatus(String((err && err.message) || err || "network error"), "err");
           });
-        })
-        .then(function (x) {
-          if (x.ok && x.j && x.j.success === true) {
-            setStatus(t("请回到电脑查看提示", "Check the computer"), "ok");
-            return;
-          }
-          var msg =
-            (x.j && (x.j.msg || x.j.error)) ||
-            ("HTTP " + x.status);
-          setStatus(msg, "err");
-        })
-        .catch(function (err) {
-          setStatus(String((err && err.message) || err || "network error"), "err");
-        });
+      }
+
+      runSubmit();
+
+      // bfcache 恢复：不重新发信，只保持提示
+      window.addEventListener("pageshow", function (ev) {
+        if (ev && ev.persisted) {
+          if (wasAlreadyDone() || submitted) showDoneOk();
+          return;
+        }
+        // 个别 WebKit 在非 persisted 的 pageshow 后也会再跑逻辑；守卫即可
+        if (wasAlreadyDone() || submitted) {
+          showDoneOk();
+        }
+      });
+
+      document.addEventListener("visibilitychange", function () {
+        if (document.visibilityState === "visible" && (wasAlreadyDone() || submitted)) {
+          showDoneOk();
+        }
+      });
     })();
   </script>
 </body>
