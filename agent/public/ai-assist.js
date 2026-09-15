@@ -2494,6 +2494,145 @@
       }).then(parseLlmResponse);
     }
 
+    /**
+     * ③ 生成：SSE 流式（借鉴 Agents SDK keepalive / 连接保活破墙钟）
+     * hooks.onDelta(fullText) 边收边刷新气泡
+     */
+    function postLlmChatStream(body, hooks) {
+      hooks = hooks || {};
+      return fetch("/api/llm-chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "text/event-stream",
+        },
+        cache: "no-store",
+        body: JSON.stringify(Object.assign({}, body || {}, { stream: true })),
+      }).then(function (r) {
+        var ct = String(r.headers.get("Content-Type") || "");
+        if (!r.body || ct.indexOf("text/event-stream") < 0) {
+          return parseLlmResponse(r);
+        }
+        var reader = r.body.getReader();
+        var decoder = new TextDecoder("utf-8");
+        var buf = "";
+        var donePayload = null;
+        var sawDelta = false;
+
+        function dispatchBlock(block) {
+          if (!block || block.charAt(0) === ":") return;
+          var ev = "message";
+          var dataLines = [];
+          block.split(/\n/).forEach(function (line) {
+            if (line.indexOf("event:") === 0) {
+              ev = line.slice(6).trim() || "message";
+            } else if (line.indexOf("data:") === 0) {
+              dataLines.push(line.slice(5).replace(/^ /, ""));
+            }
+          });
+          if (!dataLines.length) return;
+          var raw = dataLines.join("\n");
+          var data = null;
+          try {
+            data = JSON.parse(raw);
+          } catch (eParse) {
+            return;
+          }
+          if (ev === "meta") {
+            if (hooks.onMeta) hooks.onMeta(data);
+          } else if (ev === "note") {
+            if (hooks.onNote && data && data.text) hooks.onNote(String(data.text));
+          } else if (ev === "delta") {
+            sawDelta = true;
+            clearThinkPulse();
+            if (hooks.onDelta) hooks.onDelta(String((data && data.text) || ""));
+          } else if (ev === "done") {
+            donePayload = data;
+          } else if (ev === "error") {
+            donePayload = {
+              success: false,
+              error: (data && data.error) || "stream error",
+            };
+          }
+        }
+
+        function pump() {
+          return reader.read().then(function (chunk) {
+            if (chunk.value) {
+              buf += decoder.decode(chunk.value, { stream: true });
+              var parts = buf.split("\n\n");
+              buf = parts.pop() || "";
+              parts.forEach(dispatchBlock);
+            }
+            if (chunk.done) {
+              if (buf.trim()) dispatchBlock(buf);
+              if (donePayload) {
+                return {
+                  ok: !!donePayload.success,
+                  status: donePayload.success ? 200 : 502,
+                  j: donePayload,
+                  streamed: true,
+                  sawDelta: sawDelta,
+                };
+              }
+              return {
+                ok: false,
+                status: r.status || 0,
+                j: {
+                  success: false,
+                  error: t(
+                    "流式连接结束但未收到结果",
+                    "Stream ended without a result"
+                  ),
+                },
+                streamed: true,
+              };
+            }
+            return pump();
+          });
+        }
+
+        return pump().catch(function (err) {
+          return {
+            ok: false,
+            status: 0,
+            j: {
+              success: false,
+              error: String((err && err.message) || err || "stream failed"),
+            },
+            streamed: true,
+          };
+        });
+      });
+    }
+
+    function streamChatWithUi(chatBody, baseNotes) {
+      var notesAcc = Array.isArray(baseNotes) ? baseNotes.slice() : [];
+      return postLlmChatStream(chatBody, {
+        onNote: function (text) {
+          if (!text) return;
+          if (notesAcc.indexOf(text) === -1) notesAcc.push(text);
+          if (wantPipelineTrace()) {
+            messages[thinkingIdx].modelNote = formatPipelineNote({
+              notes: notesAcc,
+            });
+            renderThread();
+          }
+        },
+        onDelta: function (full) {
+          messages[thinkingIdx].text = full || "";
+          messages[thinkingIdx].modelBadge =
+            (pipeTag || "Auto") + " · " + t("生成中", "streaming");
+          renderThread();
+        },
+      }).then(function (pack) {
+        var cj = (pack && pack.j) || {};
+        cj.notes = mergeNotes(notesAcc, cj.notes);
+        if (pack) pack.j = cj;
+        return pack;
+      });
+    }
+
     /** Auto：intent →（如需）websearch → llm-chat；墙钟失败则恢复编排一次 */
     function mergeNotes() {
       var out = [];
@@ -2680,18 +2819,30 @@
                   t("【本步焦点】", "[Step focus] ") +
                   step.focus;
               }
-              return postJson("/api/llm-chat", {
-                phone: reqBody.phone,
-                message: chatMsg,
-                modelId: want,
-                lang: reqBody.lang,
-                ocr: reqBody.ocr,
-                systemSettings: reqBody.systemSettings,
-                intent: intentObj || { tier: 1, web: !!webCtx },
-                webProvided: true,
-                webCtx: webCtx || "",
-                catalogItems: ctx.catalogItems || [],
-              }).then(function (chatPack) {
+              return postLlmChatStream(
+                {
+                  phone: reqBody.phone,
+                  message: chatMsg,
+                  modelId: want,
+                  lang: reqBody.lang,
+                  ocr: reqBody.ocr,
+                  systemSettings: reqBody.systemSettings,
+                  intent: intentObj || { tier: 1, web: !!webCtx },
+                  webProvided: true,
+                  webCtx: webCtx || "",
+                  catalogItems: ctx.catalogItems || [],
+                  history: reqBody.history,
+                },
+                {
+                  onDelta: function (full) {
+                    clearThinkPulse();
+                    messages[thinkingIdx].text = full || "";
+                    messages[thinkingIdx].modelBadge =
+                      pipeTag + " · " + t("恢复生成中", "recovery streaming");
+                    renderThread();
+                  },
+                }
+              ).then(function (chatPack) {
                 var cj = (chatPack && chatPack.j) || {};
                 cj.notes = mergeNotes(allNotes, cj.notes);
                 chatPack.j = cj;
@@ -3020,7 +3171,7 @@
                     },
                   });
                 } else {
-                  afterChat = postJson("/api/llm-chat", chatBody);
+                  afterChat = streamChatWithUi(chatBody, allNotes);
                 }
 
                 return afterChat.then(function (chatPack) {
@@ -3048,11 +3199,11 @@
             });
           })
         : Promise.resolve(catalogPromise || []).then(function (catalogItems) {
-            return postJson(
-              "/api/llm-chat",
+            return streamChatWithUi(
               Object.assign({}, reqBody, {
                 catalogItems: catalogItems || [],
-              })
+              }),
+              []
             ).then(function (pack) {
               applyAssistantPack(pack, "");
             });

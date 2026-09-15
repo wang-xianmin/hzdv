@@ -252,6 +252,7 @@ export function extractAssistantText(data) {
 /**
  * OpenAI 兼容流式 chat/completions。
  * onDelta(fullTextSoFar, piece) 每有新 token 调用；返回最终全文。
+ * 支持经 VPS llm-proxy（upstreamBaseUrl / upstreamApiKey）。
  */
 export async function chatCompletionsStream({
   baseUrl,
@@ -260,8 +261,11 @@ export async function chatCompletionsStream({
   messages,
   temperature = 0.2,
   max_tokens = 512,
-  timeoutMs = 60000,
+  timeoutMs = 180000,
   onDelta = null,
+  signal = null,
+  upstreamBaseUrl = null,
+  upstreamApiKey = null,
 }) {
   const base = normalizeBaseUrl(baseUrl);
   if (!base) {
@@ -274,6 +278,7 @@ export async function chatCompletionsStream({
     return { ok: false, status: 0, text: "", error: "缺少 model" };
   }
 
+  const viaProxy = !!(upstreamBaseUrl && upstreamApiKey);
   const url = /\/chat\/completions$/i.test(base)
     ? base
     : base + "/chat/completions";
@@ -283,15 +288,32 @@ export async function chatCompletionsStream({
   if (ctrl && timeoutMs > 0) {
     timer = setTimeout(() => ctrl.abort(), timeoutMs);
   }
+  if (signal && ctrl) {
+    if (signal.aborted) ctrl.abort();
+    else {
+      signal.addEventListener(
+        "abort",
+        function () {
+          ctrl.abort();
+        },
+        { once: true }
+      );
+    }
+  }
 
   try {
+    const headers = {
+      Authorization: "Bearer " + apiKey,
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+    };
+    if (viaProxy) {
+      headers["X-Upstream-Base-Url"] = normalizeBaseUrl(upstreamBaseUrl);
+      headers["X-Upstream-Api-Key"] = String(upstreamApiKey);
+    }
     const res = await fetch(url, {
       method: "POST",
-      headers: {
-        Authorization: "Bearer " + apiKey,
-        "Content-Type": "application/json",
-        Accept: "text/event-stream",
-      },
+      headers,
       body: JSON.stringify({
         model,
         messages: messages || [],
@@ -299,7 +321,7 @@ export async function chatCompletionsStream({
         max_tokens,
         stream: true,
       }),
-      signal: ctrl ? ctrl.signal : undefined,
+      signal: ctrl ? ctrl.signal : signal || undefined,
     });
 
     if (!res.ok) {
@@ -316,6 +338,7 @@ export async function chatCompletionsStream({
         text: "",
         latencyMs: Date.now() - started,
         error: extractUpstreamError(data, res.status) || "HTTP " + res.status,
+        viaProxy,
       };
     }
 
@@ -332,6 +355,7 @@ export async function chatCompletionsStream({
           text: "",
           latencyMs: Date.now() - started,
           error: "非流式响应无法解析",
+          viaProxy,
         };
       }
       const full = extractAssistantText(data).trim();
@@ -342,6 +366,7 @@ export async function chatCompletionsStream({
         text: full,
         latencyMs: Date.now() - started,
         error: full ? undefined : "empty",
+        viaProxy,
       };
     }
 
@@ -392,6 +417,7 @@ export async function chatCompletionsStream({
       text: String(full).trim(),
       latencyMs: Date.now() - started,
       error: String(full).trim() ? undefined : "empty stream",
+      viaProxy,
     };
   } catch (e) {
     const msg =
@@ -402,6 +428,7 @@ export async function chatCompletionsStream({
       text: "",
       latencyMs: Date.now() - started,
       error: msg,
+      viaProxy,
     };
   } finally {
     if (timer) clearTimeout(timer);

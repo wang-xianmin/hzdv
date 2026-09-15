@@ -61,6 +61,7 @@ agent/
 | `DEEPSEEK_API_KEY` | DeepSeek 官方 |
 | `OCR_SERVICE_URL` / `OCR_API_KEY` | OCR。推荐 Tunnel：`https://ocr.hzdv.net` |
 | `ASR_SERVICE_URL` / `ASR_API_KEY` | ASR。推荐 `https://asr.hzdv.net` |
+| `POSE_SERVICE_URL` / `POSE_API_KEY` | Pose/文档扫描。推荐 `https://pose.hzdv.net` |
 | `INTENT_SERVICE_URL` / `INTENT_API_KEY` | 意图分类（方案一）。推荐 `https://intent.hzdv.net/v1` |
 | `LLM_PROXY_SERVICE_URL` / `LLM_PROXY_API_KEY` | **可选**。方案一长超时转发。推荐 `https://llm.hzdv.net/v1`。方案二强制不走代理 |
 | `LLM_ROUTE_MODE` | **可选**。`vps` / `cf` / `auto`。系统设置 `llmRouteMode`：`0=强制VPS` / `1=强制CF` / `2=自动`（默认；中国大陆→CF，其它→VPS） |
@@ -93,6 +94,17 @@ Python + sherpa-onnx（Next-gen Kaldi ONNX）跑在仓库 `services/asr/`（Dock
 
 与 OCR 一样：CF 上只跑代理，模型与推理在 VPS；多个 CF 项目可共用同一 ASR 服务。
 
+## 与 Pose / 文档扫描服务的关系
+
+YOLOv8-Pose + OpenCV 跑在仓库 `services/pose/`（Docker，默认端口 `8093`）。
+
+1. 先 `cd services/pose && ./download_models.sh` 下载并导出 ONNX  
+2. `docker compose up -d --build`  
+3. Pages 配 `POSE_SERVICE_URL` / `POSE_API_KEY`，浏览器走同源 `/api/pose`  
+4. `?task=pose` 人体关键点；`?task=scan` 文档四角透视 + 增强（扫描全能王式）
+
+与 OCR 一样：CF 上只跑代理；多个项目可共用同一 `POSE_SERVICE_URL`。
+
 ## 与 LLM Proxy 的关系
 
 ### 方案一（`llmRouteMode=0` 强制，或自动且访客不在中国大陆）
@@ -124,7 +136,14 @@ Python + sherpa-onnx（Next-gen Kaldi ONNX）跑在仓库 `services/asr/`（Dock
 
 ## 失败恢复编排（Auto）
 
-现有 ①意图 → ②搜网 → ③生成 不变。若 ③ 出现 HTML 502 / 软超时：
+现有 ①意图 → ②搜网 → ③生成 不变。**③ 生成默认走 SSE 流式**（借鉴 Cloudflare Agents SDK）：
+
+- 浏览器保持长连接；服务端每 ~25s 发 `: keepalive`，避免边缘空闲掐断  
+- 边生成边推 `delta`，结束发 `done`（结构同原 JSON 包）  
+- 回合进度写入 KV，可 `GET /api/llm-turn?turnId=&phone=` 续看  
+- VPS `llm-proxy` 支持 `stream=true` 透传上游 SSE  
+
+若 ③ 仍出现 HTML 502 / 软超时（少见：代理未升级或中途断流）：
 
 1. 前端识别墙钟失败  
 2. `POST /api/llm-recover-log`（短打点，可失败忽略）  

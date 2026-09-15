@@ -5,19 +5,22 @@
   X-Upstream-Base-Url  例如 https://api.siliconflow.cn/v1
   X-Upstream-Api-Key   云厂商密钥（由 CF Secrets 传入，不落盘）
 Body：标准 chat/completions JSON（model / messages / …）
+stream=true 时透传上游 SSE（解决 CF 墙钟：连接保持期间可持续推流）
 """
 
 from __future__ import annotations
 
+import json
 import os
 import time
-from typing import Any
+from typing import Any, AsyncIterator
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
-app = FastAPI(title="hzdv-llm-proxy", version="0.1.0")
+app = FastAPI(title="hzdv-llm-proxy", version="0.2.0")
 
 _cors = os.getenv("LLM_PROXY_CORS_ORIGINS", "*").strip()
 app.add_middleware(
@@ -28,7 +31,7 @@ app.add_middleware(
 )
 
 _API_KEY = (os.getenv("LLM_PROXY_API_KEY") or "").strip()
-_UPSTREAM_TIMEOUT = float(os.getenv("LLM_PROXY_UPSTREAM_TIMEOUT", "120") or "120")
+_UPSTREAM_TIMEOUT = float(os.getenv("LLM_PROXY_UPSTREAM_TIMEOUT", "180") or "180")
 _CONNECT_TIMEOUT = float(os.getenv("LLM_PROXY_CONNECT_TIMEOUT", "15") or "15")
 
 
@@ -57,6 +60,7 @@ def health() -> dict[str, Any]:
         "service": "hzdv-llm-proxy",
         "auth_required": bool(_API_KEY),
         "upstream_timeout_s": _UPSTREAM_TIMEOUT,
+        "stream": True,
     }
 
 
@@ -89,17 +93,103 @@ async def chat_completions(
 
     url = upstream_base + "/chat/completions"
     started = time.time()
+    want_stream = bool(body.get("stream"))
     timeout = httpx.Timeout(_UPSTREAM_TIMEOUT, connect=_CONNECT_TIMEOUT)
+    headers = {
+        "Authorization": "Bearer " + upstream_key,
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream" if want_stream else "application/json",
+    }
+
+    if want_stream:
+        client = httpx.AsyncClient(timeout=timeout, follow_redirects=True)
+
+        async def event_stream() -> AsyncIterator[bytes]:
+            try:
+                async with client.stream(
+                    "POST",
+                    url,
+                    headers=headers,
+                    json=body,
+                ) as upstream:
+                    if upstream.status_code >= 400:
+                        err_body = await upstream.aread()
+                        # 非 2xx：尽量以单条 SSE error 或原样 JSON 片段回传
+                        try:
+                            err_txt = err_body.decode("utf-8", errors="replace")
+                        except Exception:
+                            err_txt = '{"error":{"message":"upstream error"}}'
+                        yield (
+                            "data: "
+                            + json.dumps(
+                                {
+                                    "error": {
+                                        "message": err_txt[:800],
+                                        "status": upstream.status_code,
+                                    }
+                                },
+                                ensure_ascii=False,
+                            )
+                            + "\n\n"
+                        ).encode("utf-8")
+                        yield b"data: [DONE]\n\n"
+                        return
+                    async for chunk in upstream.aiter_bytes():
+                        if chunk:
+                            yield chunk
+            except httpx.TimeoutException:
+                latency_ms = int((time.time() - started) * 1000)
+                yield (
+                    "data: "
+                    + json.dumps(
+                        {
+                            "error": {
+                                "message": "upstream timeout %sms"
+                                % int(_UPSTREAM_TIMEOUT * 1000),
+                                "type": "timeout",
+                                "latency_ms": latency_ms,
+                            }
+                        }
+                    )
+                    + "\n\n"
+                ).encode("utf-8")
+                yield b"data: [DONE]\n\n"
+            except httpx.HTTPError as e:
+                latency_ms = int((time.time() - started) * 1000)
+                msg = str(e).replace('"', "'")[:300]
+                yield (
+                    "data: "
+                    + json.dumps(
+                        {
+                            "error": {
+                                "message": msg,
+                                "type": "proxy_error",
+                                "latency_ms": latency_ms,
+                            }
+                        }
+                    )
+                    + "\n\n"
+                ).encode("utf-8")
+                yield b"data: [DONE]\n\n"
+            finally:
+                await client.aclose()
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache, no-transform",
+                "X-Accel-Buffering": "no",
+                "X-Proxy-Stream": "1",
+                "X-Proxy-Latency-Ms": str(int((time.time() - started) * 1000)),
+            },
+        )
 
     try:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             upstream = await client.post(
                 url,
-                headers={
-                    "Authorization": "Bearer " + upstream_key,
-                    "Content-Type": "application/json",
-                    "Accept": "application/json",
-                },
+                headers=headers,
                 json=body,
             )
     except httpx.TimeoutException:
@@ -122,7 +212,6 @@ async def chat_completions(
             media_type="application/json",
         )
 
-    # 原样回传上游状态与正文（便于 CF 侧 extractUpstreamError）
     media = upstream.headers.get("content-type") or "application/json"
     return Response(
         content=upstream.content,

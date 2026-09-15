@@ -3,8 +3,12 @@
  * 最小对话入口（调试用）：按所选模型或 Auto 解析后的模型调用 OpenAI 兼容接口。
  *
  * Body: { phone, message, modelId?: "auto" | <registry id>, lang?: "zh"|"en",
- *         history?: [{ role, content }] 近期对话（短期记忆） }
- * Returns: { success, reply, model: {...}, attempts, notes, latencyMs, error? }
+ *         history?: [{ role, content }] 近期对话（短期记忆）,
+ *         stream?: true  → ③ 生成以 SSE 推送（delta/done + keepalive，破同步墙钟） }
+ * Returns: JSON 包；或 stream 时 text/event-stream（event: meta|note|delta|done|error）
+ *
+ * 流式借鉴 Cloudflare Agents SDK：连接保持期间无同步墙钟硬限；: keepalive 防边缘空闲掐断；
+ * 进度写入 KV（/api/llm-turn?turnId=）便于断线后续看。
  *
  * Auto：先用 VPS 上的 Qwen2.5-1.5B 分类器给消息定级（见 lib/intent.js），
  * 再按模型库（KV）里对应梯队的排序依次尝试：
@@ -33,6 +37,7 @@ import {
 import { loadLlmModels } from "../lib/llm-models-store.js";
 import {
   chatCompletions,
+  chatCompletionsStream,
   extractAssistantText,
   resolveApiKey,
 } from "../lib/openai-compat.js";
@@ -50,6 +55,11 @@ import {
   searchTavily,
   tavilyConfigured,
 } from "../lib/tavily.js";
+import { createSseResponse } from "../lib/sse.js";
+import {
+  newTurnId,
+  saveAgentTurn,
+} from "../lib/agent-turn-store.js";
 import { loadWebsearchRefineRules } from "../lib/websearch-refine-store.js";
 
 /** 可调默认值；运行时可由 body.systemSettings（D1 系统参数）覆盖 */
@@ -585,6 +595,123 @@ async function callModel(env, target, message, replyLang, ocr, useVision, webCtx
   };
 }
 
+/** 流式生成：边出 token 边推 SSE，连接保持期间不撞 CF 同步墙钟 */
+async function callModelStream(env, target, message, replyLang, ocr, useVision, webCtx, opts) {
+  const apiKey = resolveApiKey(env, target.apiKeyEnv);
+  if (!apiKey) {
+    return {
+      ok: false,
+      status: 0,
+      latencyMs: 0,
+      error: "环境变量未配置：" + (target.apiKeyEnv || "(空)"),
+      reply: "",
+    };
+  }
+  if (String(target.baseUrl || "").includes("{WorkspaceId}")) {
+    return {
+      ok: false,
+      status: 0,
+      latencyMs: 0,
+      error: "baseUrl 仍含 {WorkspaceId}",
+      reply: "",
+    };
+  }
+
+  const wantVision =
+    !!useVision &&
+    !!(ocr && ocr.visionImages && ocr.visionImages.length) &&
+    !!(target.caps && target.caps.vision);
+  const catalogCtx =
+    (opts && opts.catalogCtx && String(opts.catalogCtx).trim()) || "";
+  const hasCatalog = !!catalogCtx;
+  let effectiveWeb = webCtx;
+  if (hasCatalog) effectiveWeb = "";
+  const hasWeb = !!(effectiveWeb && String(effectiveWeb).trim());
+  let userContent = buildUserContent(message, ocr, wantVision);
+  if (hasCatalog) {
+    const block = catalogCtx;
+    if (typeof userContent === "string") {
+      userContent = userContent + block;
+    } else if (Array.isArray(userContent)) {
+      userContent = userContent.concat([{ type: "text", text: block }]);
+    }
+  }
+  if (hasWeb) {
+    const bridge =
+      replyLang === "en"
+        ? "\n\nUse the materials below. If they contain numbered items, list them — do not say the materials are empty or that there is no news today. Copy URLs exactly.\n\n"
+        : "\n\n请根据下列材料用中文回答。若已有编号条目，必须逐条汇报：" +
+          "每条给出【中文译名】、原文标题、以及材料中的原样 URL（禁止改 URL）。" +
+          "禁止说「材料里没有」或「没有今天的新闻」。\n\n";
+    const block = bridge + String(effectiveWeb).trim();
+    if (typeof userContent === "string") {
+      userContent = userContent + block;
+    } else if (Array.isArray(userContent)) {
+      userContent = userContent.concat([{ type: "text", text: block }]);
+    }
+  }
+  const systemSettings = (opts && opts.systemSettings) || {};
+  const proxy = resolveGenerateProxy(env, systemSettings, {
+    country: opts && opts.country,
+  });
+  // 流式：放宽超时；连接上靠 SSE keepalive 保活
+  const timeoutMs =
+    (opts && opts.timeoutMs) ||
+    (proxy ? (wantVision ? 180000 : 150000) : wantVision ? 120000 : 90000);
+  const maxTokens =
+    (opts && opts.maxTokens) || (wantVision ? 2048 : 1024);
+  const history = normalizeChatHistory(opts && opts.history);
+  const onDelta = opts && typeof opts.onDelta === "function" ? opts.onDelta : null;
+  const result = await chatCompletionsStream({
+    baseUrl: proxy ? proxy.baseUrl : target.baseUrl,
+    apiKey: proxy ? proxy.apiKey : apiKey,
+    upstreamBaseUrl: proxy ? target.baseUrl : null,
+    upstreamApiKey: proxy ? apiKey : null,
+    model: target.modelId,
+    messages: [
+      {
+        role: "system",
+        content: systemPrompt(replyLang, ocr, hasWeb, hasCatalog),
+      },
+      ...history,
+      { role: "user", content: userContent },
+    ],
+    temperature: hasWeb || hasCatalog ? 0.1 : 0.3,
+    max_tokens: maxTokens,
+    timeoutMs,
+    onDelta,
+    signal: opts && opts.signal,
+  });
+  const reply = String((result && result.text) || "").trim();
+  if (result.ok && !reply) {
+    return {
+      ...result,
+      ok: false,
+      reply: "",
+      error: "上游流式返回空内容",
+      usedVision: wantVision,
+      viaProxy: !!proxy,
+    };
+  }
+  return {
+    ...result,
+    reply,
+    usedVision: wantVision,
+    viaProxy: !!proxy,
+  };
+}
+
+function wantsStreamMode(body, request) {
+  if (body && (body.stream === true || body.stream === 1 || body.stream === "1")) {
+    return true;
+  }
+  try {
+    const accept = String((request && request.headers && request.headers.get("Accept")) || "");
+    if (/text\/event-stream/i.test(accept)) return true;
+  } catch (e) {}
+  return false;
+}
+
 /**
  * 决定是否搜网并拉取 Tavily 材料。
  * force：body.webSearch / body.forceWeb
@@ -697,6 +824,280 @@ function failNote(attempt, uiLang) {
     : attempt.label + " 调用失败：" + why;
 }
 
+async function streamManualGenerate(env, ctx) {
+  const turnId = newTurnId();
+  const createdAt = Date.now();
+  await saveAgentTurn(env, {
+    id: turnId,
+    status: "running",
+    partialReply: "",
+    notes: ctx.notes || [],
+    createdAt,
+  });
+
+  return createSseResponse(async function (api) {
+    api.send("meta", { turnId, via: "manual" });
+    (ctx.notes || []).forEach(function (n) {
+      if (n) api.send("note", { text: n });
+    });
+
+    let lastPartial = "";
+    const result = await callModelStream(
+      env,
+      ctx.hit,
+      ctx.message,
+      ctx.replyLang,
+      ctx.ocr,
+      ctx.useVision,
+      ctx.webCtx || "",
+      {
+        systemSettings: ctx.systemSettings,
+        country: ctx.country,
+        catalogCtx: ctx.catalogCtx,
+        history: ctx.history,
+        signal: api.signal,
+        onDelta: function (full) {
+          lastPartial = full;
+          api.send("delta", { text: full });
+          saveAgentTurn(env, {
+            id: turnId,
+            status: "streaming",
+            partialReply: full,
+            notes: ctx.notes || [],
+            createdAt,
+          }).catch(function () {});
+        },
+      }
+    );
+
+    const notes = (ctx.notes || []).slice();
+    if (result.usedVision) {
+      notes.push(
+        ctx.uiLang === "en"
+          ? "Vision: " + (ctx.ocr.visionPages || []).join(", ") + " page image(s)"
+          : "视觉：" + (ctx.ocr.visionPages || []).join("、") + " 页整页渲图"
+      );
+    }
+    const bodyOut = packChatResult(result, ctx.hit, "manual", ctx.langInfo, {
+      notes,
+      webSearch: ctx.webSearch,
+      turnId,
+    });
+    await saveAgentTurn(env, {
+      id: turnId,
+      status: bodyOut.success ? "done" : "error",
+      partialReply: lastPartial || bodyOut.reply || "",
+      reply: bodyOut.reply || "",
+      error: bodyOut.error || null,
+      model: bodyOut.model || null,
+      notes,
+      createdAt,
+      doneAt: Date.now(),
+    });
+    api.send("done", bodyOut);
+  });
+}
+
+async function streamAutoGenerate(env, ctx) {
+  const turnId = newTurnId();
+  const createdAt = Date.now();
+  const notes = (ctx.notes || []).slice();
+  const attempts = Array.isArray(ctx.attempts) ? ctx.attempts.slice() : [];
+  await saveAgentTurn(env, {
+    id: turnId,
+    status: "running",
+    partialReply: "",
+    notes,
+    attempts,
+    createdAt,
+  });
+
+  return createSseResponse(async function (api) {
+    api.send("meta", { turnId, via: "auto" });
+    notes.forEach(function (n) {
+      if (n) api.send("note", { text: n });
+    });
+
+    const queue = ctx.queue || [];
+    const streamOpts = Object.assign({}, ctx.callOpts || {}, {
+      timeoutMs:
+        (ctx.callOpts && ctx.callOpts.timeoutMs) > 60000
+          ? ctx.callOpts.timeoutMs
+          : 150000,
+      signal: api.signal,
+    });
+
+    let lastFail = null;
+    for (const item of queue) {
+      if (!item || !item.target) continue;
+      if (api.signal && api.signal.aborted) break;
+      const target = item.target;
+      const via = item.via || "auto";
+      const tCall = Date.now();
+      api.send("note", {
+        text:
+          ctx.uiLang === "en"
+            ? "Streaming " + (target.label || target.modelId)
+            : "流式尝试 " + (target.label || target.modelId),
+      });
+
+      let lastPartial = "";
+      const result = await callModelStream(
+        env,
+        target,
+        ctx.message,
+        ctx.replyLang,
+        ctx.ocr,
+        ctx.useVision,
+        ctx.webCtx || "",
+        Object.assign({}, streamOpts, {
+          onDelta: function (full) {
+            lastPartial = full;
+            api.send("delta", { text: full });
+            saveAgentTurn(env, {
+              id: turnId,
+              status: "streaming",
+              partialReply: full,
+              notes,
+              attempts,
+              model: modelMeta(target, via, ctx.langInfo),
+              createdAt,
+            }).catch(function () {});
+          },
+        })
+      );
+
+      notes.push(
+        ctx.uiLang === "en"
+          ? "Tried " +
+            (target.label || target.modelId) +
+            " · " +
+            (Date.now() - tCall) +
+            "ms"
+          : "尝试 " +
+            (target.label || target.modelId) +
+            " · " +
+            (Date.now() - tCall) +
+            "ms"
+      );
+      const attempt = {
+        label: target.label,
+        modelId: target.modelId,
+        preference: target.preference || String(via).replace("auto→", ""),
+        ok: !!(result.ok && String(result.reply || "").trim()),
+        error: result.error || null,
+        latencyMs: result.latencyMs,
+        usedVision: !!result.usedVision,
+      };
+      attempts.push(attempt);
+
+      if (attempt.ok) {
+        if (result.usedVision) {
+          notes.push(
+            ctx.uiLang === "en" ? "Used vision page image(s)" : "已附复杂页整页渲图"
+          );
+        }
+        const bodyOut = packChatResult(result, target, via, ctx.langInfo, {
+          attempts,
+          notes,
+          webSearch: ctx.webMeta,
+          turnId,
+        });
+        await saveAgentTurn(env, {
+          id: turnId,
+          status: "done",
+          partialReply: lastPartial || bodyOut.reply || "",
+          reply: bodyOut.reply || "",
+          model: bodyOut.model || null,
+          notes,
+          attempts,
+          createdAt,
+          doneAt: Date.now(),
+        });
+        api.send("done", bodyOut);
+        return;
+      }
+      if (result.ok && !result.error) attempt.error = "上游返回空内容";
+      notes.push(failNote(attempt, ctx.uiLang));
+      api.send("note", { text: failNote(attempt, ctx.uiLang) });
+      lastFail = { result, target, via };
+    }
+
+    // 模型全失败：有联网材料则列表直出
+    const listReply = formatDeterministicNewsReply(
+      ctx.structuredResults,
+      ctx.replyLang
+    );
+    if (listReply) {
+      notes.push(
+        ctx.uiLang === "en"
+          ? "③ Generate: model failed → verbatim list"
+          : "③ 生成：模型失败 → 列表直出（原样标题+URL）"
+      );
+      const bodyOut = packChatResult(
+        { ok: true, reply: listReply, latencyMs: 0, status: 200, error: null },
+        ctx.listModel || {
+          id: "auto",
+          label: "Verbatim list",
+          modelId: "verbatim-list",
+        },
+        "auto→list",
+        ctx.langInfo,
+        { notes, webSearch: ctx.webMeta, attempts, turnId }
+      );
+      await saveAgentTurn(env, {
+        id: turnId,
+        status: "done",
+        reply: listReply,
+        partialReply: listReply,
+        notes,
+        attempts,
+        createdAt,
+        doneAt: Date.now(),
+      });
+      api.send("done", bodyOut);
+      return;
+    }
+
+    const bodyOut = lastFail
+      ? packChatResult(lastFail.result, lastFail.target, lastFail.via, ctx.langInfo, {
+          attempts,
+          notes,
+          webSearch: ctx.webMeta,
+          turnId,
+        })
+      : {
+          success: false,
+          error:
+            ctx.uiLang === "en"
+              ? "No usable model for Auto stream."
+              : "Auto 流式未找到可用模型",
+          model: {
+            id: "auto",
+            label: "Auto",
+            modelId: "",
+            tier: 0,
+            via: "auto→none",
+            ...(ctx.langInfo || {}),
+          },
+          attempts,
+          notes,
+          webSearch: ctx.webMeta,
+          turnId,
+        };
+    await saveAgentTurn(env, {
+      id: turnId,
+      status: "error",
+      error: bodyOut.error || null,
+      notes,
+      attempts,
+      createdAt,
+      doneAt: Date.now(),
+    });
+    api.send("done", bodyOut);
+  });
+}
+
 export async function onRequest(context) {
   const { request, env } = context;
   if (request.method !== "POST") {
@@ -720,6 +1121,7 @@ export async function onRequest(context) {
   try {
     return await handleLlmChat(env, body, {
       country: clientCountryFromRequest(request),
+      request,
     });
   } catch (e) {
     console.error("llm-chat:", e);
@@ -765,6 +1167,7 @@ async function handleLlmChat(env, body, reqOpts) {
   const systemSettings = body.systemSettings || body.system_settings || {};
   const routeDecision = resolveRouteDecision(systemSettings, env, routeOpts);
   const routeMode = routeDecision.mode;
+  const streamMode = wantsStreamMode(body, reqOpts && reqOpts.request);
 
   let pinnedT1 = null;
   if (wantId !== "auto") {
@@ -788,6 +1191,35 @@ async function handleLlmChat(env, body, reqOpts) {
     const notes = [];
     if (web.note) notes.push(web.note);
     notes.push(formatRouteModeNote(routeDecision, uiLang));
+    if (streamMode) {
+      notes.push(
+        uiLang === "en"
+          ? "③ Generate via SSE stream (Agents-style wall-clock)"
+          : "③ 生成走 SSE 流式（借鉴 Agents：连接保活破墙钟）"
+      );
+      return streamManualGenerate(env, {
+        hit,
+        message,
+        replyLang,
+        ocr,
+        useVision,
+        webCtx: web.webCtx || "",
+        systemSettings,
+        country,
+        catalogCtx,
+        history,
+        langInfo,
+        notes,
+        uiLang,
+        webSearch: web.used
+          ? {
+              query: web.pack && web.pack.query,
+              count: web.pack && web.pack.results ? web.pack.results.length : 0,
+              latencyMs: web.pack && web.pack.latencyMs,
+            }
+          : null,
+      });
+    }
     const result = await callModel(
       env,
       hit,
@@ -1082,8 +1514,9 @@ async function handleLlmChat(env, body, reqOpts) {
     );
   }
 
-  // 有附件、已搜网或点选了第一梯队时不预热库内默认 T1
-  const primary = ocr.present || webCtx || pinnedT1 ? null : tier1Cands[0] || null;
+  // 有附件、已搜网、点选 T1、或 SSE 流式时不预热库内默认 T1
+  const primary =
+    ocr.present || webCtx || pinnedT1 || streamMode ? null : tier1Cands[0] || null;
   const primaryPromise = primary
     ? callModel(env, primary.target, message, replyLang, ocr, false, "", {
         systemSettings,
@@ -1337,6 +1770,50 @@ async function handleLlmChat(env, body, reqOpts) {
         maxAttempts +
         " 次"
   );
+
+  if (streamMode) {
+    notes.push(
+      uiLang === "en"
+        ? "③ Generate via SSE stream + keepalive (Agents-style; no sync wall-clock JSON wait)"
+        : "③ 生成走 SSE 流式 + keepalive（借鉴 Agents；不再同步死等整包 JSON）"
+    );
+    // 流式路径：列表直出仍可立即结束，不占用 LLM
+    if (structuredResults && structuredResults.length && remMs() < 2500) {
+      const reply = formatDeterministicNewsReply(structuredResults, replyLang);
+      if (reply) {
+        notes.push(
+          uiLang === "en"
+            ? "③ Generate: low budget → verbatim list"
+            : "③ 生成：预算不足 → 列表直出（原样标题+URL）"
+        );
+        return jsonResponse(
+          packChatResult(
+            { ok: true, reply, latencyMs: 0, status: 200, error: null },
+            listModel,
+            "auto→list",
+            langInfo,
+            { notes, webSearch: webMeta, attempts }
+          )
+        );
+      }
+    }
+    return streamAutoGenerate(env, {
+      queue: queue.slice(0, maxAttempts),
+      message,
+      replyLang,
+      ocr,
+      useVision,
+      webCtx: webCtxForCall,
+      callOpts,
+      langInfo,
+      notes,
+      attempts,
+      webMeta,
+      uiLang,
+      structuredResults,
+      listModel,
+    });
+  }
 
   function hardTimeoutResult(ms) {
     return new Promise(function (resolve) {
