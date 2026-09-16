@@ -8,7 +8,8 @@
  * Returns: JSON 包；或 stream 时 text/event-stream（event: meta|note|delta|done|error）
  *
  * 流式借鉴 Cloudflare Agents SDK：连接保持期间无同步墙钟硬限；: keepalive 防边缘空闲掐断；
- * 进度写入 KV（/api/llm-turn?turnId=）便于断线后续看。
+ * 进度写入 KV（/api/llm-turn?turnId=）便于断线后续看；客户端断开后 waitUntil 后台写完。
+ * ③ 亦可经 /api/llm-session WebSocket 推送（轻量会话壳，无 Durable Object）。
  *
  * Auto：先用 VPS 上的 Qwen2.5-1.5B 分类器给消息定级（见 lib/intent.js），
  * 再按模型库（KV）里对应梯队的排序依次尝试：
@@ -59,6 +60,7 @@ import { createSseResponse } from "../lib/sse.js";
 import {
   newTurnId,
   saveAgentTurn,
+  createThrottledTurnSaver,
 } from "../lib/agent-turn-store.js";
 import { loadWebsearchRefineRules } from "../lib/websearch-refine-store.js";
 
@@ -824,278 +826,369 @@ function failNote(attempt, uiLang) {
     : attempt.label + " 调用失败：" + why;
 }
 
+function attachWaitUntil(ssePack, waitUntil) {
+  if (ssePack && ssePack.finished && typeof waitUntil === "function") {
+    try {
+      waitUntil(ssePack.finished);
+    } catch (e) {}
+  }
+  return ssePack && ssePack.response ? ssePack.response : ssePack;
+}
+
+/**
+ * SSE 或外部 eventSink（WebSocket）共用生成循环。
+ * ctx.eventSink 存在时走 WS 壳；否则 createSseResponse。
+ */
+function runGenerateTransport(ctx, handler, onDisconnect) {
+  if (ctx.eventSink) {
+    const api = ctx.eventSink;
+    if (typeof api.setOnDisconnect === "function" && onDisconnect) {
+      api.setOnDisconnect(onDisconnect);
+    }
+    let resolveFinished;
+    const finished = new Promise(function (resolve) {
+      resolveFinished = resolve;
+    });
+    const work = Promise.resolve()
+      .then(function () {
+        return handler(api);
+      })
+      .catch(function (err) {
+        try {
+          api.send("error", {
+            error: String((err && err.message) || err || "stream failed"),
+          });
+        } catch (e2) {}
+      })
+      .then(function () {
+        if (typeof api.close === "function") api.close();
+        resolveFinished();
+      });
+    if (typeof ctx.waitUntil === "function") {
+      try {
+        ctx.waitUntil(finished);
+      } catch (e) {}
+    }
+    return work.then(function () {
+      return { transport: "ws", ok: true };
+    });
+  }
+
+  const ssePack = createSseResponse(handler, {
+    abortOnCancel: false,
+    onDisconnect: onDisconnect,
+  });
+  return attachWaitUntil(ssePack, ctx.waitUntil);
+}
+
 async function streamManualGenerate(env, ctx) {
   const turnId = newTurnId();
   const createdAt = Date.now();
-  await saveAgentTurn(env, {
+  const phone = String(ctx.phone || "").trim();
+  const baseTurn = {
     id: turnId,
+    phone,
     status: "running",
     partialReply: "",
     notes: ctx.notes || [],
     createdAt,
-  });
+  };
+  await saveAgentTurn(env, baseTurn);
+  const saver = createThrottledTurnSaver(env, baseTurn);
+  let lastPartial = "";
 
-  return createSseResponse(async function (api) {
-    api.send("meta", { turnId, via: "manual" });
-    (ctx.notes || []).forEach(function (n) {
-      if (n) api.send("note", { text: n });
-    });
-
-    let lastPartial = "";
-    const result = await callModelStream(
-      env,
-      ctx.hit,
-      ctx.message,
-      ctx.replyLang,
-      ctx.ocr,
-      ctx.useVision,
-      ctx.webCtx || "",
-      {
-        systemSettings: ctx.systemSettings,
-        country: ctx.country,
-        catalogCtx: ctx.catalogCtx,
-        history: ctx.history,
-        signal: api.signal,
-        onDelta: function (full) {
-          lastPartial = full;
-          api.send("delta", { text: full });
-          saveAgentTurn(env, {
-            id: turnId,
-            status: "streaming",
-            partialReply: full,
-            notes: ctx.notes || [],
-            createdAt,
-          }).catch(function () {});
-        },
-      }
-    );
-
-    const notes = (ctx.notes || []).slice();
-    if (result.usedVision) {
-      notes.push(
-        ctx.uiLang === "en"
-          ? "Vision: " + (ctx.ocr.visionPages || []).join(", ") + " page image(s)"
-          : "视觉：" + (ctx.ocr.visionPages || []).join("、") + " 页整页渲图"
-      );
-    }
-    const bodyOut = packChatResult(result, ctx.hit, "manual", ctx.langInfo, {
-      notes,
-      webSearch: ctx.webSearch,
-      turnId,
-    });
-    await saveAgentTurn(env, {
-      id: turnId,
-      status: bodyOut.success ? "done" : "error",
-      partialReply: lastPartial || bodyOut.reply || "",
-      reply: bodyOut.reply || "",
-      error: bodyOut.error || null,
-      model: bodyOut.model || null,
-      notes,
-      createdAt,
-      doneAt: Date.now(),
-    });
-    api.send("done", bodyOut);
-  });
-}
-
-async function streamAutoGenerate(env, ctx) {
-  const turnId = newTurnId();
-  const createdAt = Date.now();
-  const notes = (ctx.notes || []).slice();
-  const attempts = Array.isArray(ctx.attempts) ? ctx.attempts.slice() : [];
-  await saveAgentTurn(env, {
-    id: turnId,
-    status: "running",
-    partialReply: "",
-    notes,
-    attempts,
-    createdAt,
-  });
-
-  return createSseResponse(async function (api) {
-    api.send("meta", { turnId, via: "auto" });
-    notes.forEach(function (n) {
-      if (n) api.send("note", { text: n });
-    });
-
-    const queue = ctx.queue || [];
-    const streamOpts = Object.assign({}, ctx.callOpts || {}, {
-      timeoutMs:
-        (ctx.callOpts && ctx.callOpts.timeoutMs) > 60000
-          ? ctx.callOpts.timeoutMs
-          : 150000,
-      signal: api.signal,
-    });
-
-    let lastFail = null;
-    for (const item of queue) {
-      if (!item || !item.target) continue;
-      if (api.signal && api.signal.aborted) break;
-      const target = item.target;
-      const via = item.via || "auto";
-      const tCall = Date.now();
-      api.send("note", {
-        text:
-          ctx.uiLang === "en"
-            ? "Streaming " + (target.label || target.modelId)
-            : "流式尝试 " + (target.label || target.modelId),
+  return runGenerateTransport(
+    ctx,
+    async function (api) {
+      api.send("meta", {
+        turnId,
+        via: "manual",
+        transport: ctx.eventSink ? "ws" : "sse",
+      });
+      (ctx.notes || []).forEach(function (n) {
+        if (n) api.send("note", { text: n });
       });
 
-      let lastPartial = "";
       const result = await callModelStream(
         env,
-        target,
+        ctx.hit,
         ctx.message,
         ctx.replyLang,
         ctx.ocr,
         ctx.useVision,
         ctx.webCtx || "",
-        Object.assign({}, streamOpts, {
+        {
+          systemSettings: ctx.systemSettings,
+          country: ctx.country,
+          catalogCtx: ctx.catalogCtx,
+          history: ctx.history,
           onDelta: function (full) {
             lastPartial = full;
             api.send("delta", { text: full });
-            saveAgentTurn(env, {
-              id: turnId,
-              status: "streaming",
+            saver.update({
+              status: api.clientGone() ? "background" : "streaming",
               partialReply: full,
-              notes,
-              attempts,
-              model: modelMeta(target, via, ctx.langInfo),
-              createdAt,
-            }).catch(function () {});
+              notes: ctx.notes || [],
+            });
           },
-        })
-      );
-
-      notes.push(
-        ctx.uiLang === "en"
-          ? "Tried " +
-            (target.label || target.modelId) +
-            " · " +
-            (Date.now() - tCall) +
-            "ms"
-          : "尝试 " +
-            (target.label || target.modelId) +
-            " · " +
-            (Date.now() - tCall) +
-            "ms"
-      );
-      const attempt = {
-        label: target.label,
-        modelId: target.modelId,
-        preference: target.preference || String(via).replace("auto→", ""),
-        ok: !!(result.ok && String(result.reply || "").trim()),
-        error: result.error || null,
-        latencyMs: result.latencyMs,
-        usedVision: !!result.usedVision,
-      };
-      attempts.push(attempt);
-
-      if (attempt.ok) {
-        if (result.usedVision) {
-          notes.push(
-            ctx.uiLang === "en" ? "Used vision page image(s)" : "已附复杂页整页渲图"
-          );
         }
-        const bodyOut = packChatResult(result, target, via, ctx.langInfo, {
-          attempts,
-          notes,
-          webSearch: ctx.webMeta,
-          turnId,
+      );
+
+      const notes = (ctx.notes || []).slice();
+      if (result.usedVision) {
+        notes.push(
+          ctx.uiLang === "en"
+            ? "Vision: " +
+              (ctx.ocr.visionPages || []).join(", ") +
+              " page image(s)"
+            : "视觉：" + (ctx.ocr.visionPages || []).join("、") + " 页整页渲图"
+        );
+      }
+      const bodyOut = packChatResult(result, ctx.hit, "manual", ctx.langInfo, {
+        notes,
+        webSearch: ctx.webSearch,
+        turnId,
+      });
+      await saver.flush({
+        status: bodyOut.success ? "done" : "error",
+        partialReply: lastPartial || bodyOut.reply || "",
+        reply: bodyOut.reply || "",
+        error: bodyOut.error || null,
+        model: bodyOut.model || null,
+        notes,
+        doneAt: Date.now(),
+      });
+      api.send("done", bodyOut);
+    },
+    function () {
+      saver.update({
+        status: "background",
+        partialReply: lastPartial,
+        notes: ctx.notes || [],
+      });
+    }
+  );
+}
+
+async function streamAutoGenerate(env, ctx) {
+  const turnId = newTurnId();
+  const createdAt = Date.now();
+  const phone = String(ctx.phone || "").trim();
+  const notes = (ctx.notes || []).slice();
+  const attempts = Array.isArray(ctx.attempts) ? ctx.attempts.slice() : [];
+  const baseTurn = {
+    id: turnId,
+    phone,
+    status: "running",
+    partialReply: "",
+    notes,
+    attempts,
+    createdAt,
+  };
+  await saveAgentTurn(env, baseTurn);
+  const saver = createThrottledTurnSaver(env, baseTurn);
+  let lastPartial = "";
+
+  return runGenerateTransport(
+    ctx,
+    async function (api) {
+      api.send("meta", {
+        turnId,
+        via: "auto",
+        transport: ctx.eventSink ? "ws" : "sse",
+      });
+      notes.forEach(function (n) {
+        if (n) api.send("note", { text: n });
+      });
+
+      const queue = ctx.queue || [];
+      const streamOpts = Object.assign({}, ctx.callOpts || {}, {
+        timeoutMs:
+          (ctx.callOpts && ctx.callOpts.timeoutMs) > 60000
+            ? ctx.callOpts.timeoutMs
+            : 150000,
+      });
+
+      let lastFail = null;
+      for (const item of queue) {
+        if (!item || !item.target) continue;
+        const target = item.target;
+        const via = item.via || "auto";
+        const tCall = Date.now();
+        api.send("note", {
+          text:
+            ctx.uiLang === "en"
+              ? "Streaming " + (target.label || target.modelId)
+              : "流式尝试 " + (target.label || target.modelId),
         });
-        await saveAgentTurn(env, {
-          id: turnId,
+
+        lastPartial = "";
+        const result = await callModelStream(
+          env,
+          target,
+          ctx.message,
+          ctx.replyLang,
+          ctx.ocr,
+          ctx.useVision,
+          ctx.webCtx || "",
+          Object.assign({}, streamOpts, {
+            onDelta: function (full) {
+              lastPartial = full;
+              api.send("delta", { text: full });
+              saver.update({
+                status: api.clientGone() ? "background" : "streaming",
+                partialReply: full,
+                notes,
+                attempts,
+                model: modelMeta(target, via, ctx.langInfo),
+              });
+            },
+          })
+        );
+
+        notes.push(
+          ctx.uiLang === "en"
+            ? "Tried " +
+              (target.label || target.modelId) +
+              " · " +
+              (Date.now() - tCall) +
+              "ms"
+            : "尝试 " +
+              (target.label || target.modelId) +
+              " · " +
+              (Date.now() - tCall) +
+              "ms"
+        );
+        const attempt = {
+          label: target.label,
+          modelId: target.modelId,
+          preference: target.preference || String(via).replace("auto→", ""),
+          ok: !!(result.ok && String(result.reply || "").trim()),
+          error: result.error || null,
+          latencyMs: result.latencyMs,
+          usedVision: !!result.usedVision,
+        };
+        attempts.push(attempt);
+
+        if (attempt.ok) {
+          if (result.usedVision) {
+            notes.push(
+              ctx.uiLang === "en"
+                ? "Used vision page image(s)"
+                : "已附复杂页整页渲图"
+            );
+          }
+          const bodyOut = packChatResult(result, target, via, ctx.langInfo, {
+            attempts,
+            notes,
+            webSearch: ctx.webMeta,
+            turnId,
+          });
+          await saver.flush({
+            status: "done",
+            partialReply: lastPartial || bodyOut.reply || "",
+            reply: bodyOut.reply || "",
+            error: null,
+            model: bodyOut.model || null,
+            notes,
+            attempts,
+            doneAt: Date.now(),
+          });
+          api.send("done", bodyOut);
+          return;
+        }
+        if (result.ok && !result.error) attempt.error = "上游返回空内容";
+        notes.push(failNote(attempt, ctx.uiLang));
+        api.send("note", { text: failNote(attempt, ctx.uiLang) });
+        lastFail = { result, target, via };
+      }
+
+      const listReply = formatDeterministicNewsReply(
+        ctx.structuredResults,
+        ctx.replyLang
+      );
+      if (listReply) {
+        notes.push(
+          ctx.uiLang === "en"
+            ? "③ Generate: model failed → verbatim list"
+            : "③ 生成：模型失败 → 列表直出（原样标题+URL）"
+        );
+        const bodyOut = packChatResult(
+          { ok: true, reply: listReply, latencyMs: 0, status: 200, error: null },
+          ctx.listModel || {
+            id: "auto",
+            label: "Verbatim list",
+            modelId: "verbatim-list",
+          },
+          "auto→list",
+          ctx.langInfo,
+          { notes, webSearch: ctx.webMeta, attempts, turnId }
+        );
+        await saver.flush({
           status: "done",
-          partialReply: lastPartial || bodyOut.reply || "",
-          reply: bodyOut.reply || "",
-          model: bodyOut.model || null,
+          reply: listReply,
+          partialReply: listReply,
+          error: null,
           notes,
           attempts,
-          createdAt,
           doneAt: Date.now(),
         });
         api.send("done", bodyOut);
         return;
       }
-      if (result.ok && !result.error) attempt.error = "上游返回空内容";
-      notes.push(failNote(attempt, ctx.uiLang));
-      api.send("note", { text: failNote(attempt, ctx.uiLang) });
-      lastFail = { result, target, via };
-    }
 
-    // 模型全失败：有联网材料则列表直出
-    const listReply = formatDeterministicNewsReply(
-      ctx.structuredResults,
-      ctx.replyLang
-    );
-    if (listReply) {
-      notes.push(
-        ctx.uiLang === "en"
-          ? "③ Generate: model failed → verbatim list"
-          : "③ 生成：模型失败 → 列表直出（原样标题+URL）"
-      );
-      const bodyOut = packChatResult(
-        { ok: true, reply: listReply, latencyMs: 0, status: 200, error: null },
-        ctx.listModel || {
-          id: "auto",
-          label: "Verbatim list",
-          modelId: "verbatim-list",
-        },
-        "auto→list",
-        ctx.langInfo,
-        { notes, webSearch: ctx.webMeta, attempts, turnId }
-      );
-      await saveAgentTurn(env, {
-        id: turnId,
-        status: "done",
-        reply: listReply,
-        partialReply: listReply,
+      const bodyOut = lastFail
+        ? packChatResult(
+            lastFail.result,
+            lastFail.target,
+            lastFail.via,
+            ctx.langInfo,
+            {
+              attempts,
+              notes,
+              webSearch: ctx.webMeta,
+              turnId,
+            }
+          )
+        : {
+            success: false,
+            error:
+              ctx.uiLang === "en"
+                ? "No usable model for Auto stream."
+                : "Auto 流式未找到可用模型",
+            model: {
+              id: "auto",
+              label: "Auto",
+              modelId: "",
+              tier: 0,
+              via: "auto→none",
+              ...(ctx.langInfo || {}),
+            },
+            attempts,
+            notes,
+            webSearch: ctx.webMeta,
+            turnId,
+          };
+      await saver.flush({
+        status: "error",
+        error: bodyOut.error || null,
+        partialReply: lastPartial || "",
+        reply: "",
         notes,
         attempts,
-        createdAt,
         doneAt: Date.now(),
       });
       api.send("done", bodyOut);
-      return;
+    },
+    function () {
+      saver.update({
+        status: "background",
+        partialReply: lastPartial,
+        notes,
+        attempts,
+      });
     }
-
-    const bodyOut = lastFail
-      ? packChatResult(lastFail.result, lastFail.target, lastFail.via, ctx.langInfo, {
-          attempts,
-          notes,
-          webSearch: ctx.webMeta,
-          turnId,
-        })
-      : {
-          success: false,
-          error:
-            ctx.uiLang === "en"
-              ? "No usable model for Auto stream."
-              : "Auto 流式未找到可用模型",
-          model: {
-            id: "auto",
-            label: "Auto",
-            modelId: "",
-            tier: 0,
-            via: "auto→none",
-            ...(ctx.langInfo || {}),
-          },
-          attempts,
-          notes,
-          webSearch: ctx.webMeta,
-          turnId,
-        };
-    await saveAgentTurn(env, {
-      id: turnId,
-      status: "error",
-      error: bodyOut.error || null,
-      notes,
-      attempts,
-      createdAt,
-      doneAt: Date.now(),
-    });
-    api.send("done", bodyOut);
-  });
+  );
 }
 
 export async function onRequest(context) {
@@ -1122,6 +1215,10 @@ export async function onRequest(context) {
     return await handleLlmChat(env, body, {
       country: clientCountryFromRequest(request),
       request,
+      waitUntil:
+        context && typeof context.waitUntil === "function"
+          ? context.waitUntil.bind(context)
+          : null,
     });
   } catch (e) {
     console.error("llm-chat:", e);
@@ -1135,7 +1232,7 @@ export async function onRequest(context) {
   }
 }
 
-async function handleLlmChat(env, body, reqOpts) {
+export async function handleLlmChat(env, body, reqOpts) {
   const message = String(body.message || body.prompt || "").trim();
   if (!message) {
     return jsonResponse({ success: false, error: "缺少 message" }, 400);
@@ -1167,7 +1264,9 @@ async function handleLlmChat(env, body, reqOpts) {
   const systemSettings = body.systemSettings || body.system_settings || {};
   const routeDecision = resolveRouteDecision(systemSettings, env, routeOpts);
   const routeMode = routeDecision.mode;
-  const streamMode = wantsStreamMode(body, reqOpts && reqOpts.request);
+  const streamMode =
+    !!(reqOpts && reqOpts.eventSink) ||
+    wantsStreamMode(body, reqOpts && reqOpts.request);
 
   let pinnedT1 = null;
   if (wantId !== "auto") {
@@ -1194,8 +1293,12 @@ async function handleLlmChat(env, body, reqOpts) {
     if (streamMode) {
       notes.push(
         uiLang === "en"
-          ? "③ Generate via SSE stream (Agents-style wall-clock)"
-          : "③ 生成走 SSE 流式（借鉴 Agents：连接保活破墙钟）"
+          ? "③ Generate via " +
+            ((reqOpts && reqOpts.eventSink) ? "WebSocket" : "SSE") +
+            " stream (Agents-style wall-clock)"
+          : "③ 生成走 " +
+            ((reqOpts && reqOpts.eventSink) ? "WebSocket" : "SSE") +
+            " 流式（借鉴 Agents：连接保活破墙钟）"
       );
       return streamManualGenerate(env, {
         hit,
@@ -1211,6 +1314,9 @@ async function handleLlmChat(env, body, reqOpts) {
         langInfo,
         notes,
         uiLang,
+        phone: body.phone || "",
+        waitUntil: reqOpts && reqOpts.waitUntil,
+        eventSink: reqOpts && reqOpts.eventSink,
         webSearch: web.used
           ? {
               query: web.pack && web.pack.query,
@@ -1774,8 +1880,12 @@ async function handleLlmChat(env, body, reqOpts) {
   if (streamMode) {
     notes.push(
       uiLang === "en"
-        ? "③ Generate via SSE stream + keepalive (Agents-style; no sync wall-clock JSON wait)"
-        : "③ 生成走 SSE 流式 + keepalive（借鉴 Agents；不再同步死等整包 JSON）"
+        ? "③ Generate via " +
+          ((reqOpts && reqOpts.eventSink) ? "WebSocket" : "SSE") +
+          " stream + keepalive (Agents-style; no sync wall-clock JSON wait)"
+        : "③ 生成走 " +
+          ((reqOpts && reqOpts.eventSink) ? "WebSocket" : "SSE") +
+          " 流式 + keepalive（借鉴 Agents；不再同步死等整包 JSON）"
     );
     // 流式路径：列表直出仍可立即结束，不占用 LLM
     if (structuredResults && structuredResults.length && remMs() < 2500) {
@@ -1812,6 +1922,9 @@ async function handleLlmChat(env, body, reqOpts) {
       uiLang,
       structuredResults,
       listModel,
+      phone: body.phone || "",
+      waitUntil: reqOpts && reqOpts.waitUntil,
+      eventSink: reqOpts && reqOpts.eventSink,
     });
   }
 

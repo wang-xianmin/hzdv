@@ -1,6 +1,9 @@
 /**
  * SSE 工具（借鉴 Cloudflare Agents SDK：长连接 + comment keepalive 防边缘空闲掐断）
- * keepalive 约 25s（WHATWG 建议 ~15s；Agents 用 25s 避开 ~5min idle watchdog）
+ * keepalive 约 25s（WHATWG 建议 ~15s；Agents 用 25s 避开 idle watchdog）
+ *
+ * 默认 abortOnCancel=false：客户端断开后仍继续 handler（配合 waitUntil 后台写完 KV）。
+ * 返回 { response, finished }，finished 在 handler 结束后 resolve。
  */
 
 export const SSE_KEEPALIVE_INTERVAL_MS = 25000;
@@ -33,16 +36,24 @@ export function encodeSseEvent(event, data, id) {
 }
 
 /**
- * 创建 SSE Response：handler(api) 内写事件；连接保持期间 Worker 墙钟无硬上限。
- * api: { send(event, data, id?), comment(text?), close(), signal }
+ * 创建 SSE Response。
+ * api: { send, comment, close, signal, clientGone() }
+ * @returns {{ response: Response, finished: Promise<void> }}
  */
 export function createSseResponse(handler, opts) {
   const encoder = new TextEncoder();
   let keepaliveTimer = null;
   let closed = false;
+  let clientGone = false;
   let eventSeq = 0;
+  const abortOnCancel = !!(opts && opts.abortOnCancel);
   const abort =
     typeof AbortController !== "undefined" ? new AbortController() : null;
+
+  let finishedResolve;
+  const finished = new Promise(function (resolve) {
+    finishedResolve = resolve;
+  });
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -52,6 +63,7 @@ export function createSseResponse(handler, opts) {
           controller.enqueue(encoder.encode(text));
         } catch (e) {
           closed = true;
+          clientGone = true;
         }
       }
 
@@ -71,6 +83,9 @@ export function createSseResponse(handler, opts) {
 
       const api = {
         signal: abort ? abort.signal : null,
+        clientGone: function () {
+          return clientGone;
+        },
         send: function (event, data, id) {
           if (closed) return;
           eventSeq += 1;
@@ -101,20 +116,30 @@ export function createSseResponse(handler, opts) {
         } catch (e2) {}
       } finally {
         api.close();
+        if (finishedResolve) finishedResolve();
       }
     },
     cancel: function () {
+      clientGone = true;
       closed = true;
       if (keepaliveTimer) {
         clearInterval(keepaliveTimer);
         keepaliveTimer = null;
       }
-      if (abort) abort.abort();
+      if (opts && typeof opts.onDisconnect === "function") {
+        try {
+          opts.onDisconnect();
+        } catch (e) {}
+      }
+      if (abortOnCancel && abort) abort.abort();
     },
   });
 
-  return new Response(stream, {
-    status: 200,
-    headers: sseHeaders(opts && opts.headers),
-  });
+  return {
+    response: new Response(stream, {
+      status: 200,
+      headers: sseHeaders(opts && opts.headers),
+    }),
+    finished: finished,
+  };
 }
