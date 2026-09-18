@@ -17,13 +17,23 @@
 }
 
 .settings-modal-sheet {
-  width: min(580px, calc(100vw - 32px));
+  /* 桌面运维为主：加宽弹窗，描述列可读完整文案 */
+  width: min(960px, calc(100vw - 48px));
+  max-height: min(88vh, 820px);
   background: #fff;
   border-radius: 20px;
   box-shadow: 0 8px 40px rgba(0, 0, 0, 0.18);
-  padding: 28px 24px 24px;
+  padding: 28px 28px 24px;
   box-sizing: border-box;
   position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+#settingsGrid {
+  flex: 1 1 auto;
+  min-height: 420px;
+  height: min(56vh, 520px) !important;
 }
 
 .settings-modal-title {
@@ -95,6 +105,11 @@
 #settingsGrid .ag-cell.settings-cell-desc {
   font-size: 13px;
   color: #333;
+  white-space: normal;
+  line-height: 1.35;
+  align-items: flex-start;
+  padding-top: 8px;
+  padding-bottom: 8px;
 }
 #settingsGrid .ag-cell.settings-cell-unit {
   font-size: 12px;
