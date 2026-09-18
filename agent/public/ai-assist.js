@@ -2494,12 +2494,366 @@
       }).then(parseLlmResponse);
     }
 
+    function sleepMs(ms) {
+      return new Promise(function (resolve) {
+        setTimeout(resolve, ms);
+      });
+    }
+
     /**
-     * ③ 生成：SSE 流式（借鉴 Agents SDK keepalive / 连接保活破墙钟）
-     * hooks.onDelta(fullText) 边收边刷新气泡
+     * 断线后续看 KV 回合（服务端 waitUntil 后台写完）
+     */
+    function pollLlmTurn(turnId, phone, hooks) {
+      hooks = hooks || {};
+      var started = Date.now();
+      var maxMs = 180000;
+      var delay = 1200;
+      if (hooks.onResume) hooks.onResume({ turnId: turnId });
+
+      function once() {
+        var url =
+          "/api/llm-turn?turnId=" +
+          encodeURIComponent(turnId) +
+          "&phone=" +
+          encodeURIComponent(phone || "");
+        return fetch(url, { cache: "no-store" })
+          .then(function (r) {
+            return r
+              .json()
+              .then(function (j) {
+                return { ok: r.ok, status: r.status, j: j };
+              })
+              .catch(function () {
+                return { ok: false, status: r.status, j: null };
+              });
+          })
+          .then(function (pack) {
+            var j = (pack && pack.j) || {};
+            var turn = j.turn || null;
+            if (!pack.ok || !turn) {
+              if (Date.now() - started > maxMs) {
+                return {
+                  ok: false,
+                  status: (pack && pack.status) || 0,
+                  j: {
+                    success: false,
+                    error: t(
+                      "续看超时：生成可能仍在后台，请稍后重试",
+                      "Resume timed out — generation may still be running; try again later"
+                    ),
+                    turnId: turnId,
+                    resumed: true,
+                  },
+                  resumed: true,
+                  turnId: turnId,
+                };
+              }
+              return sleepMs(delay).then(once);
+            }
+            var partial = String(turn.partialReply || turn.reply || "");
+            if (partial && hooks.onDelta) hooks.onDelta(partial);
+            if (turn.status === "done") {
+              return {
+                ok: true,
+                status: 200,
+                j: {
+                  success: true,
+                  reply: turn.reply || turn.partialReply || "",
+                  model: turn.model || null,
+                  notes: turn.notes || [],
+                  attempts: turn.attempts || [],
+                  turnId: turnId,
+                  resumed: true,
+                },
+                resumed: true,
+                turnId: turnId,
+              };
+            }
+            if (turn.status === "error") {
+              return {
+                ok: false,
+                status: 502,
+                j: {
+                  success: false,
+                  error: turn.error || t("生成失败", "Generation failed"),
+                  notes: turn.notes || [],
+                  attempts: turn.attempts || [],
+                  turnId: turnId,
+                  resumed: true,
+                },
+                resumed: true,
+                turnId: turnId,
+              };
+            }
+            if (Date.now() - started > maxMs) {
+              return {
+                ok: false,
+                status: 504,
+                j: {
+                  success: false,
+                  error: t(
+                    "续看超时：仍在生成中，请稍后重试",
+                    "Resume timed out while still generating; try again later"
+                  ),
+                  reply: partial,
+                  turnId: turnId,
+                  resumed: true,
+                },
+                resumed: true,
+                turnId: turnId,
+              };
+            }
+            return sleepMs(delay).then(once);
+          })
+          .catch(function () {
+            if (Date.now() - started > maxMs) {
+              return {
+                ok: false,
+                status: 0,
+                j: {
+                  success: false,
+                  error: t("续看失败", "Resume failed"),
+                  turnId: turnId,
+                  resumed: true,
+                },
+                resumed: true,
+                turnId: turnId,
+              };
+            }
+            return sleepMs(delay).then(once);
+          });
+      }
+
+      return once();
+    }
+
+    /**
+     * ③ 生成：优先 WebSocket 会话壳，失败回退 SSE；再断则轮询 /api/llm-turn
      */
     function postLlmChatStream(body, hooks) {
+      return postLlmChatWs(body, hooks).catch(function () {
+        return postLlmChatSse(body, hooks);
+      });
+    }
+
+    /** 轻量 WS 会话壳（无 DO）：/api/llm-session */
+    function postLlmChatWs(body, hooks) {
       hooks = hooks || {};
+      if (typeof WebSocket === "undefined") {
+        return Promise.reject(new Error("no WebSocket"));
+      }
+
+      return new Promise(function (resolve, reject) {
+        var turnId = null;
+        var phone = (body && body.phone) || "";
+        var donePayload = null;
+        var sawDelta = false;
+        var settled = false;
+        var resuming = false;
+        var proto = location.protocol === "https:" ? "wss:" : "ws:";
+        var url = proto + "//" + location.host + "/api/llm-session";
+        var ws;
+        try {
+          ws = new WebSocket(url);
+        } catch (eOpen) {
+          reject(eOpen);
+          return;
+        }
+
+        var openTimer = setTimeout(function () {
+          try {
+            ws.close();
+          } catch (e) {}
+          if (!settled) {
+            settled = true;
+            reject(new Error("ws open timeout"));
+          }
+        }, 4000);
+
+        function finish(pack) {
+          if (settled) return;
+          settled = true;
+          clearTimeout(openTimer);
+          try {
+            ws.close();
+          } catch (e2) {}
+          resolve(pack);
+        }
+
+        function maybeResume(fallbackPack) {
+          if (settled || resuming) return;
+          resuming = true;
+          if (!turnId) {
+            finish(fallbackPack);
+            return;
+          }
+          try {
+            if (ws.readyState === 1) {
+              if (hooks.onResume) hooks.onResume({ turnId: turnId });
+              ws.send(
+                JSON.stringify({
+                  type: "resume",
+                  turnId: turnId,
+                  phone: phone,
+                })
+              );
+              return;
+            }
+          } catch (eResume) {}
+          pollLlmTurn(turnId, phone, hooks).then(finish);
+        }
+
+        function dispatch(ev, data) {
+          if (ev === "keepalive" || ev === "pong") return;
+          if (ev === "meta") {
+            if (data && data.turnId) turnId = String(data.turnId);
+            if (hooks.onMeta) hooks.onMeta(data);
+          } else if (ev === "note") {
+            if (hooks.onNote && data && data.text) hooks.onNote(String(data.text));
+          } else if (ev === "delta") {
+            sawDelta = true;
+            clearThinkPulse();
+            if (hooks.onDelta) hooks.onDelta(String((data && data.text) || ""));
+          } else if (ev === "done") {
+            donePayload = data;
+            finish({
+              ok: !!donePayload.success,
+              status: donePayload.success ? 200 : 502,
+              j: donePayload,
+              streamed: true,
+              viaWs: true,
+              sawDelta: sawDelta,
+              turnId: turnId,
+              resumed: !!(donePayload && donePayload.resumed),
+            });
+          } else if (ev === "error") {
+            donePayload = {
+              success: false,
+              error: (data && data.error) || "ws error",
+            };
+            if (turnId) {
+              maybeResume({
+                ok: false,
+                status: 502,
+                j: donePayload,
+                streamed: true,
+                viaWs: true,
+                turnId: turnId,
+              });
+            } else {
+              finish({
+                ok: false,
+                status: 502,
+                j: donePayload,
+                streamed: true,
+                viaWs: true,
+              });
+            }
+          }
+        }
+
+        ws.onopen = function () {
+          clearTimeout(openTimer);
+          try {
+            ws.send(
+              JSON.stringify(
+                Object.assign({ type: "chat" }, body || {}, { stream: true })
+              )
+            );
+          } catch (eSend) {
+            if (!settled) {
+              settled = true;
+              reject(eSend);
+            }
+          }
+        };
+
+        ws.onmessage = function (ev) {
+          var raw = ev && ev.data;
+          var msg = null;
+          try {
+            msg = JSON.parse(raw);
+          } catch (eParse) {
+            return;
+          }
+          if (!msg) return;
+          dispatch(String(msg.event || ""), msg.data);
+        };
+
+        ws.onerror = function () {
+          if (settled) return;
+          if (turnId) {
+            maybeResume({
+              ok: false,
+              status: 0,
+              j: {
+                success: false,
+                error: t("WebSocket 中断", "WebSocket interrupted"),
+                turnId: turnId,
+              },
+              streamed: true,
+              viaWs: true,
+              turnId: turnId,
+            });
+          } else if (!settled) {
+            settled = true;
+            clearTimeout(openTimer);
+            reject(new Error("ws error"));
+          }
+        };
+
+        ws.onclose = function () {
+          if (settled || resuming) return;
+          if (donePayload) {
+            finish({
+              ok: !!donePayload.success,
+              status: donePayload.success ? 200 : 502,
+              j: donePayload,
+              streamed: true,
+              viaWs: true,
+              sawDelta: sawDelta,
+              turnId: turnId,
+            });
+            return;
+          }
+          if (turnId) {
+            maybeResume({
+              ok: false,
+              status: 0,
+              j: {
+                success: false,
+                error: t(
+                  "WebSocket 关闭但未收到结果",
+                  "WebSocket closed without a result"
+                ),
+                turnId: turnId,
+              },
+              streamed: true,
+              viaWs: true,
+              turnId: turnId,
+            });
+          } else if (!settled) {
+            settled = true;
+            clearTimeout(openTimer);
+            reject(new Error("ws closed early"));
+          }
+        };
+      });
+    }
+
+    /**
+     * ③ 生成：SSE 流式（WS 不可用时的回退）
+     */
+    function postLlmChatSse(body, hooks) {
+      hooks = hooks || {};
+      var turnId = null;
+      var phone = (body && body.phone) || "";
+
+      function maybeResume(fallbackPack) {
+        if (!turnId) return Promise.resolve(fallbackPack);
+        return pollLlmTurn(turnId, phone, hooks);
+      }
+
       return fetch("/api/llm-chat", {
         method: "POST",
         headers: {
@@ -2539,6 +2893,7 @@
             return;
           }
           if (ev === "meta") {
+            if (data && data.turnId) turnId = String(data.turnId);
             if (hooks.onMeta) hooks.onMeta(data);
           } else if (ev === "note") {
             if (hooks.onNote && data && data.text) hooks.onNote(String(data.text));
@@ -2573,9 +2928,10 @@
                   j: donePayload,
                   streamed: true,
                   sawDelta: sawDelta,
+                  turnId: turnId,
                 };
               }
-              return {
+              return maybeResume({
                 ok: false,
                 status: r.status || 0,
                 j: {
@@ -2584,24 +2940,29 @@
                     "流式连接结束但未收到结果",
                     "Stream ended without a result"
                   ),
+                  turnId: turnId,
                 },
                 streamed: true,
-              };
+                turnId: turnId,
+              });
             }
             return pump();
           });
         }
 
         return pump().catch(function (err) {
-          return {
+          var fallback = {
             ok: false,
             status: 0,
             j: {
               success: false,
               error: String((err && err.message) || err || "stream failed"),
+              turnId: turnId,
             },
             streamed: true,
+            turnId: turnId,
           };
+          return maybeResume(fallback);
         });
       });
     }
@@ -2625,9 +2986,35 @@
             (pipeTag || "Auto") + " · " + t("生成中", "streaming");
           renderThread();
         },
+        onResume: function () {
+          notesAcc.push(
+            t(
+              "流式中断，正在续看服务端后台结果…",
+              "Stream interrupted — resuming from server background result…"
+            )
+          );
+          messages[thinkingIdx].modelBadge =
+            (pipeTag || "Auto") + " · " + t("后台续写", "resuming");
+          if (wantPipelineTrace()) {
+            messages[thinkingIdx].modelNote = formatPipelineNote({
+              notes: notesAcc,
+            });
+          }
+          renderThread();
+        },
       }).then(function (pack) {
         var cj = (pack && pack.j) || {};
         cj.notes = mergeNotes(notesAcc, cj.notes);
+        if (pack && pack.viaWs) {
+          cj.notes = mergeNotes(cj.notes, [
+            t("③ 经 WebSocket 会话壳推送", "③ Pushed via WebSocket session shell"),
+          ]);
+        }
+        if (pack && pack.resumed) {
+          cj.notes = mergeNotes(cj.notes, [
+            t("已从服务端回合续看完成", "Resumed from server turn"),
+          ]);
+        }
         if (pack) pack.j = cj;
         return pack;
       });

@@ -27,6 +27,8 @@ agent/
 - `functions/api/llm-models.js` → re-export `agent/functions/api/llm-models.js`
 - `functions/api/llm-ping.js` → re-export `agent/functions/api/llm-ping.js`
 - `functions/api/llm-chat.js` → re-export `agent/functions/api/llm-chat.js`
+- `functions/api/llm-session.js` → re-export（轻量 WebSocket 会话壳，无 DO）
+- `functions/api/llm-turn.js` → re-export（回合续看）
 - `functions/api/ocr.js` → re-export `agent/functions/api/ocr.js`
 - `functions/api/asr.js` → re-export `agent/functions/api/asr.js`
 - `functions/api/llm-plan.js` → re-export `agent/functions/api/llm-plan.js`（失败恢复规划）
@@ -136,14 +138,15 @@ YOLOv8-Pose + OpenCV 跑在仓库 `services/pose/`（Docker，默认端口 `8093
 
 ## 失败恢复编排（Auto）
 
-现有 ①意图 → ②搜网 → ③生成 不变。**③ 生成默认走 SSE 流式**（借鉴 Cloudflare Agents SDK）：
+现有 ①意图 → ②搜网 → ③生成 不变。**③ 生成优先 WebSocket，失败回退 SSE**（借鉴 Cloudflare Agents SDK，无 Durable Object）：
 
-- 浏览器保持长连接；服务端每 ~25s 发 `: keepalive`，避免边缘空闲掐断  
-- 边生成边推 `delta`，结束发 `done`（结构同原 JSON 包）  
-- 回合进度写入 KV，可 `GET /api/llm-turn?turnId=&phone=` 续看  
+- 浏览器连 `wss://…/api/llm-session`，帧 `{ event, data }`（`meta|note|delta|done`）；约 25s keepalive  
+- 不可用时回退 `/api/llm-chat` SSE + `: keepalive`  
+- 回合进度写入 KV；客户端断开后 **`waitUntil` 后台继续跑完**，状态 `background` → `done`/`error`  
+- 断线后续看：WS `{ type: "resume", turnId }` 或 HTTP `GET /api/llm-turn?turnId=&phone=`  
 - VPS `llm-proxy` 支持 `stream=true` 透传上游 SSE  
 
-若 ③ 仍出现 HTML 502 / 软超时（少见：代理未升级或中途断流）：
+若 ③ 仍出现 HTML 502 / 软超时（少见：代理未升级或中途断流且无 turnId）：
 
 1. 前端识别墙钟失败  
 2. `POST /api/llm-recover-log`（短打点，可失败忽略）  

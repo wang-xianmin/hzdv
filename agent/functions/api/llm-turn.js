@@ -1,6 +1,6 @@
 /**
- * GET /api/llm-turn?turnId=xxx
- * 查询 SSE 生成回合进度（断线后续看 partialReply / done 结果）
+ * GET /api/llm-turn?turnId=xxx&phone=xxx
+ * 查询 SSE/WS 生成回合进度（断线后轮询 partialReply / done 结果）
  */
 import {
   assertAnyLoginAccess,
@@ -29,7 +29,7 @@ export async function onRequest(context) {
     url.searchParams.get("turnId") ||
     url.searchParams.get("id") ||
     "";
-  const phone = url.searchParams.get("phone") || "";
+  const phone = String(url.searchParams.get("phone") || "").trim();
 
   try {
     await assertAnyLoginAccess(env, phone);
@@ -43,7 +43,15 @@ export async function onRequest(context) {
 
   const turn = await loadAgentTurn(env, turnId);
   if (!turn) {
-    return jsonResponse({ success: false, error: "回合不存在或已过期", exists: false }, 404);
+    return jsonResponse(
+      { success: false, error: "回合不存在或已过期", exists: false },
+      404
+    );
+  }
+
+  const owner = String(turn.phone || "").trim();
+  if (owner && phone && owner !== phone) {
+    return jsonResponse({ success: false, error: "无权查看该回合" }, 403);
   }
 
   return jsonResponse({
