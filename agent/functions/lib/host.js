@@ -16,8 +16,3 @@ export {
   assertAnyLoginAccess,
   opsAuthErrorResponse,
 } from "../../../functions/lib/ops-auth.js";
-
-export {
-  assertTranslatorAccess,
-  translatorAuthErrorResponse,
-} from "../../../functions/lib/translator-auth.js";
