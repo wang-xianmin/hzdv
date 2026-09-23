@@ -1,12 +1,15 @@
 /**
  * POST /api/agent-qa-log
  * 企业相关问答打点（登录用户）。仅记 catalog / 企业问，不写黄金库。
+ * 落库成功后若配置了收件人，异步邮件通知（Resend；失败不影响打点）。
  *
  * Body: {
  *   phone, question, reply_text?, answer_mode?, hits?,
  *   category?, category_source?, intent_tier?, intent_catalog?,
  *   session_id?, model_badge?, locale?
  * }
+ *
+ * 通知收件人：系统设置 agentQaNotifyEmails 与/或 env AGENT_QA_NOTIFY_EMAILS
  */
 
 import { ensureAllD1Tables } from "../lib/d1-schema.js";
@@ -18,6 +21,7 @@ import {
 import {
   insertEnterpriseQa,
 } from "../lib/agent-qa-d1.js";
+import { notifyEnterpriseQaEmails } from "../lib/agent-qa-notify.js";
 import {
   detectCatalogKind,
   isCompanyCatalogQuery,
@@ -122,6 +126,26 @@ export async function onRequest(context) {
       model_badge: body.model_badge || body.modelBadge || "",
       locale: body.locale || body.lang || "",
     });
+
+    const siteOrigin = (() => {
+      try {
+        return new URL(request.url).origin;
+      } catch (e) {
+        return "";
+      }
+    })();
+    const notifyTask = notifyEnterpriseQaEmails(env, d1, row, {
+      siteOrigin,
+    }).catch((e) => {
+      console.error("[agent-qa-log] notify failed", e);
+      return null;
+    });
+    if (context.waitUntil) {
+      context.waitUntil(notifyTask);
+    } else {
+      await notifyTask;
+    }
+
     return jsonResponse({ success: true, id: row.id, qa: row });
   } catch (e) {
     return jsonResponse({ success: false, error: String(e.message || e) }, 500);

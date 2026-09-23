@@ -32,6 +32,10 @@ export async function onRequest(context) {
     has_ocr_api_key: !!env.OCR_API_KEY,
     has_encryption_key: !!env.ENCRYPTION_KEY,
     has_mail_from: !!env.MAIL_FROM,
+    has_resend_api_key: !!env.RESEND_API_KEY,
+    has_agent_qa_notify_emails: !!(
+      env.AGENT_QA_NOTIFY_EMAILS || env.AGENT_QA_NOTIFY_TO
+    ),
     has_ark_api_key: !!env.ARK_API_KEY,
     has_doubao_seed_model: !!(env.DOUBAO_SEED_MODEL || env.DOUBAO_MODEL || env.DOUBAO_LITE_MODEL),
     has_siliconflow_api_key: !!env.SILICONFLOW_API_KEY,
