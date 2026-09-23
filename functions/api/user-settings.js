@@ -43,6 +43,11 @@ const DEFAULT_SETTINGS = {
   llmRouteMode: 2,
   /** 0关 / 1模拟CN / 2模拟US（仅自动选路） */
   llmRouteDebugCountry: 0,
+  /**
+   * 企业问答新问题邮件通知：逗号/分号分隔的邮箱列表。
+   * 与 env AGENT_QA_NOTIFY_EMAILS 合并；需已配 RESEND_API_KEY。
+   */
+  agentQaNotifyEmails: "",
 };
 
 function mergeSettings(saved) {
@@ -146,7 +151,18 @@ function sanitizeIncoming(incoming) {
       2,
       base.asrMicMode
     ),
+    agentQaNotifyEmails: sanitizeEmailList(
+      incoming.agentQaNotifyEmails,
+      base.agentQaNotifyEmails
+    ),
   };
+}
+
+/** 仅保留合法邮箱字符与分隔符，最长 2000 */
+function sanitizeEmailList(v, fallback) {
+  const raw = v == null ? "" : String(v).trim();
+  if (!raw) return typeof fallback === "string" ? fallback : "";
+  return raw.replace(/[^\w.@+\-_,;\s]/g, "").slice(0, 2000);
 }
 
 export async function onRequest(context) {
