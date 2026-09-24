@@ -510,6 +510,15 @@
   font-size: 13px;
 }
 
+.ops-docs-img-btn.is-readonly {
+  cursor: default;
+  opacity: 0.85;
+}
+
+.ops-docs-img-btn {
+  touch-action: manipulation;
+}
+
 .ops-docs-cell-seq,
 .ops-docs-cell-time {
   color: #666;
@@ -582,25 +591,14 @@
   line-height: 1.2;
 }
 
-.ops-docs-del-btn {
-  width: 36px;
-  height: 36px;
-  border: 0;
-  border-radius: 999px;
-  background: #f3d6d4;
-  color: #a12622;
-  font-size: 22px;
-  line-height: 1;
-  cursor: pointer;
-  touch-action: manipulation;
-}
-
-.ops-docs-del-btn:active {
-  background: #e8b4b0;
-}
-
 .ops-docs-del-disabled {
   color: #ccc;
+}
+
+.ops-docs-cell-del .catalog-admin-del,
+.catalog-admin-cell-ops .catalog-admin-del {
+  min-width: 36px;
+  min-height: 36px;
 }
 
 .catalog-admin-btn--danger {
