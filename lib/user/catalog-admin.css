@@ -591,12 +591,29 @@
   line-height: 1.2;
 }
 
-.ops-docs-del-disabled {
-  color: #ccc;
+.ops-docs-ops {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+
+.ops-docs-dl {
+  color: #2a4a7a !important;
+}
+
+.ops-docs-dl:hover {
+  color: #1a4db3 !important;
+  background: rgba(42, 74, 122, 0.08) !important;
+}
+
+.ops-docs-dl-icon {
+  display: block;
 }
 
 .ops-docs-cell-del .catalog-admin-del,
-.catalog-admin-cell-ops .catalog-admin-del {
+.catalog-admin-cell-ops .catalog-admin-del,
+.catalog-admin-cell-ops .ops-docs-dl {
   min-width: 36px;
   min-height: 36px;
 }
