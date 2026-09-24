@@ -427,10 +427,39 @@
   background: #fff;
 }
 
-/* 发布栏 */
+/* 发布栏（手机优先 AG Grid） */
+.ops-docs-overlay {
+  padding: 0;
+  align-items: stretch;
+  justify-content: stretch;
+}
+
 .ops-docs-admin-dialog {
-  width: min(720px, 96vw);
-  height: min(780px, 92vh);
+  width: 100%;
+  max-width: 100vw;
+  height: 100%;
+  max-height: 100dvh;
+  border-radius: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+@media (min-width: 768px) {
+  .ops-docs-overlay {
+    padding: 16px;
+    align-items: center;
+    justify-content: center;
+  }
+  .ops-docs-admin-dialog {
+    width: min(960px, 96vw);
+    height: min(860px, 92vh);
+    border-radius: 10px;
+  }
+}
+
+.ops-docs-admin-dialog.is-dragover {
+  outline: 3px dashed #2f6fed;
+  outline-offset: -6px;
 }
 
 .ops-docs-upload-row {
@@ -438,68 +467,140 @@
 }
 
 .ops-docs-title-input {
-  flex: 1 1 160px;
-  min-width: 120px;
+  flex: 1 1 140px;
+  min-width: 100px;
   border: 1px solid #ccc6bb;
   border-radius: 6px;
-  padding: 6px 10px;
+  padding: 8px 10px;
   font: inherit;
+  font-size: 16px; /* 避免 iOS 聚焦放大 */
   background: #fff;
 }
 
-.ops-docs-admin-list {
+.ops-docs-drop-hint {
+  margin: 0 18px 8px;
+  font-size: 0.78rem;
+  color: #7a766c;
+}
+
+.ops-docs-grid {
   flex: 1;
-  min-height: 0;
-  margin: 0 18px 12px;
-  overflow: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.ops-docs-empty {
-  margin: 24px 0;
-  text-align: center;
-  color: #888;
-  font-size: 0.9rem;
-}
-
-.ops-docs-row {
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-  justify-content: space-between;
-  padding: 12px 14px;
-  background: #fff;
+  min-height: 220px;
+  margin: 0 10px 8px;
+  width: calc(100% - 20px);
   border: 1px solid #e2ddd3;
   border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
 }
 
-.ops-docs-row-main {
-  min-width: 0;
-  flex: 1;
+.ops-docs-grid .ag-root-wrapper {
+  border: 0;
 }
 
-.ops-docs-title {
+.ops-docs-grid .ag-header-cell-label {
+  font-size: 12px;
   font-weight: 650;
-  font-size: 0.95rem;
-  color: #1c1c1c;
-  word-break: break-word;
 }
 
-.ops-docs-meta {
-  margin-top: 4px;
-  font-size: 0.78rem;
-  color: #6a675f;
-  word-break: break-word;
-}
-
-.ops-docs-row-actions {
+.ops-docs-grid .ag-cell {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  flex-shrink: 0;
-  justify-content: flex-end;
+  align-items: center;
+  line-height: 1.25;
+  font-size: 13px;
+}
+
+.ops-docs-cell-seq,
+.ops-docs-cell-time {
+  color: #666;
+  font-variant-numeric: tabular-nums;
+}
+
+.ops-docs-cell-content {
+  padding-top: 6px !important;
+  padding-bottom: 6px !important;
+}
+
+.ops-docs-content-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 4px 0;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: #1a4db3;
+}
+
+.ops-docs-content-title {
+  font-weight: 600;
+  word-break: break-word;
+}
+
+.ops-docs-content-sub {
+  font-size: 11px;
+  color: #888;
+  word-break: break-all;
+}
+
+.ops-docs-thumb-wrap {
+  width: 56px;
+  height: 56px;
+  border-radius: 8px;
+  border: 1px dashed #cfc8bb;
+  background: #f5f3ee;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  touch-action: manipulation;
+}
+
+.ops-docs-thumb-wrap.is-editable {
+  cursor: pointer;
+  border-style: solid;
+  border-color: #b7c7e8;
+  background: #eef3fb;
+}
+
+.ops-docs-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.ops-docs-thumb-empty {
+  font-size: 10px;
+  color: #6a7a9a;
+  text-align: center;
+  padding: 2px;
+  line-height: 1.2;
+}
+
+.ops-docs-del-btn {
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 999px;
+  background: #f3d6d4;
+  color: #a12622;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.ops-docs-del-btn:active {
+  background: #e8b4b0;
+}
+
+.ops-docs-del-disabled {
+  color: #ccc;
 }
 
 .catalog-admin-btn--danger {
@@ -508,15 +609,7 @@
   color: #fff;
 }
 
-@media (max-width: 640px) {
-  .ops-docs-row {
-    flex-direction: column;
-  }
-  .ops-docs-row-actions {
-    width: 100%;
-  }
-  .ops-docs-row-actions .catalog-admin-btn {
-    flex: 1 1 auto;
-  }
+body.ops-docs-open {
+  overflow: hidden;
 }
 

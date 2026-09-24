@@ -1,5 +1,5 @@
 /**
- * 发布栏文档（D1 元数据 + R2 文件）。
+ * 发布栏（D1 元数据 + R2 文件/图形）。
  * R2 前缀：ops-docs/
  */
 
@@ -9,10 +9,12 @@ const CREATE_SQL = `
 CREATE TABLE IF NOT EXISTS ops_documents (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
+  body_text TEXT NOT NULL DEFAULT '',
   original_name TEXT NOT NULL DEFAULT '',
   content_type TEXT NOT NULL DEFAULT 'application/octet-stream',
   size_bytes INTEGER NOT NULL DEFAULT 0,
-  r2_key TEXT NOT NULL,
+  r2_key TEXT NOT NULL DEFAULT '',
+  image_r2_key TEXT NOT NULL DEFAULT '',
   publisher_phone TEXT NOT NULL,
   publisher_name TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL,
@@ -27,7 +29,7 @@ const CREATE_IDX_PUBLISHER = `
 CREATE INDEX IF NOT EXISTS idx_ops_documents_publisher
   ON ops_documents (publisher_phone, created_at DESC)`;
 
-const ALLOWED_EXT = new Set([
+const ALLOWED_DOC_EXT = new Set([
   "pdf",
   "doc",
   "docx",
@@ -44,15 +46,45 @@ const ALLOWED_EXT = new Set([
   "odp",
 ]);
 
-const MAX_BYTES = 40 * 1024 * 1024; // 40MB
+const ALLOWED_IMAGE_EXT = new Set([
+  "jpg",
+  "jpeg",
+  "png",
+  "webp",
+  "gif",
+  "heic",
+  "heif",
+]);
+
+const MAX_BYTES = 40 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 
 export function opsDocsMaxBytes() {
   return MAX_BYTES;
 }
 
+export function opsDocsMaxImageBytes() {
+  return MAX_IMAGE_BYTES;
+}
+
+async function ensureColumn(d1, col, ddlFragment) {
+  try {
+    const info = await d1.prepare(`PRAGMA table_info(ops_documents)`).all();
+    const cols = ((info && info.results) || []).map((r) =>
+      String(r.name || "").toLowerCase()
+    );
+    if (cols.indexOf(col.toLowerCase()) >= 0) return;
+    await d1.prepare(`ALTER TABLE ops_documents ADD COLUMN ${ddlFragment}`).run();
+  } catch (e) {
+    /* ignore race */
+  }
+}
+
 export async function ensureOpsDocumentsTable(d1) {
   if (!d1) throw new Error("D1 not configured");
   await d1.prepare(CREATE_SQL).run();
+  await ensureColumn(d1, "body_text", "body_text TEXT NOT NULL DEFAULT ''");
+  await ensureColumn(d1, "image_r2_key", "image_r2_key TEXT NOT NULL DEFAULT ''");
   await d1.prepare(CREATE_IDX_CREATED).run();
   await d1.prepare(CREATE_IDX_PUBLISHER).run();
 }
@@ -86,7 +118,12 @@ export function fileExt(name) {
 
 export function isAllowedOpsDocName(name) {
   const ext = fileExt(name);
-  return !!ext && ALLOWED_EXT.has(ext);
+  return !!ext && ALLOWED_DOC_EXT.has(ext);
+}
+
+export function isAllowedOpsImageName(name) {
+  const ext = fileExt(name);
+  return !!ext && ALLOWED_IMAGE_EXT.has(ext);
 }
 
 export function guessOpsDocContentType(name, fallback) {
@@ -106,6 +143,13 @@ export function guessOpsDocContentType(name, fallback) {
     odt: "application/vnd.oasis.opendocument.text",
     ods: "application/vnd.oasis.opendocument.spreadsheet",
     odp: "application/vnd.oasis.opendocument.presentation",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    png: "image/png",
+    webp: "image/webp",
+    gif: "image/gif",
+    heic: "image/heic",
+    heif: "image/heif",
   };
   if (map[ext]) return map[ext];
   const fb = String(fallback || "").trim();
@@ -122,11 +166,12 @@ export function normalizeOpsDocR2Key(raw) {
   return key;
 }
 
-export function buildOpsDocUploadKey(id, originalName) {
+export function buildOpsDocUploadKey(id, originalName, kind) {
   const safe = sanitizeFileName(originalName);
   const ext = fileExt(safe);
   const stamp = String(nowMs());
-  const leaf = ext ? `${id}_${stamp}.${ext}` : `${id}_${stamp}`;
+  const prefix = kind === "image" ? "img_" : "file_";
+  const leaf = ext ? `${prefix}${id}_${stamp}.${ext}` : `${prefix}${id}_${stamp}`;
   return OPS_DOCS_R2_PREFIX + leaf;
 }
 
@@ -135,10 +180,12 @@ function mapRow(row) {
   return {
     id: String(row.id || ""),
     title: String(row.title || ""),
+    body_text: String(row.body_text || ""),
     original_name: String(row.original_name || ""),
     content_type: String(row.content_type || ""),
     size_bytes: Number(row.size_bytes) || 0,
     r2_key: String(row.r2_key || ""),
+    image_r2_key: String(row.image_r2_key || ""),
     publisher_phone: String(row.publisher_phone || ""),
     publisher_name: String(row.publisher_name || ""),
     created_at: Number(row.created_at) || 0,
@@ -175,8 +222,9 @@ export async function insertOpsDocument(d1, fields) {
   const id = String((fields && fields.id) || newId());
   const title = String((fields && fields.title) || "").trim().slice(0, 200);
   if (!title) throw new Error("缺少 title");
-  const r2_key = normalizeOpsDocR2Key(fields && fields.r2_key);
-  if (!r2_key) throw new Error("缺少 r2_key");
+  const r2_key = normalizeOpsDocR2Key((fields && fields.r2_key) || "") || "";
+  const image_r2_key =
+    normalizeOpsDocR2Key((fields && fields.image_r2_key) || "") || "";
   const publisher_phone = String((fields && fields.publisher_phone) || "")
     .replace(/\D/g, "")
     .slice(0, 32);
@@ -185,13 +233,14 @@ export async function insertOpsDocument(d1, fields) {
   await d1
     .prepare(
       `INSERT INTO ops_documents (
-        id, title, original_name, content_type, size_bytes, r2_key,
-        publisher_phone, publisher_name, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        id, title, body_text, original_name, content_type, size_bytes, r2_key,
+        image_r2_key, publisher_phone, publisher_name, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .bind(
       id,
       title,
+      String((fields && fields.body_text) || "").slice(0, 8000),
       String((fields && fields.original_name) || "").slice(0, 240),
       String((fields && fields.content_type) || "application/octet-stream").slice(
         0,
@@ -199,11 +248,41 @@ export async function insertOpsDocument(d1, fields) {
       ),
       Number((fields && fields.size_bytes) || 0) || 0,
       r2_key,
+      image_r2_key,
       publisher_phone,
       String((fields && fields.publisher_name) || "").slice(0, 80),
       created_at,
       created_at
     )
+    .run();
+  return getOpsDocument(d1, id);
+}
+
+export async function updateOpsDocumentImage(d1, id, imageR2Key) {
+  await ensureOpsDocumentsTable(d1);
+  const doc = await getOpsDocument(d1, id);
+  if (!doc) return null;
+  const key = normalizeOpsDocR2Key(imageR2Key) || "";
+  const updated_at = nowMs();
+  await d1
+    .prepare(
+      `UPDATE ops_documents SET image_r2_key = ?, updated_at = ? WHERE id = ?`
+    )
+    .bind(key, updated_at, doc.id)
+    .run();
+  return getOpsDocument(d1, id);
+}
+
+export async function updateOpsDocumentTitle(d1, id, title) {
+  await ensureOpsDocumentsTable(d1);
+  const doc = await getOpsDocument(d1, id);
+  if (!doc) return null;
+  const t = String(title || "").trim().slice(0, 200);
+  if (!t) throw new Error("标题不能为空");
+  const updated_at = nowMs();
+  await d1
+    .prepare(`UPDATE ops_documents SET title = ?, updated_at = ? WHERE id = ?`)
+    .bind(t, updated_at, doc.id)
     .run();
   return getOpsDocument(d1, id);
 }
@@ -227,5 +306,6 @@ export function opsDocPreferInline(contentType, name) {
   if (ct.startsWith("text/") || ext === "txt" || ext === "md" || ext === "csv") {
     return true;
   }
+  if (ct.startsWith("image/")) return true;
   return false;
 }

@@ -42,6 +42,9 @@ export async function onRequest(context) {
   const url = new URL(request.url);
   const phone = url.searchParams.get("phone") || "";
   const id = String(url.searchParams.get("id") || "").trim();
+  const kind = String(url.searchParams.get("kind") || "file")
+    .trim()
+    .toLowerCase();
   let disposition = String(url.searchParams.get("disposition") || "")
     .trim()
     .toLowerCase();
@@ -73,9 +76,13 @@ export async function onRequest(context) {
     return new Response("Not Found", { status: 404 });
   }
 
-  const key = normalizeOpsDocR2Key(doc.r2_key);
+  const wantImage = kind === "image" || kind === "img" || kind === "thumb";
+  const rawKey = wantImage ? doc.image_r2_key : doc.r2_key;
+  const key = normalizeOpsDocR2Key(rawKey);
   if (!key || !key.startsWith("ops-docs/")) {
-    return new Response("Invalid key", { status: 400 });
+    return new Response(wantImage ? "No image" : "Invalid key", {
+      status: 404,
+    });
   }
 
   const r2 = pickR2Binding(env);
@@ -96,11 +103,16 @@ export async function onRequest(context) {
     return new Response("Not Found", { status: 404 });
   }
 
-  const ct =
-    doc.content_type ||
-    guessOpsDocContentType(doc.original_name || doc.title);
+  const ct = wantImage
+    ? guessOpsDocContentType(key, "image/jpeg")
+    : doc.content_type ||
+      guessOpsDocContentType(doc.original_name || doc.title);
   if (!disposition) {
-    disposition = opsDocPreferInline(ct, doc.original_name) ? "inline" : "attachment";
+    disposition = wantImage
+      ? "inline"
+      : opsDocPreferInline(ct, doc.original_name)
+        ? "inline"
+        : "attachment";
   }
   if (disposition !== "inline" && disposition !== "attachment") {
     disposition = "attachment";
