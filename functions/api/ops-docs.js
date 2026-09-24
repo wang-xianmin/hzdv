@@ -177,9 +177,64 @@ export async function onRequest(context) {
 
   if (request.method === "POST") {
     const contentType = String(request.headers.get("content-type") || "");
+
+    /* JSON：新建空行草稿 */
+    if (contentType.includes("application/json")) {
+      let body = {};
+      try {
+        body = await request.json();
+      } catch (e) {
+        return jsonResponse({ success: false, error: "Invalid JSON" }, 400);
+      }
+      try {
+        const user = await assertHeroOpsAccess(env, body.phone || "");
+        const action = String(body.action || "").trim().toLowerCase();
+        if (action !== "create_draft" && action !== "draft" && action !== "create") {
+          return jsonResponse({ success: false, error: "未知 action" }, 400);
+        }
+
+        /* 已有「标题空且无图」的未完成行 → 禁止再新增 */
+        const existing = await listOpsDocuments(d1, { limit: 100 });
+        const blocked = existing.some(
+          (row) =>
+            !String(row.title || "").trim() &&
+            !String(row.image_r2_key || "").trim()
+        );
+        if (blocked) {
+          return jsonResponse(
+            {
+              success: false,
+              error: "请先填写标题或上传图片后再新增",
+              blocked: true,
+            },
+            409
+          );
+        }
+
+        const doc = await insertOpsDocument(d1, {
+          title: "",
+          allow_empty_title: true,
+          original_name: "",
+          content_type: "application/octet-stream",
+          size_bytes: 0,
+          r2_key: "",
+          image_r2_key: "",
+          publisher_phone: user.phone,
+          publisher_name: publisherNameFromUser(user),
+        });
+        return jsonResponse({ success: true, item: doc });
+      } catch (e) {
+        if (e && e.status) return opsAuthErrorResponse(e);
+        return jsonResponse(
+          { success: false, error: String(e.message || e) },
+          500
+        );
+      }
+    }
+
     if (!contentType.includes("multipart/form-data")) {
       return jsonResponse(
-        { success: false, error: "请使用 multipart 上传" },
+        { success: false, error: "请使用 multipart 上传或 JSON 新建" },
         400
       );
     }

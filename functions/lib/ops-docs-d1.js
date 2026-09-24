@@ -220,8 +220,9 @@ export async function getOpsDocument(d1, id) {
 export async function insertOpsDocument(d1, fields) {
   await ensureOpsDocumentsTable(d1);
   const id = String((fields && fields.id) || newId());
+  const allowEmpty = !!(fields && fields.allow_empty_title);
   const title = String((fields && fields.title) || "").trim().slice(0, 200);
-  if (!title) throw new Error("缺少 title");
+  if (!title && !allowEmpty) throw new Error("缺少 title");
   const r2_key = normalizeOpsDocR2Key((fields && fields.r2_key) || "") || "";
   const image_r2_key =
     normalizeOpsDocR2Key((fields && fields.image_r2_key) || "") || "";
@@ -277,8 +278,8 @@ export async function updateOpsDocumentTitle(d1, id, title) {
   await ensureOpsDocumentsTable(d1);
   const doc = await getOpsDocument(d1, id);
   if (!doc) return null;
-  const t = String(title || "").trim().slice(0, 200);
-  if (!t) throw new Error("标题不能为空");
+  /* 允许清空标题（草稿）；非空时截断 */
+  const t = String(title == null ? "" : title).trim().slice(0, 200);
   const updated_at = nowMs();
   await d1
     .prepare(`UPDATE ops_documents SET title = ?, updated_at = ? WHERE id = ?`)

@@ -545,6 +545,17 @@
   color: #1a4db3;
 }
 
+.ops-docs-content-edit {
+  width: 100%;
+  padding: 4px 0;
+}
+
+.ops-docs-title-placeholder {
+  color: #9a958a;
+  font-weight: 500;
+  font-style: italic;
+}
+
 .ops-docs-content-title {
   font-weight: 600;
   word-break: break-word;
