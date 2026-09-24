@@ -427,7 +427,7 @@
   background: #fff;
 }
 
-/* 运维文档库 */
+/* 发布栏 */
 .ops-docs-admin-dialog {
   width: min(720px, 96vw);
   height: min(780px, 92vh);

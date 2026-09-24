@@ -1,6 +1,7 @@
 /**
  * GET /api/ops-docs-file?phone=&id=&disposition=inline|attachment
- * 鉴权后从 R2 流式输出文档（PDF/文本可 inline 手机阅读）。
+ * 发布栏：鉴权后从 R2 流式输出（PDF/文本可 inline 手机阅读）。
+ * 权限：assertHeroOpsAccess（超管 | 技术员 | 内容审核主管 | 内容审核员）
  */
 
 import { ensureAllD1Tables } from "../lib/d1-schema.js";

@@ -1,9 +1,10 @@
 /**
- * 运维文档库
+ * 发布栏（运维文档）
  *
  * GET    /api/ops-docs?phone=                 列表
  * POST   multipart: phone, title?, file       上传
  * DELETE JSON { phone, id }                   删除（发布人或超管/技术员）
+ * 权限：assertHeroOpsAccess（超管 | 技术员 | 内容审核主管 | 内容审核员）
  */
 
 import { ensureAllD1Tables } from "../lib/d1-schema.js";
