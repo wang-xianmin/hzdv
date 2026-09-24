@@ -426,3 +426,97 @@
   border-radius: 6px;
   background: #fff;
 }
+
+/* 运维文档库 */
+.ops-docs-admin-dialog {
+  width: min(720px, 96vw);
+  height: min(780px, 92vh);
+}
+
+.ops-docs-upload-row {
+  align-items: center;
+}
+
+.ops-docs-title-input {
+  flex: 1 1 160px;
+  min-width: 120px;
+  border: 1px solid #ccc6bb;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font: inherit;
+  background: #fff;
+}
+
+.ops-docs-admin-list {
+  flex: 1;
+  min-height: 0;
+  margin: 0 18px 12px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ops-docs-empty {
+  margin: 24px 0;
+  text-align: center;
+  color: #888;
+  font-size: 0.9rem;
+}
+
+.ops-docs-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 12px 14px;
+  background: #fff;
+  border: 1px solid #e2ddd3;
+  border-radius: 8px;
+}
+
+.ops-docs-row-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.ops-docs-title {
+  font-weight: 650;
+  font-size: 0.95rem;
+  color: #1c1c1c;
+  word-break: break-word;
+}
+
+.ops-docs-meta {
+  margin-top: 4px;
+  font-size: 0.78rem;
+  color: #6a675f;
+  word-break: break-word;
+}
+
+.ops-docs-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex-shrink: 0;
+  justify-content: flex-end;
+}
+
+.catalog-admin-btn--danger {
+  background: #a12622;
+  border-color: #a12622;
+  color: #fff;
+}
+
+@media (max-width: 640px) {
+  .ops-docs-row {
+    flex-direction: column;
+  }
+  .ops-docs-row-actions {
+    width: 100%;
+  }
+  .ops-docs-row-actions .catalog-admin-btn {
+    flex: 1 1 auto;
+  }
+}
+

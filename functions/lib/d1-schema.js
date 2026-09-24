@@ -7,6 +7,7 @@ import { ensureHeroBackgroundTables } from "./hero-background-d1.js";
 import { ensureCatalogTables } from "./catalog-d1.js";
 import { ensureCatalogSynonymTable } from "./catalog-synonyms.js";
 import { ensureAgentQaTables } from "./agent-qa-d1.js";
+import { ensureOpsDocumentsTable } from "./ops-docs-d1.js";
 
 export { pickD1ForDebugRegistry as pickD1Binding };
 
@@ -62,6 +63,7 @@ export const D1_TABLE_NAMES = [
   "catalog_synonyms",
   "agent_enterprise_qa",
   "agent_qa_gold",
+  "ops_documents",
 ];
 
 export async function ensureAllD1Tables(d1) {
@@ -70,6 +72,7 @@ export async function ensureAllD1Tables(d1) {
   await ensureCatalogTables(d1);
   await ensureCatalogSynonymTable(d1);
   await ensureAgentQaTables(d1);
+  await ensureOpsDocumentsTable(d1);
   await d1.prepare(USER_SETTINGS_SQL).run();
   await d1.prepare(AVATARS_SQL).run();
   await d1.prepare(AVATARS_INDEX_SQL).run();
