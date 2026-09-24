@@ -1,7 +1,7 @@
 /**
  * 运维接口鉴权。
  * - assertOpsAccess：超管 | 技术调试员（AI 模型库、系统设置等）
- * - assertHeroOpsAccess：超管 | 技术调试员 | 内容审核总负责 | 内容审核员（网站背景、产品目录、企业问答）
+ * - assertHeroOpsAccess：超管 | 技术调试员 | 内容审核总负责 | 内容审核员（网站背景、产品目录、企业问答、发布栏）
  * - assertAnyLoginAccess：任意已注册用户（KV 有记录即可；AI 对话等，不与运维绑定）
  */
 
