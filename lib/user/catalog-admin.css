@@ -479,8 +479,22 @@
 
 .ops-docs-drop-hint {
   margin: 0 18px 8px;
-  font-size: 0.78rem;
-  color: #7a766c;
+  font-size: 0.85rem;
+  color: #3a4a6a;
+  background: #eef3fb;
+  border: 1px dashed #8aa3d4;
+  border-radius: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+}
+
+.ops-docs-drop-hint:focus,
+.ops-docs-drop-hint:focus-visible {
+  border-color: #2f6fed;
+  box-shadow: 0 0 0 3px rgba(47, 111, 237, 0.25);
+  background: #e4edfb;
 }
 
 .ops-docs-grid {
