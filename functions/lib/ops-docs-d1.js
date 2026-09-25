@@ -274,6 +274,48 @@ export async function updateOpsDocumentImage(d1, id, imageR2Key) {
   return getOpsDocument(d1, id);
 }
 
+export async function updateOpsDocumentFile(d1, id, fields) {
+  await ensureOpsDocumentsTable(d1);
+  const doc = await getOpsDocument(d1, id);
+  if (!doc) return null;
+  const key = normalizeOpsDocR2Key((fields && fields.r2_key) || "") || "";
+  const updated_at = nowMs();
+  let title = String(doc.title || "").trim();
+  const incomingTitle = String((fields && fields.title) || "").trim();
+  if (incomingTitle) title = incomingTitle.slice(0, 200);
+  else if (!title && fields && fields.original_name) {
+    title = String(fields.original_name)
+      .replace(/\.[^.]+$/, "")
+      .slice(0, 200);
+  }
+  await d1
+    .prepare(
+      `UPDATE ops_documents SET
+        r2_key = ?,
+        original_name = ?,
+        content_type = ?,
+        size_bytes = ?,
+        title = CASE WHEN ? != '' THEN ? ELSE title END,
+        updated_at = ?
+       WHERE id = ?`
+    )
+    .bind(
+      key,
+      String((fields && fields.original_name) || "").slice(0, 240),
+      String((fields && fields.content_type) || "application/octet-stream").slice(
+        0,
+        120
+      ),
+      Number((fields && fields.size_bytes) || 0) || 0,
+      title,
+      title,
+      updated_at,
+      doc.id
+    )
+    .run();
+  return getOpsDocument(d1, id);
+}
+
 export async function updateOpsDocumentTitle(d1, id, title) {
   await ensureOpsDocumentsTable(d1);
   const doc = await getOpsDocument(d1, id);

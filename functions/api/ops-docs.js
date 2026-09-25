@@ -28,6 +28,7 @@ import {
   normalizeOpsDocR2Key,
   opsDocsMaxBytes,
   opsDocsMaxImageBytes,
+  updateOpsDocumentFile,
   updateOpsDocumentImage,
   updateOpsDocumentTitle,
 } from "../lib/ops-docs-d1.js";
@@ -198,13 +199,14 @@ export async function onRequest(context) {
         const blocked = existing.some(
           (row) =>
             !String(row.title || "").trim() &&
-            !String(row.image_r2_key || "").trim()
+            !String(row.image_r2_key || "").trim() &&
+            !String(row.r2_key || "").trim()
         );
         if (blocked) {
           return jsonResponse(
             {
               success: false,
-              error: "请先填写标题或上传图片后再新增",
+              error: "请先填写标题、上传图片或挂上 PDF 后再新增",
               blocked: true,
             },
             409
@@ -258,7 +260,8 @@ export async function onRequest(context) {
       );
       const action = String(form.get("action") || "").trim().toLowerCase();
       const existingId = String(form.get("id") || "").trim();
-      const isImageAction = action === "image" || !!existingId;
+      const asImageName = isAllowedOpsImageName(originalName);
+      const asDocName = isAllowedOpsDocName(originalName);
 
       const r2 = pickR2Binding(env);
       if (!r2) {
@@ -271,43 +274,93 @@ export async function onRequest(context) {
         return jsonResponse({ success: false, error: "空文件" }, 400);
       }
 
-      /* —— 给已有行挂 / 替换图形 —— */
-      if (isImageAction && existingId) {
-        if (!isAllowedOpsImageName(originalName)) {
-          return jsonResponse(
-            { success: false, error: "图形仅支持 jpg/png/webp/gif 等图片" },
-            400
-          );
-        }
-        if (size > opsDocsMaxImageBytes()) {
-          return jsonResponse(
-            { success: false, error: "图片过大（上限 12MB）" },
-            400
-          );
-        }
+      /* —— 给已有行挂 / 替换 图形或 PDF —— */
+      if (existingId) {
         const doc = await getOpsDocument(d1, existingId);
         if (!doc) {
           return jsonResponse({ success: false, error: "文档不存在" }, 404);
         }
         if (!canMutateDoc(user, doc)) {
-          return jsonResponse({ success: false, error: "无权修改图形" }, 403);
+          return jsonResponse({ success: false, error: "无权修改" }, 403);
         }
-        const ct = guessOpsDocContentType(originalName, file.type || "image/jpeg");
-        const imgKey = buildOpsDocUploadKey(doc.id, originalName, "image");
-        await putR2(r2, imgKey, buf, ct, originalName);
-        const oldKey = normalizeOpsDocR2Key(doc.image_r2_key);
-        const item = await updateOpsDocumentImage(d1, doc.id, imgKey);
-        if (oldKey && oldKey !== imgKey) {
+
+        const wantImage =
+          action === "image" || (asImageName && action !== "file");
+        if (wantImage) {
+          if (!asImageName) {
+            return jsonResponse(
+              { success: false, error: "图形仅支持 jpg/png/webp/gif 等图片" },
+              400
+            );
+          }
+          if (size > opsDocsMaxImageBytes()) {
+            return jsonResponse(
+              { success: false, error: "图片过大（上限 12MB）" },
+              400
+            );
+          }
+          const ct = guessOpsDocContentType(
+            originalName,
+            file.type || "image/jpeg"
+          );
+          const imgKey = buildOpsDocUploadKey(doc.id, originalName, "image");
+          await putR2(r2, imgKey, buf, ct, originalName);
+          const oldKey = normalizeOpsDocR2Key(doc.image_r2_key);
+          const item = await updateOpsDocumentImage(d1, doc.id, imgKey);
+          if (oldKey && oldKey !== imgKey) {
+            try {
+              await r2.delete(oldKey);
+            } catch (e2) {}
+          }
+          return jsonResponse({ success: true, item });
+        }
+
+        if (!asDocName) {
+          return jsonResponse(
+            {
+              success: false,
+              error: "附件仅支持 pdf/doc/docx 等文档",
+            },
+            400
+          );
+        }
+        if (size > opsDocsMaxBytes()) {
+          return jsonResponse(
+            {
+              success: false,
+              error:
+                "文件过大（上限 " +
+                Math.floor(opsDocsMaxBytes() / (1024 * 1024)) +
+                "MB）",
+            },
+            400
+          );
+        }
+        const ct = guessOpsDocContentType(
+          originalName,
+          file.type || "application/octet-stream"
+        );
+        const fileKey = buildOpsDocUploadKey(doc.id, originalName, "file");
+        await putR2(r2, fileKey, buf, ct, originalName);
+        const oldFile = normalizeOpsDocR2Key(doc.r2_key);
+        const item = await updateOpsDocumentFile(d1, doc.id, {
+          r2_key: fileKey,
+          original_name: originalName,
+          content_type: ct,
+          size_bytes: size,
+          title: String(form.get("title") || "").trim(),
+        });
+        if (oldFile && oldFile !== fileKey) {
           try {
-            await r2.delete(oldKey);
-          } catch (e2) {}
+            await r2.delete(oldFile);
+          } catch (e3) {}
         }
         return jsonResponse({ success: true, item });
       }
 
       /* —— 新建一行 —— */
-      const asImage = isAllowedOpsImageName(originalName);
-      const asDoc = isAllowedOpsDocName(originalName);
+      const asImage = asImageName;
+      const asDoc = asDocName;
       if (!asImage && !asDoc) {
         return jsonResponse(
           {

@@ -529,8 +529,22 @@
   opacity: 0.85;
 }
 
-.ops-docs-img-btn {
-  touch-action: manipulation;
+.ops-docs-file-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 8px;
+  background: #3d4f6f;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.ops-docs-file-badge.is-pdf {
+  background: #c02828;
 }
 
 .ops-docs-cell-seq,
