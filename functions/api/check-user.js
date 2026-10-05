@@ -12,11 +12,12 @@ import {
 } from "../lib/kv-secure.js";
 import { normalizePasswordForAuth } from "../lib/password-normalize.js";
 import { kvBindingHint, pickKvBinding } from "../lib/kv-binding.js";
+import { issueAuthToken, buildAuthCookie } from "../lib/auth-token.js";
 
-function jsonResponse(body, status = 200) {
+function jsonResponse(body, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "Content-Type": "application/json; charset=utf-8" },
+    headers: { "Content-Type": "application/json; charset=utf-8", ...extraHeaders },
   });
 }
 
@@ -94,14 +95,6 @@ export async function onRequest(context) {
       throw lastReadErr;
     }
     if (!row) {
-      const passwordDebugNoRow =
-        passwordNorm !== ""
-          ? {
-              input_len: passwordNorm.length,
-              kv_pwd_field_len: null,
-              kv_pwd_hash_field_len: null,
-            }
-          : null;
       return jsonResponse({
         success: true,
         phone_exists: false,
@@ -115,7 +108,6 @@ export async function onRequest(context) {
         user_type: 0,
         user_group: "",
         user_g_role: 0,
-        ...(passwordDebugNoRow ? { password_debug: passwordDebugNoRow } : {}),
       });
     }
 
@@ -171,33 +163,6 @@ export async function onRequest(context) {
       }
     }
 
-    /**
-     * 调试：明文 pwd、NFKC 后与输入等长、仍校验失败时，标出首个不同下标及两侧字符。
-     * 若 KV.pwd 原文长度与输入长度相同，则不附加逐位字符（调试窗约定同长不展示，减敏感面）。
-     */
-    if (
-      passwordDebug &&
-      passwordNorm &&
-      passwordMatches === false &&
-      passwordMaterialPresent &&
-      pwdRaw &&
-      pwdRaw.charAt(0) !== "$" &&
-      pwdRawNorm.length === passwordNorm.length &&
-      pwdRaw.length !== passwordNorm.length
-    ) {
-      for (let i = 0; i < passwordNorm.length; i++) {
-        if (passwordNorm.charAt(i) !== pwdRawNorm.charAt(i)) {
-          passwordDebug.first_wrong_index_0based = i;
-          passwordDebug.first_wrong_char_input = passwordNorm.charAt(i);
-          passwordDebug.first_wrong_char_kv = pwdRawNorm.charAt(i);
-          if (i < pwdRaw.length) {
-            passwordDebug.first_wrong_char_kv_raw = pwdRaw.charAt(i);
-          }
-          break;
-        }
-      }
-    }
-
     const typeRaw = String(
       meta.type != null && String(meta.type) !== "" ? meta.type : meta.uA != null ? meta.uA : ""
     ).trim();
@@ -223,6 +188,18 @@ export async function onRequest(context) {
     const avatar_data_url =
       value.avatar_data_url != null ? String(value.avatar_data_url) : "";
 
+    let authCookieHeader = null;
+    let authPayload = null;
+    if (passwordMatches === true) {
+      try {
+        const { token, exp } = await issueAuthToken(env, phone, { tv: Number(value.tv || 0) });
+        authCookieHeader = buildAuthCookie(token, 2592000);
+        authPayload = { exp };
+      } catch (tokenErr) {
+        console.error("check-user token issue:", tokenErr);
+      }
+    }
+
     return jsonResponse({
       success: true,
       phone_exists: true,
@@ -230,7 +207,7 @@ export async function onRequest(context) {
       password_verifiable: passwordNorm ? passwordMaterialPresent : null,
       /** 与 Functions 内验证实现对照；argon2id_* 时校验恒 false，需明文 pwd 或改密迁移为 kdf_sha256 */
       password_hash_format: passwordHashFormat,
-      ...(passwordDebug ? { password_debug: passwordDebug } : {}),
+      ...(passwordDebug && passwordMatches === true ? { password_debug: passwordDebug } : {}),
       user_status: userStatus,
       email_matches: emailMatches,
       username_matches: usernameMatches,
@@ -239,7 +216,7 @@ export async function onRequest(context) {
       is_superuser: isSuperuser,
       user_data: {
         other_data: value.uuid != null ? String(value.uuid) : "",
-        pwd: value.pwd != null ? String(value.pwd) : "",
+        pwd: passwordMatches === true ? String(value.pwd ?? "") : "",
         avatar_url,
         avatar_r2_key,
         avatar_data_url,
@@ -247,7 +224,8 @@ export async function onRequest(context) {
         group: userGroup,
         g_role: userGRole,
       },
-    });
+      ...(authPayload ? { auth: authPayload } : {}),
+    }, 200, authCookieHeader ? { "Set-Cookie": authCookieHeader } : {});
   } catch (e) {
     console.error("check-user:", e);
     return jsonResponse(
