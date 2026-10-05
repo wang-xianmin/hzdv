@@ -190,7 +190,7 @@ export async function onRequest(context) {
 
     let authCookieHeader = null;
     let authPayload = null;
-    if (passwordMatches === true) {
+    if (passwordMatches === true && userStatus !== 3) {
       try {
         const { token, exp } = await issueAuthToken(env, phone, { tv: Number(value.tv || 0) });
         authCookieHeader = buildAuthCookie(token, 2592000);
