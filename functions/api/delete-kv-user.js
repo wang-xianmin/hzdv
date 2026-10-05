@@ -13,9 +13,11 @@
  * 4) 删除 D1 avatars 行
  * 5) 删除组索引（group:{group}:l/m:{phone}）
  * 6) 删除主 KV 记录（phone:...）
+ * 7) 删除微信用户索引（若存在）
  */
 import { assertPhoneKey, deleteKvUser, readKvUser } from "../lib/kv-secure.js";
 import { getPhoneFromPhoneKey, removeUserGroupIndexes } from "../lib/group-index.js";
+import { deleteWxuIndex } from "../lib/wx-index.js";
 import { kvBindingHint, pickKvBinding } from "../lib/kv-binding.js";
 import { pickD1Binding, pickR2Binding } from "../lib/cloudflare-bindings.js";
 
@@ -163,6 +165,7 @@ export async function onRequest(context) {
     const uuid = String(value.uuid == null ? "" : value.uuid).trim();
     const group = String(value.group == null ? "" : value.group).trim();
     const phone = getPhoneFromPhoneKey(key);
+    const wxu = value.wxu;
 
     // ② 读取 D1 avatars 对应 r2_key（仅在显式允许删头像时执行）
     const d1 = pickD1Binding(env);
@@ -212,7 +215,16 @@ export async function onRequest(context) {
     // ⑥ 删除主 KV 记录（uk: + 旧 phone:，幂等）
     await deleteKvUser(kv, env, key);
 
-    // ⑦ 记审计（即使头像未执行删除，也记录本次调用）
+    // ⑦ 删除微信用户索引（若存在）
+    if (wxu && typeof wxu === 'string') {
+      try {
+        await deleteWxuIndex(kv, env, wxu);
+      } catch (e) {
+        console.warn('delete-kv-user delete wxu index failed:', e);
+      }
+    }
+
+    // ⑧ 记审计（即使头像未执行删除，也记录本次调用）
     try {
       await writeDeleteAuditRow(d1, {
         created_at: Date.now(),

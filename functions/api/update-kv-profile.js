@@ -80,6 +80,11 @@ export async function onRequest(context) {
     /** 与已有 KV 浅合并，避免客户端收据缺字段时覆盖掉权限等 metadata / value */
     const valueMerged = Object.assign({}, prev.value || {}, value || {});
     const metadataMerged = Object.assign({}, prev.metadata || {}, metadata || {});
+    /** wxu / wxu_type 只能由微信绑定接口写入 */
+    ["wxu", "wxu_type"].forEach((k) => {
+      if (prev.value && Object.prototype.hasOwnProperty.call(prev.value, k)) valueMerged[k] = prev.value[k];
+      else delete valueMerged[k];
+    });
     /** 已废弃：原「权限设置」列，保存时从 metadata 剔除 */
     [
       "uA_perms",
