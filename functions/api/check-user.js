@@ -200,6 +200,8 @@ export async function onRequest(context) {
       }
     }
 
+    const reveal = passwordMatches === true || emailMatches === true;
+
     return jsonResponse({
       success: true,
       phone_exists: true,
@@ -211,10 +213,10 @@ export async function onRequest(context) {
       user_status: userStatus,
       email_matches: emailMatches,
       username_matches: usernameMatches,
-      stored_email: storedEmail,
-      stored_username: storedUsername,
-      is_superuser: isSuperuser,
-      user_data: {
+      stored_email: reveal ? storedEmail : "",
+      stored_username: reveal ? storedUsername : "",
+      is_superuser: reveal ? isSuperuser : false,
+      user_data: reveal ? {
         other_data: value.uuid != null ? String(value.uuid) : "",
         pwd: passwordMatches === true ? String(value.pwd ?? "") : "",
         avatar_url,
@@ -223,6 +225,15 @@ export async function onRequest(context) {
         type: typeMask,
         group: userGroup,
         g_role: userGRole,
+      } : {
+        other_data: "",
+        pwd: "",
+        avatar_url: "",
+        avatar_r2_key: "",
+        avatar_data_url: "",
+        type: 0,
+        group: "",
+        g_role: 0,
       },
       ...(authPayload ? { auth: authPayload } : {}),
     }, 200, authCookieHeader ? { "Set-Cookie": authCookieHeader } : {});

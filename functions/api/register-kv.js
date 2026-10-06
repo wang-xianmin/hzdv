@@ -1,6 +1,6 @@
 /**
  * 新人注册写入 KV：POST /api/register-kv
- * Body: { key, value, metadata, turnstileToken? }
+ * Body: { key, value, turnstileToken? }（metadata 忽略，服务器用默认值）
  * 默认须通过 Turnstile（与 verify-turnstile 同源 siteverify）；
  * Pages 环境变量：TURNSTILE_SECRET_KEY；可选 REGISTER_KV_SKIP_TURNSTILE=1/true/yes 跳过校验（仅本地排错）。
  * KV：仅写 uk:+HMAC（禁止新用户写明文 phone:）；ENCRYPTION_KEY / HMAC_SECRET 缺失 fail-closed。
@@ -22,6 +22,16 @@ function jsonResponse(body, status = 200) {
     status,
     headers: { "Content-Type": "application/json; charset=utf-8" },
   });
+}
+
+function defaultRegisterMetadata() {
+  return {
+    status: 1, type: "00010000", superuser: "00000000", dbg_stf: "00000000",
+    cnt_mgr: "00000000", cnt_stf: "00000000", uA: "00010000", uB: "00000000", uC: "00000000",
+    uA_Tier: 4, uB_Tier: 1, uC_Tier: 1, uC_EType: 1,
+    uC_Tier_twn: "00000001", uC_Tier_cty: "00000010", uC_Tier_city: "00000100", uC_Tier_prov: "00001000",
+    uC_EType1: "00000001", uC_EType2: "00000010", uC_EType3: "00000100",
+  };
 }
 
 async function verifyTurnstileWithEnv(env, token) {
@@ -79,7 +89,6 @@ export async function onRequest(context) {
     const body = await request.json();
     const key = body.key;
     const value = body.value;
-    const metadata = body.metadata;
     if (!key || typeof key !== "string") {
       return jsonResponse({ success: false, error: "Missing key" }, 400);
     }
@@ -88,14 +97,9 @@ export async function onRequest(context) {
     } catch (e) {
       return jsonResponse({ success: false, error: String(e.message || e) }, 400);
     }
-    if (
-      typeof value !== "object" ||
-      value === null ||
-      typeof metadata !== "object" ||
-      metadata === null
-    ) {
+    if (typeof value !== "object" || value === null) {
       return jsonResponse(
-        { success: false, error: "value and metadata must be objects" },
+        { success: false, error: "value must be an object" },
         400
       );
     }
@@ -155,13 +159,17 @@ export async function onRequest(context) {
       }
     }
 
-    await writeKvUser(kv, env, key, value, metadata);
+    const valueToStore = Object.assign({}, value);
+    valueToStore.g_role = 0;
+    ["tv", "pwd_hash", "wxu", "wxu_type"].forEach((k) => delete valueToStore[k]);
+
+    await writeKvUser(kv, env, key, valueToStore, defaultRegisterMetadata());
     let indexSynced = true;
     let indexSyncWarning = "";
     try {
       const phone = getPhoneFromPhoneKey(key);
       if (phone) {
-        await upsertUserGroupIndex(kv, env, phone, value);
+        await upsertUserGroupIndex(kv, env, phone, valueToStore);
       }
     } catch (e) {
       indexSynced = false;

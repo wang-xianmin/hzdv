@@ -1,5 +1,7 @@
 /**
  * 列出 KV 中所有新人用户
+ * 须携带有效登录令牌（hz_auth）；权限见 ../lib/auth-roles.js
+ *
  * GET /api/list-kv-users           → 扫描 uk: + 旧 phone:；响应 key 仍为逻辑 phone:
  * GET /api/list-kv-users?group=67  → 走组索引 gix:（双读旧 group:）
  * 返回 { success, users: [{ key, value, metadata }] }
@@ -8,6 +10,8 @@ import {
   listKvUserStorageKeys,
   readKvUserByStorageKey,
 } from "../lib/kv-secure.js";
+import { requireAuth } from "../lib/auth-token.js";
+import { roleOf, sanitizeValueForViewer, authRequiredResponse, forbiddenResponse, deletedCallerResponse } from "../lib/auth-roles.js";
 import { kvBindingHint, pickKvBinding } from "../lib/kv-binding.js";
 import { listUsersByGroupIndex, normalizeGroup } from "../lib/group-index.js";
 
@@ -59,22 +63,51 @@ export async function onRequest(context) {
       503
     );
   }
+  const auth = await requireAuth(context);
+  if (!auth) return authRequiredResponse();
+  const caller = roleOf(auth);
+  if (caller.status === 3) return deletedCallerResponse();
+
+  if (!caller.isSuper && !caller.isDbg && !caller.isLeader) {
+    return forbiddenResponse();
+  }
 
   try {
     const url = new URL(request.url);
     const groupParam = (url.searchParams.get("group") || "").trim();
 
+    let g = "";
+    let users;
     if (groupParam) {
-      const g = normalizeGroup(groupParam);
+      g = normalizeGroup(groupParam);
       if (!g) {
         return jsonResponse({ success: false, error: "Invalid group" }, 400);
       }
-      const users = await listUsersByGroupIndex(kv, env, g);
-      return jsonResponse({ success: true, users, group: g });
+      if (!caller.isSuper && !caller.isDbg) {
+        const callerGroup = normalizeGroup(caller.group);
+        if (callerGroup !== g) {
+          return forbiddenResponse("只能查看本组成员");
+        }
+      }
+      users = await listUsersByGroupIndex(kv, env, g);
+    } else {
+      if (!caller.isSuper && !caller.isDbg && caller.isLeader) {
+        return forbiddenResponse("只能查看本组成员");
+      }
+      users = await listAll(kv, env);
     }
 
-    const users = await listAll(kv, env);
-    return jsonResponse({ success: true, users });
+    const out = [];
+    for (const u of users) {
+      const r = roleOf(u);
+      if (!caller.isSuper && r.isSuper) continue;
+      out.push({
+        key: u.key,
+        value: sanitizeValueForViewer(u.value, caller.isSuper),
+        metadata: u.metadata,
+      });
+    }
+    return jsonResponse({ success: true, users: out, ...(g ? { group: g } : {}) });
   } catch (e) {
     console.error("list-kv-users:", e);
     return jsonResponse(

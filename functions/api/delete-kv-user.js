@@ -1,5 +1,7 @@
 /**
  * 从 KV 删除指定用户（key 须为 phone: 前缀）并清理关联数据
+ * 须携带有效登录令牌（hz_auth）；权限见 ../lib/auth-roles.js
+ *
  * POST /api/delete-kv-user  Body: { key: "phone:13800138000" }
  *
  * 【数据安全】本仓库内仅此接口会删除生产环境的 D1 `avatars` 行与 R2 对象。
@@ -19,6 +21,8 @@ import { assertPhoneKey, deleteKvUser, readKvUser } from "../lib/kv-secure.js";
 import { getPhoneFromPhoneKey, removeUserGroupIndexes } from "../lib/group-index.js";
 import { deleteWxuIndex } from "../lib/wx-index.js";
 import { kvBindingHint, pickKvBinding } from "../lib/kv-binding.js";
+import { requireAuth } from "../lib/auth-token.js";
+import { roleOf, authRequiredResponse, forbiddenResponse, deletedCallerResponse } from "../lib/auth-roles.js";
 import { pickD1Binding, pickR2Binding } from "../lib/cloudflare-bindings.js";
 
 function jsonResponse(body, status = 200) {
@@ -136,6 +140,14 @@ export async function onRequest(context) {
     );
   }
 
+  const auth = await requireAuth(context);
+  if (!auth) return authRequiredResponse();
+  const caller = roleOf(auth);
+  if (caller.status === 3) return deletedCallerResponse();
+  if (!caller.isSuper && !caller.isDbg) {
+    return forbiddenResponse();
+  }
+
   try {
     const body = await request.json();
     const key = String(body && body.key != null ? body.key : "").trim();
@@ -146,6 +158,10 @@ export async function onRequest(context) {
       assertPhoneKey(key);
     } catch (e) {
       return jsonResponse({ success: false, error: String(e.message || e) }, 400);
+    }
+
+    if (key === "phone:" + auth.phone) {
+      return jsonResponse({ success: false, error: "不能删除自己" }, 400);
     }
 
     const allowAvatarDeleteEnv = envAvatarDeleteEnabled(env);
@@ -161,6 +177,10 @@ export async function onRequest(context) {
 
     // ① 读取 KV value
     const row = await readKvUser(kv, env, key);
+    if (row && !caller.isSuper && roleOf(row).isSuper) {
+      return forbiddenResponse("无权限删除超管账号");
+    }
+
     const value = row && row.value && typeof row.value === "object" ? row.value : {};
     const uuid = String(value.uuid == null ? "" : value.uuid).trim();
     const group = String(value.group == null ? "" : value.group).trim();
