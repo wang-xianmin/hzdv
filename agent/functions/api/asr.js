@@ -1,5 +1,5 @@
 /**
- * ASR 代理：浏览器 → /api/asr → VPS 上的 Python + sherpa-onnx 服务
+ * ASR 代理：浏览器 → /api/asr → VPS 上的 Python + sherpa-onnx 服务。需登录（hz_auth 令牌），未登录 401。
  *
  * 环境变量（Cloudflare Pages）：
  *   ASR_SERVICE_URL  例 http://asr.hzdv.net:8091（须域名，勿裸 IP）
@@ -11,6 +11,8 @@
  * POST JSON: { audio: "data:audio/...;base64,..." } 或纯 base64
  * GET  /api/asr → 上游 /health + 本侧 wsUrl
  */
+
+import { assertAnyLoginAccess, opsAuthErrorResponse } from "../lib/host.js";
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -91,6 +93,12 @@ async function forward(env, path, init) {
 
 export async function onRequest(context) {
   const { request, env } = context;
+
+  try {
+    await assertAnyLoginAccess(env, "", request);
+  } catch (err) {
+    return opsAuthErrorResponse(err);
+  }
 
   if (request.method === "GET") {
     const res = await forward(env, "/health", { method: "GET" });

@@ -148,7 +148,7 @@ export async function onRequest(context) {
       valueMerged.tv = newTv;
       if (isSelf) {
         try {
-          const { token, exp } = await issueAuthToken(env, auth.phone, { tv: newTv });
+          const { token, exp } = await issueAuthToken(env, auth.phone, { tv: newTv, mfa: caller.isSuper });
           newCookie = buildAuthCookie(token, 2592000);
           authPayload = { exp };
         } catch (e) {

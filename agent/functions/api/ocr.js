@@ -1,5 +1,5 @@
 /**
- * OCR 代理：浏览器 → /api/ocr → VPS 上的 Python+RapidOCR+ONNX 服务
+ * OCR 代理：浏览器 → /api/ocr → VPS 上的 Python+RapidOCR+ONNX 服务。需登录（hz_auth 令牌），未登录 401。
  *
  * 环境变量（Cloudflare Pages）：
  *   OCR_SERVICE_URL  例 https://ocr.example.com 或 http://x.x.x.x:8089
@@ -8,6 +8,8 @@
  * POST multipart: file=<image>
  * POST JSON: { image: "data:image/...;base64,..." } 或纯 base64
  */
+
+import { assertAnyLoginAccess, opsAuthErrorResponse } from "../lib/host.js";
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -74,6 +76,12 @@ async function forward(env, path, init) {
 
 export async function onRequest(context) {
   const { request, env } = context;
+
+  try {
+    await assertAnyLoginAccess(env, "", request);
+  } catch (err) {
+    return opsAuthErrorResponse(err);
+  }
 
   if (request.method === "GET") {
     // 健康检查代理

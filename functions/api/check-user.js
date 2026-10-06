@@ -12,7 +12,7 @@ import {
 } from "../lib/kv-secure.js";
 import { normalizePasswordForAuth } from "../lib/password-normalize.js";
 import { kvBindingHint, pickKvBinding } from "../lib/kv-binding.js";
-import { issueAuthToken, buildAuthCookie } from "../lib/auth-token.js";
+import { issueAuthToken, buildAuthCookie, superFactorStep } from "../lib/auth-token.js";
 
 function jsonResponse(body, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(body), {
@@ -190,11 +190,20 @@ export async function onRequest(context) {
 
     let authCookieHeader = null;
     let authPayload = null;
+    let superPending = false;
     if (passwordMatches === true && userStatus !== 3) {
       try {
-        const { token, exp } = await issueAuthToken(env, phone, { tv: Number(value.tv || 0) });
-        authCookieHeader = buildAuthCookie(token, 2592000);
-        authPayload = { exp };
+        const tv = Number(value.tv || 0);
+        if (isSuperuser) {
+          const step = await superFactorStep(env, request, phone, tv, "a");
+          authCookieHeader = step.cookie;
+          authPayload = step.full ? { exp: step.exp } : null;
+          superPending = !step.full;
+        } else {
+          const { token, exp } = await issueAuthToken(env, phone, { tv });
+          authCookieHeader = buildAuthCookie(token, 2592000);
+          authPayload = { exp };
+        }
       } catch (tokenErr) {
         console.error("check-user token issue:", tokenErr);
       }
@@ -236,6 +245,7 @@ export async function onRequest(context) {
         g_role: 0,
       },
       ...(authPayload ? { auth: authPayload } : {}),
+      ...(superPending ? { super_pending: true } : {}),
     }, 200, authCookieHeader ? { "Set-Cookie": authCookieHeader } : {});
   } catch (e) {
     console.error("check-user:", e);

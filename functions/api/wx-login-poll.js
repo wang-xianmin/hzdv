@@ -4,7 +4,7 @@
 import { pickKvBinding } from '../lib/kv-binding.js';
 import { readKvUser, decryptKvInner } from '../lib/kv-secure.js';
 import { readWxuIndex } from '../lib/wx-index.js';
-import { issueAuthToken, buildAuthCookie } from '../lib/auth-token.js';
+import { issueAuthToken, buildAuthCookie, superFactorStep } from '../lib/auth-token.js';
 import { pickWxScanD1, getWxScan, deleteWxScan } from '../lib/wx-scan-d1.js';
 
 function json(body, status = 200) {
@@ -200,7 +200,7 @@ export async function onRequest(context) {
     } else {
       typeMask = parseInt(typeRaw, 10) || 0;
     }
-    const isSuperuser = (typeMask & 1) !== 0; // 超管：微信只算第一步，第二步由前端相机扫码完成
+    const isSuperuser = (typeMask & 1) !== 0; // 超管：微信只算第一步（因素 a），完整令牌要等相机扫码也完成
 
     // 删除登录记录（成功后）
     try {
@@ -211,12 +211,19 @@ export async function onRequest(context) {
     }
     
     // 签发令牌
-    let token, exp;
+    let authCookie, exp = null, superPending = false;
     try {
       const tv = Number(value.tv || 0);
-      const issued = await issueAuthToken(env, idx.phone, { tv });
-      token = issued.token;
-      exp = issued.exp;
+      if (isSuperuser) {
+        const step = await superFactorStep(env, context.request, idx.phone, tv, 'a');
+        authCookie = step.cookie;
+        exp = step.full ? step.exp : null;
+        superPending = !step.full;
+      } else {
+        const issued = await issueAuthToken(env, idx.phone, { tv });
+        authCookie = buildAuthCookie(issued.token, 2592000);
+        exp = issued.exp;
+      }
     } catch (tokenErr) {
       console.error('issueAuthToken failed:', tokenErr.message);
       return json({ success: false, error: 'token_error' }, 500);
@@ -254,11 +261,12 @@ export async function onRequest(context) {
         group: value.group != null ? String(value.group) : '',
         g_role: Number(value.g_role) === 1 ? 1 : 0
       },
-      auth: { exp }
+      ...(exp ? { auth: { exp } } : {}),
+      ...(superPending ? { super_pending: true } : {})
     });
     
     // 设置两个 Cookie
-    response.headers.append('Set-Cookie', buildAuthCookie(token, 2592000));
+    response.headers.append('Set-Cookie', authCookie);
     response.headers.append('Set-Cookie',
       'hz_wxl=; Path=/api/wx-login-poll; Max-Age=0; HttpOnly; Secure; SameSite=Lax'
     );

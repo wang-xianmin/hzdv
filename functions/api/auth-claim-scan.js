@@ -2,16 +2,16 @@
  * 扫码登录令牌领取端点：POST /api/auth-claim-scan
  * Body: { nonce: string, phone: string }
  * 返回：
- * - 200 { success: true, auth: { exp } } + Set-Cookie
+ * - 200 { success: true, auth?: { exp }, super_pending? } + Set-Cookie
  * - 400 { success: false, error: "invalid_input" }
- * - 403 { success: false, error: "invalid_session"|"not_confirmed"|"phone_mismatch"|"session_expired"|"already_claimed"|"user_not_found"|"user_deleted"|"password_required" }
+ * - 403 { success: false, error: "invalid_session"|"not_confirmed"|"phone_mismatch"|"session_expired"|"already_claimed"|"user_not_found"|"user_deleted" }
  * - 405 { success: false, error: "method_not_allowed" }
  * - 500 { success: false, error: "kv_error"|"token_error"|"internal_error" }
  * - 503 { success: false, error: "kv_unavailable" }
  */
 import { pickKvBinding } from "../lib/kv-binding.js";
 import { readKvUser } from "../lib/kv-secure.js";
-import { issueAuthToken, buildAuthCookie } from "../lib/auth-token.js";
+import { issueAuthToken, buildAuthCookie, superFactorStep } from "../lib/auth-token.js";
 
 function jsonResponse(body, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(body), {
@@ -149,7 +149,7 @@ export async function onRequest(context) {
     return jsonResponse({ success: false, error: "user_deleted" }, 403);
   }
 
-  // 检查是否需要密码（超管判断）
+  // 超管：相机扫码算因素 b
   const typeRaw = String(
     meta.type != null && String(meta.type) !== "" ? meta.type : meta.uA != null ? meta.uA : ""
   ).trim();
@@ -160,10 +160,6 @@ export async function onRequest(context) {
     typeMask = parseInt(typeRaw, 10) || 0;
   }
   const isSuperuser = (typeMask & 1) !== 0;
-  if (isSuperuser) {
-    return jsonResponse({ success: false, error: "password_required" }, 403);
-  }
-
   // 标记已领取（防重放）
   const updatedSession = { ...session, tokenClaimed: true };
   try {
@@ -174,21 +170,26 @@ export async function onRequest(context) {
   }
 
   // 签发令牌
-  let token, exp;
+  let authCookieHeader, exp = null, superPending = false;
   try {
     const tv = Number((userRow.value || {}).tv || 0);
-    const issued = await issueAuthToken(env, phoneStr, { tv });
-    token = issued.token;
-    exp = issued.exp;
+    if (isSuperuser) {
+      const step = await superFactorStep(env, request, phoneStr, tv, "b");
+      authCookieHeader = step.cookie;
+      exp = step.full ? step.exp : null;
+      superPending = !step.full;
+    } else {
+      const issued = await issueAuthToken(env, phoneStr, { tv });
+      authCookieHeader = buildAuthCookie(issued.token, 2592000);
+      exp = issued.exp;
+    }
   } catch (tokenErr) {
     console.error("auth-claim-scan: issueAuthToken failed:", tokenErr);
     return jsonResponse({ success: false, error: "token_error" }, 500);
   }
 
-  // 成功响应
-  const authCookieHeader = buildAuthCookie(token, 2592000);
   return jsonResponse(
-    { success: true, auth: { exp } },
+    { success: true, ...(exp ? { auth: { exp } } : {}), ...(superPending ? { super_pending: true } : {}) },
     200,
     { "Set-Cookie": authCookieHeader }
   );

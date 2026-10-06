@@ -3,6 +3,7 @@
  */
 import { hmacHex, readKvUser } from './kv-secure.js';
 import { pickKvBinding } from './kv-binding.js';
+import { roleOf } from './auth-roles.js';
 
 const DEFAULT_TTL_SEC = 2592000; // 30天
 
@@ -56,9 +57,10 @@ function base64UrlDecode(str) {
  * @param {object} options
  * @param {number} options.tv 令牌版本，默认 0
  * @param {number} options.ttlSec 令牌有效期（秒），默认 2592000
+ * @param {boolean} options.mfa 超管已完成两步
  * @returns {Promise<{ token: string, exp: number }>}
  */
-export async function issueAuthToken(env, phone, { tv = 0, ttlSec = DEFAULT_TTL_SEC } = {}) {
+export async function issueAuthToken(env, phone, { tv = 0, ttlSec = DEFAULT_TTL_SEC, mfa = false } = {}) {
   const now = Math.floor(Date.now() / 1000);
   const exp = now + ttlSec;
   const payload = {
@@ -67,6 +69,7 @@ export async function issueAuthToken(env, phone, { tv = 0, ttlSec = DEFAULT_TTL_
     exp,
     tv,
   };
+  if (mfa) payload.m = 1;
   const payloadJson = JSON.stringify(payload);
   const payloadBytes = new TextEncoder().encode(payloadJson);
   const payloadB64 = base64UrlEncode(payloadBytes);
@@ -81,7 +84,7 @@ export async function issueAuthToken(env, phone, { tv = 0, ttlSec = DEFAULT_TTL_
  * 验证令牌
  * @param {any} env
  * @param {string} token
- * @returns {Promise<{ phone: string, iat: number, exp: number, tv: number } | null>}
+ * @returns {Promise<{ phone: string, iat: number, exp: number, tv: number, mfa: boolean } | null>}
  */
 export async function verifyAuthToken(env, token) {
   if (typeof token !== 'string') return null;
@@ -131,7 +134,7 @@ export async function verifyAuthToken(env, token) {
   const now = Math.floor(Date.now() / 1000);
   if (exp <= now) return null;
   
-  return { phone: p, iat, exp, tv };
+  return { phone: p, iat, exp, tv, mfa: payload.m === 1 };
 }
 
 /**
@@ -195,7 +198,7 @@ export async function requireAuth(context) {
   const verified = await verifyAuthToken(env, token);
   if (!verified) return null;
   
-  const { phone, exp, tv } = verified;
+  const { phone, exp, tv, mfa } = verified;
   const kv = pickKvBinding(env);
   if (!kv) return null;
   
@@ -203,14 +206,69 @@ export async function requireAuth(context) {
     const row = await readKvUser(kv, env, 'phone:' + phone);
     if (!row) return null;
     if (Number((row.value || {}).tv || 0) !== tv) return null;
+    if (roleOf(row).isSuper && !mfa) return null;
     return {
       phone,
       value: row.value || {},
       metadata: row.metadata || {},
       exp,
+      mfa,
     };
   } catch {
     // fail-closed: 任何异常都返回 null
     return null;
   }
+}
+
+const MFA_TTL_SEC = 600;
+
+/** 超管半程凭证 Cookie（只完成一步时下发，单独不能当令牌用） */
+export function buildMfaCookie(proof, maxAge = MFA_TTL_SEC) {
+  return `hz_mfa=${proof}; Path=/api; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
+}
+
+function readCookie(request, name) {
+  const header = request && request.headers ? request.headers.get('Cookie') : null;
+  if (!header) return null;
+  for (const c of header.split(';')) {
+    const s = c.trim();
+    if (s.startsWith(name + '=')) return s.slice(name.length + 1) || null;
+  }
+  return null;
+}
+
+async function issueMfaProof(env, phone, tv, factor) {
+  const payload = { p: phone, f: factor, tv, exp: Math.floor(Date.now() / 1000) + MFA_TTL_SEC };
+  const b64 = base64UrlEncode(new TextEncoder().encode(JSON.stringify(payload)));
+  const sig = await hmacHex(env, 'auth-mfa:v1:' + b64);
+  return 'm1.' + b64 + '.' + sig;
+}
+
+async function verifyMfaProof(env, proof) {
+  if (typeof proof !== 'string') return null;
+  const parts = proof.split('.');
+  if (parts.length !== 3 || parts[0] !== 'm1') return null;
+  let expected;
+  try { expected = await hmacHex(env, 'auth-mfa:v1:' + parts[1]); } catch { return null; }
+  if (!constantTimeEqual(parts[2], expected)) return null;
+  let payload;
+  try { payload = JSON.parse(new TextDecoder().decode(base64UrlDecode(parts[1]))); } catch { return null; }
+  if (!payload || typeof payload.p !== 'string' || (payload.f !== 'a' && payload.f !== 'b')) return null;
+  if (typeof payload.tv !== 'number' || typeof payload.exp !== 'number') return null;
+  if (payload.exp <= Math.floor(Date.now() / 1000)) return null;
+  return payload;
+}
+
+/**
+ * 超管登录完成一步：本浏览器已有另一类因素的半程凭证（同手机号、同 tv）→ 签完整令牌；否则下发本因素的半程凭证。
+ * factor: "a" = 密码或微信，"b" = 相机扫码。tv 由调用方传入（调用方已读过用户记录）。
+ */
+export async function superFactorStep(env, request, phone, tv, factor) {
+  const prev = await verifyMfaProof(env, readCookie(request, 'hz_mfa'));
+  if (prev && prev.p === phone && prev.tv === tv && prev.f !== factor) {
+    const { token, exp } = await issueAuthToken(env, phone, { tv, mfa: true });
+    return { full: true, exp, cookie: buildAuthCookie(token) };
+  }
+  const proof = await issueMfaProof(env, phone, tv, factor);
+  return { full: false, cookie: buildMfaCookie(proof) };
 }
