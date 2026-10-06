@@ -23,8 +23,8 @@ const DEFAULT_SETTINGS = {
   ocrVisionMaxPages: 6,
   pdfVisionMaxPages: 6,
   pdfRenderDpi: 120,
-  /** 1=聊天区显示 OCR 开发者预览；0=不展开 */
-  ocrShowDevPreview: 1,
+  /** 1=聊天区显示 OCR 开发者预览；0=不展开（默认，结果只给 LLM） */
+  ocrShowDevPreview: 0,
   /** 1=OCR 随下一条消息送 LLM；0=不送 */
   ocrSendToLlm: 1,
   /** 0整段离线 SenseVoice / 1客户端VAD+SenseVoice / 2服务端 SenseVoice+VAD 模拟流式 */

@@ -50,12 +50,12 @@
     if (!isNaN(n) && n >= 500) OCR_PREVIEW_CHARS = n;
   }
 
-  /** 1=聊天区显示 OCR 开发者预览；默认开 */
+  /** 1=聊天区显示 OCR 开发者预览；默认关（结果面向 LLM/Agent） */
   function isOcrShowDevPreview() {
     var s = getOcrSystemSettings();
-    if (!s || s.ocrShowDevPreview == null) return true;
+    if (!s || s.ocrShowDevPreview == null) return false;
     var n = parseInt(s.ocrShowDevPreview, 10);
-    return n !== 0;
+    return n === 1;
   }
 
   /** 1=OCR 随下一条消息送 LLM；默认开 */
@@ -1169,14 +1169,10 @@
     }
 
     if (isPdf) {
-      out.push(en ? "\nExtracted text (preview):" : "\n提取文本（预览）：");
-      out.push(
-        en
-          ? "(Tables: merged cells expanded; multi-line cells joined. Flat LLM form under [表格·扁平·供LLM].)"
-          : "（表格已展开合并单元格、拼接格内多行；扁平版见 [表格·扁平·供LLM]）"
-      );
-      out.push(String(data.text).slice(0, OCR_PREVIEW_CHARS));
-      if (String(data.text).length > OCR_PREVIEW_CHARS) {
+      out.push(en ? "\nText for LLM:" : "\n送模文本：");
+      var pdfLlm = String(data.text_llm || data.text || "").trim();
+      out.push(pdfLlm.slice(0, OCR_PREVIEW_CHARS));
+      if (pdfLlm.length > OCR_PREVIEW_CHARS) {
         out.push(en ? "\n… truncated" : "\n… 已截断");
       }
       return out.join("\n");
@@ -1356,25 +1352,15 @@
                 : "仅开发者预览——不会随下一条消息送 LLM。",
             mono: true,
           });
-        } else if (sendToLlm && pendingOcr) {
-          appendAssistant(
-            en
-              ? "[OCR ready · LLM only]\nResult will ride with your next message. Dev preview is off in System settings."
-              : "【OCR 已就绪 · 仅送 LLM】\n结果会随你的下一条消息送模型。开发者预览已在系统设置中关闭。",
-            {
-              modelBadge: badge,
-              modelNote: ocrRoutingNote(data, en),
-              mono: true,
-            }
-          );
         } else if (!sendToLlm) {
           appendAssistant(
             en
-              ? "[OCR done]\nNot shown in chat and not sent to LLM (both toggles off / send off)."
-              : "【OCR 完成】\n未在聊天区展开，也未送 LLM（请在系统设置「OCR输出」调整）。",
+              ? "[OCR done]\nNot shown in chat and not sent to LLM (send-to-LLM is off)."
+              : "【OCR 完成】\n未在聊天区展开，也未送 LLM（请在系统设置「OCR输出」打开送LLM）。",
             { modelBadge: badge, mono: true }
           );
         }
+        // showDev 关 + sendToLlm 开：不往聊天区灌人读报告，只挂 pendingOcr 给下一条消息
       })
       .catch(function (err) {
         if (err && err.name === "AbortError") return;

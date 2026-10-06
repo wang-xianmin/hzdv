@@ -1098,19 +1098,25 @@ def image_lines_to_llm_text(lines: list[dict[str, Any]]) -> str:
             grid = [[r[i] for i in keep] for r in grid]
             headers = [f"列{i + 1}" for i in range(len(keep))]
             # 若首行像表头且格数齐，可直接当内容行（GitHub 顶栏也当一行）
-            md = ["| " + " | ".join(headers) + " |", "| " + " | ".join("---" for _ in headers) + " |"]
+            md = [
+                "[表格]",
+                "| " + " | ".join(headers) + " |",
+                "| " + " | ".join("---" for _ in headers) + " |",
+            ]
             for r in grid:
                 if any(r):
                     md.append("| " + " | ".join(c or " " for c in r) + " |")
-            flat = ["[表格·扁平·供LLM]"]
+            md.append("")
+            md.append("记录明细：")
             for ri, r in enumerate(grid):
                 if not any(r):
                     continue
-                flat.append(f"记录{ri + 1}：")
-                for ci, c in enumerate(r):
-                    if c:
-                        flat.append(f"  - {headers[ci]}: {c}")
-            return "\n".join(md) + "\n\n" + "\n".join(flat)
+                pairs = [
+                    f"{headers[ci]}={c}" for ci, c in enumerate(r) if c
+                ]
+                if pairs:
+                    md.append(f"{ri + 1}. " + " | ".join(pairs))
+            return "\n".join(md)
 
     # 非稳定表格：同行按 x 间距决定「拼格」还是「分列」
     out_lines: list[str] = []
@@ -1770,15 +1776,8 @@ def _normalize_table_matrix(rows: list[list[Any]] | None) -> list[list[str]]:
     return _drop_empty_columns(_forward_fill_merged(merged))
 
 
-def _table_to_display_text(matrix: list[list[str]]) -> str:
-    """人读预览：制表符分列（已展开合并、已合并格内多行）。"""
-    if not matrix:
-        return ""
-    return "\n".join("\t".join(r) for r in matrix)
-
-
 def _table_to_flat_text(matrix: list[list[str]]) -> str:
-    """供文本 LLM：Markdown 表 + 每行 key=value 备份（合并格已摊平）。"""
+    """供文本 LLM/Agent：Markdown 表 + 每行 key=value 备份（合并格已摊平）。"""
     if not matrix:
         return ""
     header = matrix[0]
@@ -1809,26 +1808,18 @@ def _table_to_flat_text(matrix: list[list[str]]) -> str:
 
 
 def _format_table_block(rows: list[list[Any]] | None) -> tuple[str, str]:
-    """返回 (预览完整块, 仅扁平供LLM)。"""
+    """返回 (text, text_llm)。二者均面向 LLM/Agent，不再夹带人读制表符双份。"""
     matrix = _normalize_table_matrix(rows)
     if not matrix:
         return "", ""
-    display = _table_to_display_text(matrix)
-    flat = _table_to_flat_text(matrix)
-    preview = (
-        "[表格]\n"
-        + display
-        + "\n\n[表格·扁平·供LLM]\n"
-        + flat
-    )
-    llm = "[表格]\n" + flat
-    return preview, llm
+    block = "[表格]\n" + _table_to_flat_text(matrix)
+    return block, block
 
 
 def _table_to_text(rows: list[list[Any]]) -> str:
-    """兼容旧调用：返回规范化后的预览表格块。"""
-    preview, _ = _format_table_block(rows)
-    return preview
+    """兼容旧调用：返回面向 LLM 的表格块。"""
+    block, _ = _format_table_block(rows)
+    return block
 
 
 _LIST_ROW_RE = re.compile(
@@ -1944,14 +1935,14 @@ def _extract_page_visual_order(page: Any) -> tuple[str, str, list[dict[str, Any]
     正文用 pdfplumber 按垂直条带 crop 后 extract_text，避免中英混排
     因基线差被拆成两行、再按 y 排序把中文挤到英文后面。
 
-    返回 (preview_text, llm_text, page_lines, table_count)。
+    返回 (text, text_llm, page_lines, table_count)；二者均面向 LLM/Agent。
     """
     page_width = float(page.width)
     page_height = float(page.height)
 
     found = _find_page_tables(page)
     table_items: list[tuple[float, float, float, float, str, str]] = []
-    # (top, x0, bottom, x1, preview_body, llm_body)
+    # (top, x0, bottom, x1, body, llm_body) — body 与 llm 同为 Agent 文本
     for t in found:
         try:
             rows = t.extract()
@@ -2033,26 +2024,20 @@ def _extract_page_visual_order(page: Any) -> tuple[str, str, list[dict[str, Any]
         ]
         return raw, raw, page_lines, 0
 
-    preview_parts: list[str] = []
     llm_parts: list[str] = []
     page_lines: list[dict[str, Any]] = []
     table_count = 0
-    for _top, kind, preview_text, llm_text in bands:
-        preview_parts.append(preview_text)
+    for _top, kind, _preview_text, llm_text in bands:
         llm_parts.append(llm_text)
         if kind == "table":
             table_count += 1
-        for ln in preview_text.splitlines():
+        for ln in llm_text.splitlines():
             s = ln.strip()
             if s:
                 page_lines.append({"text": s, "score": 1.0, "box": None, "kind": kind})
 
-    return (
-        "\n".join(preview_parts).strip(),
-        "\n".join(llm_parts).strip(),
-        page_lines,
-        table_count,
-    )
+    joined = "\n".join(llm_parts).strip()
+    return (joined, joined, page_lines, table_count)
 
 
 def _score_pdf_page_complexity(
@@ -2195,9 +2180,9 @@ def run_pdf_bytes(data: bytes) -> dict[str, Any]:
                     pages_out.append(
                         {
                             "page": i + 1,
-                            "text": page_text,
-                            "text_llm": page_llm,
-                            "chars": len(page_text),
+                            "text": page_llm or page_text,
+                            "text_llm": page_llm or page_text,
+                            "chars": len(page_llm or page_text),
                             "tables": n_tables,
                             "complex": score["complex"],
                             "needs_vision": score["needs_vision"],
@@ -2207,10 +2192,10 @@ def run_pdf_bytes(data: bytes) -> dict[str, Any]:
                             "image_mime": None,
                         }
                     )
-                    if page_text:
-                        texts.append(f"--- page {i + 1} ---\n{page_text}")
-                    if page_llm:
-                        texts_llm.append(f"--- page {i + 1} ---\n{page_llm}")
+                    body = page_llm or page_text
+                    if body:
+                        texts.append(f"--- page {i + 1} ---\n{body}")
+                        texts_llm.append(f"--- page {i + 1} ---\n{body}")
                     for ln in page_lines:
                         lines.append({**ln, "page": i + 1})
                 page_count = len(pdf.pages)
@@ -2290,8 +2275,8 @@ def run_pdf_bytes(data: bytes) -> dict[str, Any]:
                 rs.append("page_render")
             pages_out[idx]["reasons"] = rs
 
-    full_text = "\n\n".join(texts).strip()
-    full_text_llm = "\n\n".join(texts_llm).strip() or full_text
+    full_text = "\n\n".join(texts_llm).strip() or "\n\n".join(texts).strip()
+    full_text_llm = full_text
     body_chars = sum(len((p.get("text") or "").strip()) for p in pages_out)
     vision_pages = [int(p["page"]) for p in pages_out if p.get("image_base64")]
     any_complex = any(bool(p.get("complex")) for p in pages_out)
@@ -2396,15 +2381,15 @@ def run_ocr_bytes(data: bytes) -> dict[str, Any]:
     except Exception as eSp:
         print("[ocr] latin space repair failed:", eSp)
 
-    # 预览用：保持引擎原始行序；送模用：阅读顺序整理后的纯文本
-    full_text = "\n".join(str(ln["text"]) for ln in lines).strip()
-    text_llm = image_lines_to_llm_text(lines) or full_text
+    # text / text_llm 均面向 LLM/Agent（阅读顺序）；原始框仍在 lines 里
+    raw_text = "\n".join(str(ln["text"]) for ln in lines).strip()
+    text_llm = image_lines_to_llm_text(lines) or raw_text
     img_h, img_w = int(arr.shape[0]), int(arr.shape[1])
     out = {
         "success": True,
         "source": "image",
         "engine": "rapidocr",
-        "text": full_text,
+        "text": text_llm,
         "text_llm": text_llm,
         "lines": lines,
         "line_count": len(lines),
