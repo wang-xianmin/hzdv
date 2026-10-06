@@ -325,6 +325,10 @@
     max-width: 100%;
 }
 
+.lreg-root .register-qr-wrap img[hidden] {
+    display: none;
+}
+
 .lreg-root .register-qr-hint {
     color: #999;
     font-size: 11px;
