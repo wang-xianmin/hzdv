@@ -66,6 +66,11 @@
   border: 1px solid #b2f2bb;
 }
 
+.lreg-root .register-login-status.is-error.is-emphasis {
+  background: #fff5f5;
+  border-color: #ffc9c9;
+}
+
 .lreg-root .register-split-inner--single .register-col-form {
   width: 100%;
   min-width: 0;
