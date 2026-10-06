@@ -200,11 +200,8 @@ export async function onRequest(context) {
     } else {
       typeMask = parseInt(typeRaw, 10) || 0;
     }
-    const isSuperuser = (typeMask & 1) !== 0;
-    if (isSuperuser) {
-      return json({ status: 'password_required' });
-    }
-    
+    const isSuperuser = (typeMask & 1) !== 0; // 超管：微信只算第一步，第二步由前端相机扫码完成
+
     // 删除登录记录（成功后）
     try {
       await kv.delete(loginKey);
@@ -246,7 +243,7 @@ export async function onRequest(context) {
       stored_username: value.name != null ? String(value.name) : '',
       stored_email: value.email != null ? String(value.email) : '',
       user_status: userStatus,
-      is_superuser: false,
+      is_superuser: isSuperuser,
       user_data: {
         other_data: value.uuid != null ? String(value.uuid) : '',
         pwd: '',
