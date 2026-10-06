@@ -1,4 +1,5 @@
 import { pickKvBinding } from "../lib/kv-binding.js";
+import { pickWxScanD1, markWxScanned } from "../lib/wx-scan-d1.js";
 
 function safeEqual(a, b) {
   if (a.length !== b.length) return false;
@@ -93,6 +94,7 @@ export async function onRequest(context) {
 
     if (openid && scene && /^[A-Za-z0-9_-]{1,64}$/.test(scene)) {
       const kv = pickKvBinding(env);
+      // KV 写入（如可用）
       if (kv) {
         const kvKey = "wxscan:" + scene;
         const kvValue = JSON.stringify({
@@ -106,6 +108,21 @@ export async function onRequest(context) {
           context.waitUntil(job);
         } else {
           job.catch(() => {});
+        }
+      }
+      // D1 写入（独立于 KV 可用性）
+      const d1 = pickWxScanD1(env);
+      if (d1) {
+        const job2 = markWxScanned(d1, {
+          scene,
+          wxu: openid,
+          event: Event,
+          now: Date.now(),
+        }).catch(() => console.error("wx-mp-callback d1 update failed"));
+        if (typeof context.waitUntil === "function") {
+          context.waitUntil(job2);
+        } else {
+          job2.catch(() => {});
         }
       }
     }

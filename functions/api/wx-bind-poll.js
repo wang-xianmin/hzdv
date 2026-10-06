@@ -6,6 +6,7 @@
  */
 import { requireAuth } from '../lib/auth-token.js';
 import { pickKvBinding } from '../lib/kv-binding.js';
+import { pickWxScanD1, getWxScan, deleteWxScan } from '../lib/wx-scan-d1.js';
 import { readKvUser, writeKvUser, decryptKvInner } from '../lib/kv-secure.js';
 import { readWxuIndex, writeWxuIndex, deleteWxuIndex } from '../lib/wx-index.js';
 
@@ -46,48 +47,88 @@ export async function onRequest(context) {
       return json({ success: false, error: 'invalid_scene' }, 400);
     }
     
+    const confirm = body.confirm === true;
     const me = auth.phone;
     const bindKey = `wxbind:${scene}`;
+    const scanKey = `wxscan:${scene}`;
+    let openid = null;
+    let d1 = null;
     
-    // 读取绑定记录
-    const bindEnc = await kv.get(bindKey);
-    if (!bindEnc) {
-      return json({ status: 'expired' });
+    // D1 优先分支
+    try {
+      d1 = pickWxScanD1(env);
+      if (d1) {
+        const row = await getWxScan(d1, scene, Date.now());
+        if (row) {
+          if (row.expired) {
+            return json({ status: 'expired' });
+          }
+          if (row.phone !== me) {
+            return json({ success: false, code: 'FORBIDDEN' }, 403);
+          }
+          if (row.wxu) {
+            openid = row.wxu;
+          } else {
+            const scanEnc = await kv.get(scanKey);
+            let scanData = null;
+            try { scanData = scanEnc ? JSON.parse(scanEnc) : null; } catch { scanData = null; }
+            if (!scanData || typeof scanData.openid !== 'string' || !scanData.openid) {
+              return json({ status: 'waiting' });
+            }
+            openid = scanData.openid;
+          }
+        }
+      }
+    } catch (d1Err) {
+      console.warn('wx-bind-poll d1 read failed, fallback to kv:', d1Err);
+      d1 = null;
     }
     
-    let bindData;
-    try {
-      const inner = await decryptKvInner(env, bindEnc);
-      if (!inner || typeof inner !== 'object') {
+    if (!openid) {
+      // 读取绑定记录
+      const bindEnc = await kv.get(bindKey);
+      if (!bindEnc) {
         return json({ status: 'expired' });
       }
-      bindData = inner;
-    } catch {
-      return json({ status: 'expired' });
+      
+      let bindData;
+      try {
+        const inner = await decryptKvInner(env, bindEnc);
+        if (!inner || typeof inner !== 'object') {
+          return json({ status: 'expired' });
+        }
+        bindData = inner;
+      } catch {
+        return json({ status: 'expired' });
+      }
+      
+      if (bindData.phone !== me) {
+        return json({ success: false, code: 'FORBIDDEN' }, 403);
+      }
+      
+      // 检查扫码事件
+      const scanEnc = await kv.get(scanKey);
+      if (!scanEnc) {
+        return json({ status: 'waiting' });
+      }
+      
+      let scanData;
+      try {
+        scanData = JSON.parse(scanEnc);
+      } catch {
+        // 格式错误当作未扫码
+        return json({ status: 'waiting' });
+      }
+      
+      openid = scanData.openid;
+      if (!openid || typeof openid !== 'string') {
+        return json({ status: 'waiting' });
+      }
     }
     
-    if (bindData.phone !== me) {
-      return json({ success: false, code: 'FORBIDDEN' }, 403);
-    }
-    
-    // 检查扫码事件
-    const scanKey = `wxscan:${scene}`;
-    const scanEnc = await kv.get(scanKey);
-    if (!scanEnc) {
-      return json({ status: 'waiting' });
-    }
-    
-    let scanData;
-    try {
-      scanData = JSON.parse(scanEnc);
-    } catch {
-      // 格式错误当作未扫码
-      return json({ status: 'waiting' });
-    }
-    
-    const openid = scanData.openid;
-    if (!openid || typeof openid !== 'string') {
-      return json({ status: 'waiting' });
+    // 拿到 openid 后，非确认请求只返回 scanned
+    if (!confirm) {
+      return json({ status: 'scanned' });
     }
     
     // 查重
@@ -190,7 +231,8 @@ export async function onRequest(context) {
     try {
       await Promise.all([
         kv.delete(bindKey),
-        kv.delete(scanKey)
+        kv.delete(scanKey),
+        d1 ? deleteWxScan(d1, scene).catch(() => {}) : Promise.resolve()
       ]);
     } catch (e) {
       console.warn('cleanup temp keys failed:', e);

@@ -3,6 +3,7 @@
  */
 import { requireAuth } from '../lib/auth-token.js';
 import { pickKvBinding } from '../lib/kv-binding.js';
+import { pickWxScanD1, createWxScan } from '../lib/wx-scan-d1.js';
 import { encryptKvInner, requireOpaqueWriteSecrets } from '../lib/kv-secure.js';
 import { createTempQr } from '../lib/wx-mp.js';
 
@@ -56,6 +57,16 @@ export async function onRequest(context) {
     });
     
     await kv.put(`wxbind:${scene}`, bindValue, { expirationTtl: 300 });
+    
+    // D1 写入（失败仅警告，KV 路径兜底）
+    const d1 = pickWxScanD1(env);
+    if (d1) {
+      try {
+        await createWxScan(d1, { scene, phone: auth.phone, now: Date.now() });
+      } catch (err) {
+        console.warn('wx-bind-start d1 insert failed:', err);
+      }
+    }
     
     // 创建二维码
     const qrResult = await createTempQr(env, kv, scene, 300);
