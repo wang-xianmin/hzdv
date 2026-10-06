@@ -1206,7 +1206,7 @@ export async function onRequest(context) {
 
   /** 与「系统运维」解耦：任意已注册用户即可对话（暂不按 type 收紧） */
   try {
-    await assertAnyLoginAccess(env, body.phone || "");
+    body.phone = (await assertAnyLoginAccess(env, body.phone || "", request)).phone;
   } catch (err) {
     return opsAuthErrorResponse(err);
   }

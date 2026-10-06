@@ -3,6 +3,8 @@ import {
   rebuildGroupIndexesForGroup,
 } from "../lib/group-index.js";
 import { kvBindingHint, pickKvBinding } from "../lib/kv-binding.js";
+import { requireAuth } from "../lib/auth-token.js";
+import { roleOf, authRequiredResponse, forbiddenResponse, deletedCallerResponse } from "../lib/auth-roles.js";
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -29,6 +31,13 @@ export async function onRequest(context) {
   }
 
   try {
+    const auth = await requireAuth(context);
+    if (!auth) return authRequiredResponse();
+    const caller = roleOf(auth);
+    if (caller.status === 3) return deletedCallerResponse();
+    if (!caller.isSuper && !caller.isDbg) {
+      return forbiddenResponse();
+    }
     let body = {};
     try {
       const text = await request.text();

@@ -55,7 +55,7 @@ export async function onRequest(context) {
 
   let user;
   try {
-    user = await assertHeroOpsAccess(env, phone);
+    user = await assertHeroOpsAccess(env, phone, request);
   } catch (e) {
     return opsAuthErrorResponse(e);
   }

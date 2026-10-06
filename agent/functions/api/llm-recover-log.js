@@ -33,7 +33,7 @@ export async function onRequest(context) {
   }
 
   try {
-    await assertAnyLoginAccess(env, body.phone || "");
+    body.phone = (await assertAnyLoginAccess(env, body.phone || "", request)).phone;
   } catch (err) {
     return opsAuthErrorResponse(err);
   }

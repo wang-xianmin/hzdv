@@ -59,15 +59,15 @@ async function deliverHandleResult(sink, out) {
   }
 }
 
-async function resumeTurn(env, sink, turnId, phone, waitUntil) {
+async function resumeTurn(env, sink, turnId, phone, waitUntil, request) {
   const id = String(turnId || "").trim();
-  const ph = String(phone || "").trim();
+  let ph = String(phone || "").trim();
   if (!id) {
     sink.send("error", { error: "缺少 turnId" });
     return;
   }
   try {
-    await assertAnyLoginAccess(env, ph);
+    ph = (await assertAnyLoginAccess(env, ph, request)).phone;
   } catch (err) {
     sink.send("error", {
       error: String((err && err.message) || "auth failed"),
@@ -198,7 +198,8 @@ function bindSession(context, server) {
             sink,
             msg.turnId || msg.id,
             msg.phone,
-            waitUntil
+            waitUntil,
+            request
           );
           return;
         }
@@ -211,7 +212,7 @@ function bindSession(context, server) {
         delete body.body;
 
         try {
-          await assertAnyLoginAccess(env, body.phone || "");
+          body.phone = (await assertAnyLoginAccess(env, body.phone || "", request)).phone;
         } catch (err) {
           const res = opsAuthErrorResponse(err);
           await deliverHandleResult(sink, res);

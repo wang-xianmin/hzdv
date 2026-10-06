@@ -3,10 +3,12 @@
  * PUT /api/user-settings  body: { user_id, settings: { ... } }
  *
  * 系统参数：约定 user_id = "__system__"（全局一份 JSON）。
- * 调试阶段不鉴权，正式上线后仅超级用户可写。
+ * PUT 需登录：__system__ 仅超管/技术调试员，其它 user_id 仅本人。
  */
 
 import { pickD1ForDebugRegistry } from "../lib/debug-issue-registry-d1.js";
+import { requireAuth } from "../lib/auth-token.js";
+import { roleOf, authRequiredResponse, forbiddenResponse, deletedCallerResponse } from "../lib/auth-roles.js";
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -200,6 +202,13 @@ export async function onRequest(context) {
     var userId = String(body && body.user_id ? body.user_id : "").trim();
     if (!userId) {
       return jsonResponse({ success: false, error: "Missing user_id" }, 400);
+    }
+    var auth = await requireAuth(context);
+    if (!auth) return authRequiredResponse();
+    var caller = roleOf(auth);
+    if (caller.status === 3) return deletedCallerResponse();
+    if (userId === "__system__" ? !(caller.isSuper || caller.isDbg) : userId !== auth.phone) {
+      return forbiddenResponse();
     }
     var incoming = body && body.settings && typeof body.settings === "object" ? body.settings : {};
 

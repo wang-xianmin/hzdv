@@ -57,7 +57,7 @@ export async function onRequest(context) {
 
   try {
     if (request.method === "GET") {
-      await assertOpsAccess(env, phoneOf(request, null));
+      await assertOpsAccess(env, phoneOf(request, null), request);
       const { rules, seeded, updatedAt } = await loadWebsearchRefineRules(kv);
       return jsonResponse({
         success: true,
@@ -70,7 +70,7 @@ export async function onRequest(context) {
     if (request.method === "PUT") {
       const body = await readJson(request);
       if (!body) return jsonResponse({ success: false, error: "Invalid JSON" }, 400);
-      await assertOpsAccess(env, phoneOf(request, body));
+      await assertOpsAccess(env, phoneOf(request, body), request);
       const saved = await saveWebsearchRefineRules(kv, body.rules || []);
       return jsonResponse({
         success: true,
@@ -82,7 +82,7 @@ export async function onRequest(context) {
     if (request.method === "POST") {
       const body = await readJson(request);
       if (!body) return jsonResponse({ success: false, error: "Invalid JSON" }, 400);
-      await assertOpsAccess(env, phoneOf(request, body));
+      await assertOpsAccess(env, phoneOf(request, body), request);
       const action = String(body.action || "").trim();
       const loaded = await loadWebsearchRefineRules(kv);
       let list = loaded.rules.slice();

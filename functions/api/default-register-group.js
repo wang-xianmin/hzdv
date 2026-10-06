@@ -1,4 +1,6 @@
 import { kvBindingHint, pickKvBinding } from "../lib/kv-binding.js";
+import { requireAuth } from "../lib/auth-token.js";
+import { roleOf, authRequiredResponse, forbiddenResponse, deletedCallerResponse } from "../lib/auth-roles.js";
 
 /**
  * 全站新人默认组（无邀请链接时使用），存于 KV，与浏览器/账号设备无关。
@@ -54,6 +56,13 @@ export async function onRequest(context) {
 
     if (request.method === "POST") {
       const body = await request.json().catch(() => ({}));
+      const auth = await requireAuth(context);
+      if (!auth) return authRequiredResponse();
+      const caller = roleOf(auth);
+      if (caller.status === 3) return deletedCallerResponse();
+      if (!caller.isSuper && !caller.isDbg) {
+        return forbiddenResponse();
+      }
       const groupRaw = body && body.group != null ? body.group : "";
       const g = sanitizeGroup(groupRaw);
       if (!g) {

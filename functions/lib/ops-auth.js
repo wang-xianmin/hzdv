@@ -1,12 +1,13 @@
 /**
  * 运维接口鉴权。
+ * 身份以 hz_auth 令牌为准（第 2b 步），客户端 phone 不参与认人。
  * - assertOpsAccess：超管 | 技术调试员（AI 模型库、系统设置等）
  * - assertHeroOpsAccess：超管 | 技术调试员 | 内容审核总负责 | 内容审核员（网站背景、产品目录、企业问答、发布栏）
  * - assertAnyLoginAccess：任意已注册用户（KV 有记录即可；AI 对话等，不与运维绑定）
  */
 
-import { readKvUser } from "./kv-secure.js";
-import { pickKvBinding } from "./kv-binding.js";
+import { requireAuth } from "./auth-token.js";
+import { roleOf } from "./auth-roles.js";
 
 const MASK_SUPER = 0x01;
 const MASK_DBG = 0x02;
@@ -21,90 +22,66 @@ const OPS_HERO_MASK = OPS_FULL_MASK | MASK_CNT_MGR | MASK_CNT_STF;
 /** 正式收紧：不再对任意登录开放 */
 const OPS_TEMP_OPEN_TO_ANY_LOGIN = false;
 
-function parseTypeMask(raw) {
-  const text = String(raw == null ? "" : raw).trim();
-  if (!text) return 0;
-  if (/^[01]+$/.test(text)) return parseInt(text, 2) || 0;
-  const n = Number(text);
-  return Number.isFinite(n) ? n >>> 0 : 0;
+function opsAuthError(status, code, message) {
+  const err = new Error(message);
+  err.status = status;
+  err.code = code;
+  return err;
 }
 
-function normalizePhoneDigits(phone) {
-  return String(phone || "").replace(/\D/g, "");
-}
-
-async function loadOpsUser(env, phone) {
-  const digits = normalizePhoneDigits(phone);
-  if (!digits) {
-    const err = new Error("Missing phone");
-    err.status = 400;
-    throw err;
-  }
-  const kv = pickKvBinding(env);
-  if (!kv) {
-    const err = new Error("KV not configured");
-    err.status = 503;
-    throw err;
-  }
-  const row = await readKvUser(kv, env, `phone:${digits}`);
-  if (!row || !row.metadata) {
-    const err = new Error("User not found");
-    err.status = 404;
-    throw err;
-  }
-  const typeMask = parseTypeMask(row.metadata.type);
-  const gRole =
-    row.value && row.value.g_role != null && Number(row.value.g_role) === 1
-      ? 1
-      : 0;
+async function loadOpsUser(env, _phone, request) {
+  if (!request) throw opsAuthError(401, "AUTH_REQUIRED", "登录已过期，请重新登录");
+  const auth = await requireAuth({ request, env });
+  if (!auth) throw opsAuthError(401, "AUTH_REQUIRED", "登录已过期，请重新登录");
+  const role = roleOf(auth);
+  if (role.status === 3) throw opsAuthError(403, "USER_DELETED", "你已被注销，请联系系统管理员！");
   return {
-    phone: digits,
-    metadata: row.metadata,
-    value: row.value,
-    typeMask,
-    gRole,
+    phone: auth.phone,
+    metadata: auth.metadata,
+    value: auth.value,
+    typeMask: role.typeMask,
+    gRole: role.isLeader ? 1 : 0,
   };
 }
 
 function denyIfNeeded(user, allowMask) {
   if (OPS_TEMP_OPEN_TO_ANY_LOGIN) return user;
   if ((user.typeMask & allowMask) === 0) {
-    const err = new Error("Forbidden");
-    err.status = 403;
-    throw err;
+    throw opsAuthError(403, "FORBIDDEN", "无权限");
   }
   return user;
 }
 
 /** 超管 | 技术调试员 */
-export async function assertOpsAccess(env, phone) {
-  const user = await loadOpsUser(env, phone);
+export async function assertOpsAccess(env, phone, request) {
+  const user = await loadOpsUser(env, phone, request);
   return denyIfNeeded(user, OPS_FULL_MASK);
 }
 
 /** 超管 | 技术调试员 | 内容审核岗（网站背景） */
-export async function assertHeroOpsAccess(env, phone) {
-  const user = await loadOpsUser(env, phone);
+export async function assertHeroOpsAccess(env, phone, request) {
+  const user = await loadOpsUser(env, phone, request);
   return denyIfNeeded(user, OPS_HERO_MASK);
 }
 
 /** 产品目录：与网站背景同权 */
-export async function assertCatalogOpsAccess(env, phone) {
-  return assertHeroOpsAccess(env, phone);
+export async function assertCatalogOpsAccess(env, phone, request) {
+  return assertHeroOpsAccess(env, phone, request);
 }
 
 /**
  * 任意已登录/已注册用户（不查 type / g_role）。
  * 用于 AI 助手对话等与「系统运维」解耦的接口。
  */
-export async function assertAnyLoginAccess(env, phone) {
-  return loadOpsUser(env, phone);
+export async function assertAnyLoginAccess(env, phone, request) {
+  return loadOpsUser(env, phone, request);
 }
 
 export function opsAuthErrorResponse(err) {
   const status = err && err.status ? err.status : 500;
   const message = String((err && err.message) || err || "unknown error");
-  return new Response(JSON.stringify({ success: false, error: message }), {
+  const body = err && err.code ? { success: false, code: err.code, error: message } : { success: false, error: message };
+  return new Response(JSON.stringify(body), {
     status,
     headers: { "Content-Type": "application/json; charset=utf-8" },
   });

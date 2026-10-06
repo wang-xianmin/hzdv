@@ -66,7 +66,7 @@ export async function onRequest(context) {
 
   if (request.method === "GET") {
     try {
-      await assertCatalogOpsAccess(env, phoneFromUrl(request));
+      await assertCatalogOpsAccess(env, phoneFromUrl(request), request);
       const view = new URL(request.url).searchParams.get("view") || "";
       if (view === "synonyms") {
         const synonyms = await listCatalogSynonyms(d1);
@@ -83,7 +83,7 @@ export async function onRequest(context) {
     const body = await readJsonBody(request);
     if (!body) return jsonResponse({ success: false, error: "Invalid JSON" }, 400);
     try {
-      await assertCatalogOpsAccess(env, body.phone);
+      await assertCatalogOpsAccess(env, body.phone, request);
       if (body.action === "save_synonyms") {
         const synonyms = await saveCatalogSynonyms(d1, body.synonyms || body.rows);
         return jsonResponse({
@@ -116,7 +116,7 @@ export async function onRequest(context) {
     const body = await readJsonBody(request);
     if (!body) return jsonResponse({ success: false, error: "Invalid JSON" }, 400);
     try {
-      await assertCatalogOpsAccess(env, body.phone);
+      await assertCatalogOpsAccess(env, body.phone, request);
       const r2 = pickR2Binding(env);
       if (body.action === "delete_media" || body.media_id) {
         const result = await deleteCatalogMedia(d1, r2, body.media_id);
@@ -150,7 +150,7 @@ export async function onRequest(context) {
     try {
       const form = await request.formData();
       const phone = form.get("phone");
-      await assertCatalogOpsAccess(env, phone);
+      await assertCatalogOpsAccess(env, phone, request);
       const itemId = String(form.get("item_id") || "").trim();
       if (!itemId) {
         return jsonResponse({ success: false, error: "缺少 item_id" }, 400);
@@ -198,7 +198,7 @@ export async function onRequest(context) {
     );
   }
   try {
-    await assertCatalogOpsAccess(env, body.phone);
+    await assertCatalogOpsAccess(env, body.phone, request);
     if (body.action === "create" || !body.action) {
       const item = await createCatalogItem(d1, body);
       return jsonResponse({ success: true, item });

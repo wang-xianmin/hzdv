@@ -94,7 +94,7 @@ export async function onRequest(context) {
 
   if (request.method === "GET") {
     try {
-      await assertHeroOpsAccess(env, phoneFromUrl(request));
+      await assertHeroOpsAccess(env, phoneFromUrl(request), request);
       const config = await getHeroBackgroundConfig(d1);
       const items = await listAllHeroBackgroundItems(d1, env);
       return jsonResponse({ success: true, config, items });
@@ -107,7 +107,7 @@ export async function onRequest(context) {
     const body = await readJsonBody(request);
     if (!body) return jsonResponse({ success: false, error: "Invalid JSON" }, 400);
     try {
-      await assertHeroOpsAccess(env, body.phone);
+      await assertHeroOpsAccess(env, body.phone, request);
       const config = await saveHeroBackgroundConfig(d1, body.config || {});
       return jsonResponse({ success: true, config });
     } catch (e) {
@@ -121,7 +121,7 @@ export async function onRequest(context) {
     const id = Number(body.id);
     if (!id) return jsonResponse({ success: false, error: "Missing id" }, 400);
     try {
-      await assertHeroOpsAccess(env, body.phone);
+      await assertHeroOpsAccess(env, body.phone, request);
       const item = await updateHeroBackgroundItem(d1, env, id, body);
       if (!item) return jsonResponse({ success: false, error: "Not found" }, 404);
       return jsonResponse({ success: true, item });
@@ -136,7 +136,7 @@ export async function onRequest(context) {
     const id = Number(body.id);
     if (!id) return jsonResponse({ success: false, error: "Missing id" }, 400);
     try {
-      await assertHeroOpsAccess(env, body.phone);
+      await assertHeroOpsAccess(env, body.phone, request);
       const r2Del = pickR2Binding(env);
       const ok = await deleteHeroBackgroundItem(d1, id, r2Del);
       return jsonResponse({ success: ok });
@@ -155,7 +155,7 @@ export async function onRequest(context) {
       const body = await readJsonBody(request);
       if (!body) return jsonResponse({ success: false, error: "Invalid JSON" }, 400);
       try {
-        const auth = await assertHeroOpsAccess(env, body.phone);
+        const auth = await assertHeroOpsAccess(env, body.phone, request);
         if (body.action === "move") {
           const moveId = Number(body.id);
           if (!moveId) {
@@ -214,7 +214,7 @@ export async function onRequest(context) {
       if (!file || typeof file === "string") {
         return jsonResponse({ success: false, error: "Missing file" }, 400);
       }
-      await assertHeroOpsAccess(env, phone);
+      const upAuth = await assertHeroOpsAccess(env, phone, request);
       const filename = file.name || "upload.bin";
       const mediaType =
         String(form.get("media_type") || "").trim() || guessHeroMediaType(filename);
@@ -324,7 +324,7 @@ export async function onRequest(context) {
         cta_label: form.get("cta_label"),
         cta_url: form.get("cta_url"),
         duration_ms: form.get("duration_ms"),
-        created_by: String(phone || "").replace(/\D/g, ""),
+        created_by: upAuth.phone,
       });
       return jsonResponse({ success: true, item, r2_key: normalizeHeroR2Key(r2Key) });
     } catch (e) {

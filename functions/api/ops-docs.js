@@ -96,7 +96,7 @@ export async function onRequest(context) {
 
   if (request.method === "GET") {
     try {
-      await assertHeroOpsAccess(env, phoneFromUrl(request));
+      await assertHeroOpsAccess(env, phoneFromUrl(request), request);
       const items = await listOpsDocuments(d1, { limit: 100 });
       return jsonResponse({ success: true, items });
     } catch (e) {
@@ -112,7 +112,7 @@ export async function onRequest(context) {
       return jsonResponse({ success: false, error: "Invalid JSON" }, 400);
     }
     try {
-      const user = await assertHeroOpsAccess(env, body.phone || "");
+      const user = await assertHeroOpsAccess(env, body.phone || "", request);
       const id = String(body.id || "").trim();
       if (!id) return jsonResponse({ success: false, error: "缺少 id" }, 400);
       const doc = await getOpsDocument(d1, id);
@@ -139,7 +139,7 @@ export async function onRequest(context) {
       return jsonResponse({ success: false, error: "Invalid JSON" }, 400);
     }
     try {
-      const user = await assertHeroOpsAccess(env, body.phone || "");
+      const user = await assertHeroOpsAccess(env, body.phone || "", request);
       const id = String(body.id || "").trim();
       if (!id) {
         return jsonResponse({ success: false, error: "缺少 id" }, 400);
@@ -188,7 +188,7 @@ export async function onRequest(context) {
         return jsonResponse({ success: false, error: "Invalid JSON" }, 400);
       }
       try {
-        const user = await assertHeroOpsAccess(env, body.phone || "");
+        const user = await assertHeroOpsAccess(env, body.phone || "", request);
         const action = String(body.action || "").trim().toLowerCase();
         if (action !== "create_draft" && action !== "draft" && action !== "create") {
           return jsonResponse({ success: false, error: "未知 action" }, 400);
@@ -250,7 +250,7 @@ export async function onRequest(context) {
 
     try {
       const phone = String(form.get("phone") || "").trim();
-      const user = await assertHeroOpsAccess(env, phone);
+      const user = await assertHeroOpsAccess(env, phone, request);
       const file = form.get("file");
       if (!file || typeof file.arrayBuffer !== "function") {
         return jsonResponse({ success: false, error: "缺少 file" }, 400);

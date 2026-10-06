@@ -30,9 +30,10 @@ export async function onRequest(context) {
     url.searchParams.get("id") ||
     "";
   const phone = String(url.searchParams.get("phone") || "").trim();
+  let authPhone = "";
 
   try {
-    await assertAnyLoginAccess(env, phone);
+    authPhone = (await assertAnyLoginAccess(env, phone, request)).phone;
   } catch (err) {
     return opsAuthErrorResponse(err);
   }
@@ -50,7 +51,7 @@ export async function onRequest(context) {
   }
 
   const owner = String(turn.phone || "").trim();
-  if (owner && phone && owner !== phone) {
+  if (owner && owner !== authPhone) {
     return jsonResponse({ success: false, error: "无权查看该回合" }, 403);
   }
 

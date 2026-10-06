@@ -75,7 +75,7 @@ export async function onRequest(context) {
 
   if (request.method === "GET") {
     try {
-      await assertCatalogOpsAccess(env, phoneFromUrl(request));
+      await assertCatalogOpsAccess(env, phoneFromUrl(request), request);
       const url = new URL(request.url);
       const view = url.searchParams.get("view") || "logs";
       const limit = Number(url.searchParams.get("limit")) || 50;
@@ -113,7 +113,7 @@ export async function onRequest(context) {
   }
 
   try {
-    await assertCatalogOpsAccess(env, body.phone || "");
+    await assertCatalogOpsAccess(env, body.phone || "", request);
   } catch (e) {
     return opsAuthErrorResponse(e);
   }

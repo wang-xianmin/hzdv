@@ -70,7 +70,7 @@ export async function onRequest(context) {
   }
 
   try {
-    await assertOpsAccess(env, body.phone || "");
+    await assertOpsAccess(env, body.phone || "", request);
   } catch (err) {
     return opsAuthErrorResponse(err);
   }

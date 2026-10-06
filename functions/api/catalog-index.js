@@ -57,7 +57,7 @@ export async function onRequest(context) {
 
   if (request.method === "GET") {
     try {
-      await assertCatalogOpsAccess(env, phoneFromUrl(request));
+      await assertCatalogOpsAccess(env, phoneFromUrl(request), request);
       return jsonResponse({
         success: true,
         model: CATALOG_EMBED_MODEL,
@@ -80,7 +80,7 @@ export async function onRequest(context) {
   if (!body) return jsonResponse({ success: false, error: "Invalid JSON" }, 400);
 
   try {
-    await assertCatalogOpsAccess(env, body.phone);
+    await assertCatalogOpsAccess(env, body.phone, request);
     const action = String(body.action || "reindex").trim();
 
     if (action === "query") {

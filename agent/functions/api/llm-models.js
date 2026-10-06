@@ -61,7 +61,7 @@ export async function onRequest(context) {
       const admin = url.searchParams.get("admin") === "1";
       const { models, seeded, migrated, updatedAt } = await loadLlmModels(kv, env);
       if (admin) {
-        await assertOpsAccess(env, phoneOf(request, null));
+        await assertOpsAccess(env, phoneOf(request, null), request);
         return jsonResponse({
           success: true,
           models,
@@ -81,7 +81,7 @@ export async function onRequest(context) {
     if (request.method === "PUT") {
       const body = await readJson(request);
       if (!body) return jsonResponse({ success: false, error: "Invalid JSON" }, 400);
-      await assertOpsAccess(env, phoneOf(request, body));
+      await assertOpsAccess(env, phoneOf(request, body), request);
       const saved = await saveLlmModels(kv, body.models || []);
       return jsonResponse({ success: true, models: saved.models, updatedAt: saved.updatedAt });
     }
@@ -89,7 +89,7 @@ export async function onRequest(context) {
     if (request.method === "POST") {
       const body = await readJson(request);
       if (!body) return jsonResponse({ success: false, error: "Invalid JSON" }, 400);
-      await assertOpsAccess(env, phoneOf(request, body));
+      await assertOpsAccess(env, phoneOf(request, body), request);
       const action = String(body.action || "").trim();
       const loaded = await loadLlmModels(kv, env);
       let list = loaded.models.slice();
