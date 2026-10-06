@@ -54,6 +54,18 @@
   color: #c92a2a;
 }
 
+.lreg-root .register-login-status.is-emphasis {
+  margin-top: 12px;
+  padding: 10px 12px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.5;
+  text-align: center;
+  border-radius: 8px;
+  background: #ebfbee;
+  border: 1px solid #b2f2bb;
+}
+
 .lreg-root .register-split-inner--single .register-col-form {
   width: 100%;
   min-width: 0;
