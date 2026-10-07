@@ -6,7 +6,7 @@ import { getMpAccessToken, ACCESS_TOKEN_KEY } from "./wx-mp.js";
 import { listKvUserStorageKeys, readKvUserByStorageKey } from "./kv-secure.js";
 import { roleOf } from "./auth-roles.js";
 
-export const WX_NOTIFY_TEMPLATE_ID_DEFAULT = "zSUI1qodJYh4QJfb8Fs8JQg1vmNQAivpRJ-XZKWbZRk";
+export const WX_NOTIFY_TEMPLATE_ID_DEFAULT = "uJJfsDsMiUSzPv8tn8pxOozm29AR3Y9gBlzWd2JJ9So";
 export const USER_TYPE_UA = 0x10;
 export const UA_TIER_DEV_TEAM = 1;
 const NOTIFY_LINK = "https://hzdv.net/";
