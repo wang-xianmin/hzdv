@@ -6,6 +6,7 @@
  *   { phone, action: "save", id, review_status?, corrected_*? }
  *   { phone, action: "publish", id, question_canonical?, question_variants?, answer_kind? }
  *   { phone, action: "unpublish", gold_id }
+ *   { phone, action: "delete", id }
  */
 
 import { ensureAllD1Tables } from "../lib/d1-schema.js";
@@ -16,6 +17,7 @@ import {
 } from "../lib/ops-auth.js";
 import {
   getEnterpriseQa,
+  deleteEnterpriseQa,
   getQaGold,
   listEnterpriseQa,
   listQaGold,
@@ -197,6 +199,14 @@ export async function onRequest(context) {
         }
       }
       return jsonResponse({ success: true, gold, vector });
+    }
+
+    if (action === "delete") {
+      const id = String(body.id || "").trim();
+      if (!id) return jsonResponse({ success: false, error: "缺少 id" }, 400);
+      const deleted = await deleteEnterpriseQa(d1, id);
+      if (!deleted) return jsonResponse({ success: false, error: "未找到" }, 404);
+      return jsonResponse({ success: true, deleted });
     }
 
     if (action === "get") {

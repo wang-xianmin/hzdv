@@ -203,6 +203,15 @@ export async function getEnterpriseQa(d1, id) {
   return row ? mapQaRow(row) : null;
 }
 
+export async function deleteEnterpriseQa(d1, id) {
+  await ensureAgentQaTables(d1);
+  const r = await d1
+    .prepare(`DELETE FROM agent_enterprise_qa WHERE id = ?`)
+    .bind(String(id || ""))
+    .run();
+  return Number((r && r.meta && r.meta.changes) || 0);
+}
+
 function mapQaRow(r) {
   return {
     id: r.id,
