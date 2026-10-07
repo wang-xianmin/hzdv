@@ -161,7 +161,7 @@ export async function notifyDevTeamOfNewQuestion(env, kv, d1, qa) {
   const data = {
     question: { value: "【" + code + "】" + (q.length > QUESTION_MAX ? q.slice(0, QUESTION_MAX) + "…" : q) },
     answer: { value: a ? (a.length > ANSWER_MAX ? a.slice(0, ANSWER_MAX) + "…" : a) : "（无）" },
-    hint: { value: "回复「" + code + " 标准答案」即可发布为标准答" },
+    hint: { value: "要发布标准答，直接回复：" + code + " 加空格再写答案" },
     category: { value: CATEGORY_LABEL[qa.category] || qa.category || "其他" },
     mode: { value: MODE_LABEL[qa.answer_mode] || qa.answer_mode || "未知" },
     asker: { value: maskPhone(qa.user_phone) },

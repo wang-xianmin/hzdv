@@ -7,12 +7,14 @@ import { isDevTeamMember, resolveQaCode, sendCustomText } from "./wx-notify.js";
 import { getEnterpriseQa, updateEnterpriseQaReview, publishQaFromReview } from "./agent-qa-d1.js";
 import { indexQaGold } from "./catalog-vectorize.js";
 
-const REPLY_RE = /^【?(\d{1,6})】?\s*[:：,，、.。\s]\s*([\s\S]{2,})$/;
+const REPLY_RE = /^(?:【(\d{1,6})】\s*[:：,，、.。]?|(\d{1,6})\s*[:：,，、.。\s])\s*([\s\S]{2,})$/;
 
 export function parseQaReply(text) {
   const m = String(text || "").trim().replace(/^「/, "").replace(/」$/, "").trim().match(REPLY_RE);
   if (!m) return null;
-  return { code: Number(m[1]), answer: m[2].trim().slice(0, 8000) };
+  const answer = m[3].trim().replace(/^(标准答案|标准答|答案)\s*[:：]?\s*/, "").trim();
+  if (answer.length < 2) return null;
+  return { code: Number(m[1] || m[2]), answer: answer.slice(0, 8000) };
 }
 
 /**
