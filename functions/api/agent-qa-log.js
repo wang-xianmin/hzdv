@@ -124,9 +124,9 @@ export async function onRequest(context) {
       model_badge: body.model_badge || body.modelBadge || "",
       locale: body.locale || body.lang || "",
     });
-    const notifyJob = notifyDevTeamOfNewQuestion(env, pickKvBinding(env), d1, row).catch((e) =>
-      console.warn("[wx-notify] failed:", e && e.message ? e.message : e)
-    );
+    const notifyJob = notifyDevTeamOfNewQuestion(env, pickKvBinding(env), d1, row)
+      .then((r) => console.log("[wx-notify] result", row.id, JSON.stringify(r)))
+      .catch((e) => console.warn("[wx-notify] failed:", e && e.message ? e.message : e));
     if (typeof context.waitUntil === "function") context.waitUntil(notifyJob);
     return jsonResponse({ success: true, id: row.id, qa: row });
   } catch (e) {
