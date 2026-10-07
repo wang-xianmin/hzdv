@@ -3,13 +3,12 @@
  * 开发小组 = A 类（type 含 0x10）且 uA_Tier=1 且已绑微信（value.wxu）
  */
 import { getMpAccessToken, ACCESS_TOKEN_KEY } from "./wx-mp.js";
-import { listKvUserStorageKeys, readKvUserByStorageKey, readKvUser } from "./kv-secure.js";
+import { listKvUserStorageKeys, readKvUserByStorageKey } from "./kv-secure.js";
 import { roleOf } from "./auth-roles.js";
 
 export const WX_NOTIFY_TEMPLATE_ID_DEFAULT = "zSUI1qodJYh4QJfb8Fs8JQg1vmNQAivpRJ-XZKWbZRk";
 export const USER_TYPE_UA = 0x10;
 export const UA_TIER_DEV_TEAM = 1;
-const OPS_TYPE_MASK = 0x0f;
 const NOTIFY_LINK = "https://hzdv.net/";
 const QUESTION_MAX = 60;
 const REPEAT_SCAN_LIMIT = 2000;
@@ -28,11 +27,6 @@ export function isDevTeamMember(row) {
   if (role.status === 3) return false;
   const tier = Number((row.metadata || {}).uA_Tier);
   return (role.typeMask & USER_TYPE_UA) !== 0 && tier === UA_TIER_DEV_TEAM;
-}
-
-function isInternalAsker(row) {
-  if (!row) return false;
-  return (roleOf(row).typeMask & OPS_TYPE_MASK) !== 0 || isDevTeamMember(row);
 }
 
 export function normalizeQuestion(q) {
@@ -115,11 +109,6 @@ export async function notifyDevTeamOfNewQuestion(env, kv, d1, qa) {
   if (qa.answer_mode === "gold") return { skipped: "gold" };
   if (!env.WX_MP_APPID || !env.WX_MP_APPSECRET) return { skipped: "no_mp" };
 
-  const phone = String(qa.user_phone || "").replace(/\D/g, "");
-  if (phone.length >= 6) {
-    const asker = await readKvUser(kv, env, "phone:" + phone).catch(() => null);
-    if (isInternalAsker(asker)) return { skipped: "internal" };
-  }
   if (await isRepeatQuestion(d1, qa)) return { skipped: "repeat" };
 
   const openids = await listDevTeamOpenids(kv, env);
