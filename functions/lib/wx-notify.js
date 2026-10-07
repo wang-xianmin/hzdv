@@ -60,16 +60,28 @@ async function isRepeatQuestion(d1, qa) {
   return rows.some((r) => normalizeQuestion(r.question) === norm);
 }
 
-export async function listDevTeamOpenids(kv, env) {
+export async function listDevTeamOpenids(kv, env, stats) {
   const out = new Set();
+  const st = stats || {};
+  Object.assign(st, { keys: 0, read: 0, readErr: 0, typeA: 0, tier1: 0, typeAtier1: 0, withWxu: 0, firstErr: "" });
   const keys = await listKvUserStorageKeys(kv);
+  st.keys = keys.length;
   for (const sk of keys) {
     try {
       const row = await readKvUserByStorageKey(kv, env, sk);
-      const wxu = row && row.value && typeof row.value.wxu === "string" ? row.value.wxu.trim() : "";
+      if (!row) continue;
+      st.read++;
+      const isA = (roleOf(row).typeMask & USER_TYPE_UA) !== 0;
+      const isTier1 = Number((row.metadata || {}).uA_Tier) === UA_TIER_DEV_TEAM;
+      if (isA) st.typeA++;
+      if (isTier1) st.tier1++;
+      if (isA && isTier1) st.typeAtier1++;
+      const wxu = row.value && typeof row.value.wxu === "string" ? row.value.wxu.trim() : "";
+      if (wxu) st.withWxu++;
       if (wxu && isDevTeamMember(row)) out.add(wxu);
-    } catch {
-      /* skip */
+    } catch (e) {
+      st.readErr++;
+      if (!st.firstErr) st.firstErr = String((e && e.message) || e).slice(0, 120);
     }
   }
   return Array.from(out);
@@ -111,8 +123,9 @@ export async function notifyDevTeamOfNewQuestion(env, kv, d1, qa) {
 
   if (await isRepeatQuestion(d1, qa)) return { skipped: "repeat" };
 
-  const openids = await listDevTeamOpenids(kv, env);
-  if (!openids.length) return { skipped: "no_recipient" };
+  const stats = {};
+  const openids = await listDevTeamOpenids(kv, env, stats);
+  if (!openids.length) return { skipped: "no_recipient", stats };
 
   const q = String(qa.question || "").replace(/\s+/g, " ").trim();
   const data = {
