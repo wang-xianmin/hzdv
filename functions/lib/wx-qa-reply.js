@@ -10,7 +10,7 @@ import { indexQaGold } from "./catalog-vectorize.js";
 const REPLY_RE = /^【?(\d{1,6})】?\s*[:：,，、.。\s]\s*([\s\S]{2,})$/;
 
 export function parseQaReply(text) {
-  const m = String(text || "").trim().match(REPLY_RE);
+  const m = String(text || "").trim().replace(/^「/, "").replace(/」$/, "").trim().match(REPLY_RE);
   if (!m) return null;
   return { code: Number(m[1]), answer: m[2].trim().slice(0, 8000) };
 }
