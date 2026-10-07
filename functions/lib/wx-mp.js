@@ -4,7 +4,7 @@
 import { encryptKvInner, decryptKvInner } from './kv-secure.js';
 
 const QR_STR_SCENE = 'QR_STR_SCENE';
-const ACCESS_TOKEN_KEY = 'wxat:mp';
+export const ACCESS_TOKEN_KEY = 'wxat:mp';
 
 /**
  * 获取微信公众号 access_token

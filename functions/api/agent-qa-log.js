@@ -24,6 +24,8 @@ import {
   resolveEnterpriseCategory,
 } from "../lib/catalog-query-intent.js";
 import { getCatalogSynonymMap } from "../lib/catalog-synonyms.js";
+import { pickKvBinding } from "../lib/kv-binding.js";
+import { notifyDevTeamOfNewQuestion } from "../lib/wx-notify.js";
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -122,6 +124,10 @@ export async function onRequest(context) {
       model_badge: body.model_badge || body.modelBadge || "",
       locale: body.locale || body.lang || "",
     });
+    const notifyJob = notifyDevTeamOfNewQuestion(env, pickKvBinding(env), d1, row).catch((e) =>
+      console.warn("[wx-notify] failed:", e && e.message ? e.message : e)
+    );
+    if (typeof context.waitUntil === "function") context.waitUntil(notifyJob);
     return jsonResponse({ success: true, id: row.id, qa: row });
   } catch (e) {
     return jsonResponse({ success: false, error: String(e.message || e) }, 500);
