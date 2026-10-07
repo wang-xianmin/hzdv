@@ -12,6 +12,10 @@ export const UA_TIER_DEV_TEAM = 1;
 const NOTIFY_LINK = "https://hzdv.net/";
 const QUESTION_MAX = 60;
 const REPEAT_SCAN_LIMIT = 2000;
+const ANSWER_MAX = 200;
+const QA_SEQ_KEY = "wxqa:seq";
+const QA_CODE_PREFIX = "wxqa:n:";
+const QA_CODE_TTL = 30 * 24 * 3600;
 
 const CATEGORY_LABEL = { product: "产品", solution: "方案", case: "案例", service: "服务", other: "其他" };
 const MODE_LABEL = {
@@ -87,20 +91,15 @@ export async function listDevTeamOpenids(kv, env, stats) {
   return Array.from(out);
 }
 
-async function sendTemplate(env, kv, openid, data) {
+async function postMp(env, kv, path, payload) {
   for (let attempt = 0; attempt < 2; attempt++) {
     const token = await getMpAccessToken(env, kv);
     const res = await fetch(
-      "https://api.weixin.qq.com/cgi-bin/message/template/send?access_token=" + encodeURIComponent(token),
+      "https://api.weixin.qq.com/cgi-bin/" + path + "?access_token=" + encodeURIComponent(token),
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          touser: openid,
-          template_id: env.WX_NOTIFY_TEMPLATE_ID || WX_NOTIFY_TEMPLATE_ID_DEFAULT,
-          url: NOTIFY_LINK,
-          data,
-        }),
+        body: JSON.stringify(payload),
       }
     );
     const j = await res.json().catch(() => ({}));
@@ -111,6 +110,35 @@ async function sendTemplate(env, kv, openid, data) {
     return j;
   }
   return {};
+}
+
+function sendTemplate(env, kv, openid, data) {
+  return postMp(env, kv, "message/template/send", {
+    touser: openid,
+    template_id: env.WX_NOTIFY_TEMPLATE_ID || WX_NOTIFY_TEMPLATE_ID_DEFAULT,
+    url: NOTIFY_LINK,
+    data,
+  });
+}
+
+export function sendCustomText(env, kv, openid, content) {
+  return postMp(env, kv, "message/custom/send", {
+    touser: openid,
+    msgtype: "text",
+    text: { content: String(content || "") },
+  });
+}
+
+export async function allocQaCode(kv, qaId) {
+  const n = (Number(await kv.get(QA_SEQ_KEY)) || 0) + 1;
+  await kv.put(QA_SEQ_KEY, String(n));
+  await kv.put(QA_CODE_PREFIX + n, String(qaId), { expirationTtl: QA_CODE_TTL });
+  return n;
+}
+
+export async function resolveQaCode(kv, code) {
+  const id = await kv.get(QA_CODE_PREFIX + Number(code));
+  return id ? String(id) : "";
 }
 
 /**
@@ -127,9 +155,13 @@ export async function notifyDevTeamOfNewQuestion(env, kv, d1, qa) {
   const openids = await listDevTeamOpenids(kv, env, stats);
   if (!openids.length) return { skipped: "no_recipient", stats };
 
+  const code = await allocQaCode(kv, qa.id);
   const q = String(qa.question || "").replace(/\s+/g, " ").trim();
+  const a = String(qa.reply_text || "").replace(/\s+/g, " ").trim();
   const data = {
-    question: { value: q.length > QUESTION_MAX ? q.slice(0, QUESTION_MAX) + "…" : q },
+    question: { value: "【" + code + "】" + (q.length > QUESTION_MAX ? q.slice(0, QUESTION_MAX) + "…" : q) },
+    answer: { value: a ? (a.length > ANSWER_MAX ? a.slice(0, ANSWER_MAX) + "…" : a) : "（无）" },
+    hint: { value: "回复「" + code + " 标准答案」即可发布为标准答" },
     category: { value: CATEGORY_LABEL[qa.category] || qa.category || "其他" },
     mode: { value: MODE_LABEL[qa.answer_mode] || qa.answer_mode || "未知" },
     asker: { value: maskPhone(qa.user_phone) },
@@ -147,6 +179,6 @@ export async function notifyDevTeamOfNewQuestion(env, kv, d1, qa) {
       failed.push(String((e && e.message) || e));
     }
   }
-  console.log("[wx-notify]", qa.id, JSON.stringify({ recipients: openids.length, sent, failed }));
-  return { recipients: openids.length, sent, failed };
+  console.log("[wx-notify]", qa.id, JSON.stringify({ recipients: openids.length, sent, failed, code }));
+  return { recipients: openids.length, sent, failed, code };
 }

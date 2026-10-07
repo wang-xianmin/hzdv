@@ -1,5 +1,7 @@
 import { pickKvBinding } from "../lib/kv-binding.js";
 import { pickWxScanD1, markWxScanned } from "../lib/wx-scan-d1.js";
+import { pickD1Binding } from "../lib/cloudflare-bindings.js";
+import { handleDevTeamReply } from "../lib/wx-qa-reply.js";
 
 function safeEqual(a, b) {
   if (a.length !== b.length) return false;
@@ -33,6 +35,7 @@ function parseWechatXml(xml) {
     Event: getTag("Event"),
     EventKey: getTag("EventKey"),
     CreateTime: getTag("CreateTime"),
+    Content: getTag("Content"),
   };
 }
 
@@ -81,7 +84,14 @@ export async function onRequest(context) {
   try {
     const xml = await request.text();
     const parsed = parseWechatXml(xml);
-    const { FromUserName: openid, MsgType, Event, EventKey } = parsed;
+    const { FromUserName: openid, MsgType, Event, EventKey, Content } = parsed;
+
+    if (MsgType === "text" && openid && Content) {
+      const replyJob = handleDevTeamReply(env, pickKvBinding(env), pickD1Binding(env), openid, Content)
+        .then((r) => console.log("[wx-qa-reply] result", JSON.stringify(r)))
+        .catch((e) => console.warn("[wx-qa-reply] failed:", e && e.message ? e.message : e));
+      if (typeof context.waitUntil === "function") context.waitUntil(replyJob);
+    }
 
     let scene = "";
     if (MsgType === "event") {
