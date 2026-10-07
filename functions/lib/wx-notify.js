@@ -11,7 +11,6 @@ export const USER_TYPE_UA = 0x10;
 export const UA_TIER_DEV_TEAM = 1;
 const NOTIFY_LINK = "https://hzdv.net/";
 const QUESTION_MAX = 60;
-const REPEAT_SCAN_LIMIT = 2000;
 const ANSWER_MAX = 200;
 const QA_SEQ_KEY = "wxqa:seq";
 const QA_CODE_PREFIX = "wxqa:n:";
@@ -49,19 +48,6 @@ export function maskPhone(phone) {
 function fmtBeijing(ms) {
   const t = Number(ms) || Date.now();
   return new Date(t + 8 * 3600 * 1000).toISOString().slice(0, 16).replace("T", " ");
-}
-
-async function isRepeatQuestion(d1, qa) {
-  const norm = normalizeQuestion(qa.question);
-  if (!norm) return true;
-  const rs = await d1
-    .prepare(
-      "SELECT question FROM agent_enterprise_qa WHERE id != ? AND created_at <= ? ORDER BY created_at DESC LIMIT ?"
-    )
-    .bind(String(qa.id), Number(qa.created_at) || Date.now(), REPEAT_SCAN_LIMIT)
-    .all();
-  const rows = (rs && rs.results) || [];
-  return rows.some((r) => normalizeQuestion(r.question) === norm);
 }
 
 export async function listDevTeamOpenids(kv, env, stats) {
@@ -141,6 +127,11 @@ export async function resolveQaCode(kv, code) {
   return id ? String(id) : "";
 }
 
+export async function forgetQaCode(kv, code) {
+  if (!code) return;
+  await kv.delete(QA_CODE_PREFIX + Number(code));
+}
+
 /**
  * @returns {Promise<{ skipped?: string, recipients?: number, sent?: number, failed?: any[] }>}
  */
@@ -149,13 +140,16 @@ export async function notifyDevTeamOfNewQuestion(env, kv, d1, qa) {
   if (qa.answer_mode === "gold") return { skipped: "gold" };
   if (!env.WX_MP_APPID || !env.WX_MP_APPSECRET) return { skipped: "no_mp" };
 
-  if (await isRepeatQuestion(d1, qa)) return { skipped: "repeat" };
-
   const stats = {};
   const openids = await listDevTeamOpenids(kv, env, stats);
   if (!openids.length) return { skipped: "no_recipient", stats };
 
   const code = await allocQaCode(kv, qa.id);
+  await d1
+    .prepare("UPDATE agent_enterprise_qa SET wx_code = ? WHERE id = ?")
+    .bind(code, String(qa.id))
+    .run()
+    .catch(() => {});
   const q = String(qa.question || "").replace(/\s+/g, " ").trim();
   const a = String(qa.reply_text || "").replace(/\s+/g, " ").trim();
   const data = {

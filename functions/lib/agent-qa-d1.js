@@ -136,6 +136,30 @@ export function qaVectorId(goldId) {
   return QA_VECTOR_ID_PREFIX + String(goldId || "").trim();
 }
 
+const QA_EXTRA_COLUMNS = [
+  ["q_embed", "q_embed TEXT"],
+  ["ask_count", "ask_count INTEGER NOT NULL DEFAULT 1"],
+  ["q_variants", "q_variants TEXT NOT NULL DEFAULT '[]'"],
+  ["last_asked_at", "last_asked_at INTEGER"],
+  ["wx_code", "wx_code INTEGER"],
+];
+let qaExtraColumnsReady = false;
+
+async function ensureQaExtraColumns(d1) {
+  if (qaExtraColumnsReady) return;
+  const info = await d1.prepare(`PRAGMA table_info(agent_enterprise_qa)`).all();
+  const cols = ((info && info.results) || []).map((r) => String(r.name || "").toLowerCase());
+  for (const [col, ddl] of QA_EXTRA_COLUMNS) {
+    if (cols.indexOf(col) >= 0) continue;
+    try {
+      await d1.prepare(`ALTER TABLE agent_enterprise_qa ADD COLUMN ${ddl}`).run();
+    } catch (e) {
+      /* ignore race */
+    }
+  }
+  qaExtraColumnsReady = true;
+}
+
 export async function ensureAgentQaTables(d1) {
   if (!d1) throw new Error("D1 not configured");
   await d1.prepare(CREATE_QA_SQL).run();
@@ -143,6 +167,7 @@ export async function ensureAgentQaTables(d1) {
   await d1.prepare(CREATE_QA_IDX_STATUS).run();
   await d1.prepare(CREATE_GOLD_SQL).run();
   await d1.prepare(CREATE_GOLD_IDX).run();
+  await ensureQaExtraColumns(d1);
 }
 
 /**
@@ -236,6 +261,10 @@ function mapQaRow(r) {
     published_gold_id: r.published_gold_id || null,
     model_badge: r.model_badge || "",
     locale: r.locale || "",
+    ask_count: Number(r.ask_count) || 1,
+    q_variants: parseJsonArray(r.q_variants).map(String),
+    last_asked_at: r.last_asked_at != null ? Number(r.last_asked_at) : null,
+    wx_code: r.wx_code != null ? Number(r.wx_code) : null,
   };
 }
 
@@ -395,9 +424,12 @@ export async function publishQaFromReview(d1, qaId, opts) {
   )
     .trim()
     .slice(0, 2000);
-  const variants = Array.isArray(opts && opts.question_variants)
-    ? opts.question_variants.map((x) => String(x || "").trim()).filter(Boolean)
-    : [];
+  const variants = (Array.isArray(opts && opts.question_variants)
+    ? opts.question_variants
+    : qa.q_variants || []
+  )
+    .map((x) => String(x || "").trim())
+    .filter(Boolean);
   const category = normalizeCategory(
     qa.corrected_category || qa.category || "other"
   );

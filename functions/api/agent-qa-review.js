@@ -11,13 +11,14 @@
 
 import { ensureAllD1Tables } from "../lib/d1-schema.js";
 import { pickD1Binding } from "../lib/cloudflare-bindings.js";
+import { pickKvBinding } from "../lib/kv-binding.js";
+import { deleteEnterpriseQaFully } from "../lib/qa-dedupe.js";
 import {
   assertCatalogOpsAccess,
   opsAuthErrorResponse,
 } from "../lib/ops-auth.js";
 import {
   getEnterpriseQa,
-  deleteEnterpriseQa,
   getQaGold,
   listEnterpriseQa,
   listQaGold,
@@ -204,9 +205,9 @@ export async function onRequest(context) {
     if (action === "delete") {
       const id = String(body.id || "").trim();
       if (!id) return jsonResponse({ success: false, error: "缺少 id" }, 400);
-      const deleted = await deleteEnterpriseQa(d1, id);
-      if (!deleted) return jsonResponse({ success: false, error: "未找到" }, 404);
-      return jsonResponse({ success: true, deleted });
+      const result = await deleteEnterpriseQaFully(env, d1, pickKvBinding(env), id);
+      if (!result.deleted) return jsonResponse({ success: false, error: "未找到" }, 404);
+      return jsonResponse({ success: true, ...result });
     }
 
     if (action === "get") {
