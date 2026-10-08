@@ -1403,6 +1403,94 @@
   /** 手机（≤768px）答完后收起 Agent，让主展区占满屏 */
   var mobileCollapseTimer = null;
   var messages = [];
+  var CHAT_STORE_PREFIX = "hzdv_agent_chat:";
+  var CHAT_KEEP_MS = 30 * 24 * 3600 * 1000;
+  var CHAT_STORE_MAX = 400;
+  var historyOwner = null;
+  var saveHistoryTimer = null;
+
+  function chatStoreKey(phone) {
+    return CHAT_STORE_PREFIX + phone;
+  }
+
+  function persistableMessages() {
+    var cutoff = Date.now() - CHAT_KEEP_MS;
+    return messages
+      .filter(function (m) {
+        if (!m || m.__asrLive) return false;
+        if (m.role !== "user" && m.role !== "assistant") return false;
+        if (/^思考中|^Thinking/i.test(String(m.text || ""))) return false;
+        return (m.ts || 0) >= cutoff;
+      })
+      .slice(-CHAT_STORE_MAX)
+      .map(function (m) {
+        var row = { role: m.role, text: String(m.text || ""), ts: m.ts };
+        if (m.modelBadge) row.modelBadge = m.modelBadge;
+        if (m.modelNote) row.modelNote = m.modelNote;
+        if (m.mono) row.mono = true;
+        return row;
+      });
+  }
+
+  function saveChatHistory() {
+    saveHistoryTimer = null;
+    if (!historyOwner) return;
+    try {
+      localStorage.setItem(
+        chatStoreKey(historyOwner),
+        JSON.stringify(persistableMessages())
+      );
+    } catch (e) {}
+  }
+
+  function scheduleSaveChatHistory() {
+    if (!historyOwner || saveHistoryTimer) return;
+    saveHistoryTimer = setTimeout(saveChatHistory, 400);
+  }
+
+  function flushChatHistory() {
+    if (!saveHistoryTimer) return;
+    clearTimeout(saveHistoryTimer);
+    saveChatHistory();
+  }
+
+  function loadChatHistory(phone) {
+    try {
+      var rows = JSON.parse(localStorage.getItem(chatStoreKey(phone)) || "[]");
+      var cutoff = Date.now() - CHAT_KEEP_MS;
+      return (Array.isArray(rows) ? rows : []).filter(function (m) {
+        return (
+          m &&
+          (m.role === "user" || m.role === "assistant") &&
+          (m.ts || 0) >= cutoff
+        );
+      });
+    } catch (e) {
+      return [];
+    }
+  }
+
+  /** 登录用户变化时换成该用户本机保存的聊天记录（未登录不保存） */
+  function syncChatHistoryOwner() {
+    var phone = currentPhone();
+    if (phone === (historyOwner || "")) return;
+    flushChatHistory();
+    historyOwner = phone || null;
+    messages.length = 0;
+    if (phone) Array.prototype.push.apply(messages, loadChatHistory(phone));
+  }
+
+  function clearChatHistory() {
+    messages.length = 0;
+    if (historyOwner) {
+      try {
+        localStorage.removeItem(chatStoreKey(historyOwner));
+      } catch (e) {}
+    }
+    renderThread();
+  }
+
+  global.addEventListener("pagehide", flushChatHistory);
   var selectedModelId = "auto";
 
   function currentLang() {
@@ -1575,7 +1663,15 @@
       '<button type="button" class="ai-assist__plus-item" id="aiAssistUploadNotebook" role="menuitem">' +
       '<span class="ai-assist__plus-item-label" id="aiAssistUploadNotebookLabel">Notebooks</span>' +
       "</button>" +
-      "</div></div></div></div>" +
+      "</div></div>" +
+      '<button type="button" class="ai-assist__plus-item" id="aiAssistClearChat" role="menuitem">' +
+      '<span class="ai-assist__plus-item-icon" aria-hidden="true">' +
+      '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' +
+      '<path d="M4 7h16M10 11v6M14 11v6M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>' +
+      "</svg></span>" +
+      '<span class="ai-assist__plus-item-label" id="aiAssistClearChatLabel">清空聊天记录</span>' +
+      "</button>" +
+      "</div></div>" +
       '<input class="ai-assist__input" id="aiAssistInput" type="text" maxlength="2000" />' +
       '<div class="ai-assist__model" id="aiAssistModel">' +
       '<button type="button" class="ai-assist__model-btn" id="aiAssistModelBtn" aria-haspopup="listbox" aria-expanded="false">' +
@@ -1757,6 +1853,20 @@
       e.preventDefault();
       e.stopPropagation();
       pickUploadFile();
+    });
+    root.querySelector("#aiAssistClearChat").addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      closePlusMenu();
+      if (!messages.length) return;
+      if (
+        !global.confirm(
+          t("确定清空本机保存的聊天记录吗？", "Clear the chat history saved on this device?")
+        )
+      ) {
+        return;
+      }
+      clearChatHistory();
     });
     moreBtn.addEventListener("click", function (e) {
       e.preventDefault();
@@ -1946,6 +2056,8 @@
     if (moreLabel) moreLabel.textContent = t("更多上传选项", "More upload options");
     if (albumLabel) albumLabel.textContent = t("相册", "Photos");
     if (nbLabel) nbLabel.textContent = "Notebooks";
+    var clearLabel = root.querySelector("#aiAssistClearChatLabel");
+    if (clearLabel) clearLabel.textContent = t("清空聊天记录", "Clear chat history");
     var plusBtn = root.querySelector("#aiAssistPlusBtn");
     if (plusBtn) plusBtn.setAttribute("aria-label", t("添加", "Add"));
     root.querySelector("#aiAssistLegal").innerHTML = t(
@@ -2141,6 +2253,7 @@
     });
     threadEl.scrollTop = threadEl.scrollHeight;
     syncChattingClass();
+    scheduleSaveChatHistory();
   }
 
   function appendMessage(role, text, extra) {
@@ -2148,6 +2261,7 @@
       role: role,
       text: String(text || ""),
       model: selectedModelId,
+      ts: Date.now(),
     };
     if (extra && typeof extra === "object") {
       if (extra.modelBadge) row.modelBadge = extra.modelBadge;
@@ -2168,7 +2282,7 @@
    * @returns {{role:string,content:string}[]}
    */
   function buildChatHistory(currentQuestion) {
-    var maxTurns = 8;
+    var maxTurns = 16;
     var maxPer = 500;
     var out = [];
     var end = messages.length;
@@ -2216,6 +2330,7 @@
     if (!q) return;
     cancelMobileCollapse();
     if (!opened) openChat();
+    syncChatHistoryOwner();
     var phone = currentPhone();
     var want = selectedModelId;
     var usePipe = want === "auto" || isTier1Selection(want);
@@ -4006,6 +4121,8 @@
 
   function openChat() {
     ensureDom();
+    syncChatHistoryOwner();
+    renderThread();
     renderCopy();
     visible = true;
     opened = true;

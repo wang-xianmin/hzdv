@@ -82,12 +82,12 @@ function clampInt(v, min, max, fallback) {
 /** 短期记忆：规范化前端传来的 history */
 function normalizeChatHistory(raw) {
   if (!Array.isArray(raw)) return [];
-  const maxTurns = 8;
+  const maxTurns = 16;
   const maxPer = 500;
-  const maxTotal = 4000;
+  const maxTotal = 8000;
   const out = [];
   let total = 0;
-  for (let i = 0; i < raw.length; i++) {
+  for (let i = raw.length - 1; i >= 0 && out.length < maxTurns; i--) {
     const row = raw[i];
     if (!row || typeof row !== "object") continue;
     const role = row.role === "assistant" ? "assistant" : row.role === "user" ? "user" : "";
@@ -98,9 +98,8 @@ function normalizeChatHistory(raw) {
     content = content.slice(0, maxPer);
     if (total + content.length > maxTotal) break;
     total += content.length;
-    out.push({ role, content });
+    out.unshift({ role, content });
   }
-  if (out.length > maxTurns) return out.slice(-maxTurns);
   return out;
 }
 
