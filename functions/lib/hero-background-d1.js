@@ -11,6 +11,7 @@ export const DEFAULT_HERO_CONFIG = {
   transition_ms: 800,
   playback_mode: "sequential",
   landscape_only: false,
+  sound_muted: true,
 };
 
 const CREATE_CONFIG_SQL = `
@@ -91,6 +92,7 @@ export async function ensureHeroBackgroundTables(d1) {
     "ALTER TABLE hero_background_items ADD COLUMN public_url_mobile TEXT",
     "ALTER TABLE hero_background_items ADD COLUMN poster_public_url_mobile TEXT",
     "ALTER TABLE hero_background_config ADD COLUMN landscape_only INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE hero_background_config ADD COLUMN sound_muted INTEGER NOT NULL DEFAULT 1",
   ];
   for (const sql of alterCols) {
     try {
@@ -128,6 +130,7 @@ export async function getHeroBackgroundConfig(d1) {
     playback_mode:
       row.playback_mode === "random" ? "random" : DEFAULT_HERO_CONFIG.playback_mode,
     landscape_only: Number(row.landscape_only) === 1,
+    sound_muted: row.sound_muted == null ? true : Number(row.sound_muted) === 1,
     updated_at: Number(row.updated_at) || Date.now(),
   };
 }
@@ -209,15 +212,22 @@ export async function saveHeroBackgroundConfig(d1, config) {
     config.landscape_only === "1"
       ? 1
       : 0;
+  const soundMuted =
+    config.sound_muted === false ||
+    config.sound_muted === 0 ||
+    config.sound_muted === "0"
+      ? 0
+      : 1;
   await d1
     .prepare(
-      `INSERT INTO hero_background_config (id, rotate_interval_ms, transition_ms, playback_mode, landscape_only, updated_at)
-       VALUES (1, ?, ?, ?, ?, ?)
+      `INSERT INTO hero_background_config (id, rotate_interval_ms, transition_ms, playback_mode, landscape_only, sound_muted, updated_at)
+       VALUES (1, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          rotate_interval_ms = excluded.rotate_interval_ms,
          transition_ms = excluded.transition_ms,
          playback_mode = excluded.playback_mode,
          landscape_only = excluded.landscape_only,
+         sound_muted = excluded.sound_muted,
          updated_at = excluded.updated_at`
     )
     .bind(
@@ -225,6 +235,7 @@ export async function saveHeroBackgroundConfig(d1, config) {
       transition >= 0 ? transition : DEFAULT_HERO_CONFIG.transition_ms,
       mode,
       landscapeOnly,
+      soundMuted,
       now
     )
     .run();
