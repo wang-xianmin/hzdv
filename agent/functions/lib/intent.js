@@ -16,6 +16,7 @@ import {
 } from "./openai-compat.js";
 import { resolveRouteMode } from "./route-mode.js";
 import { isCompanyCatalogQuery } from "./catalog-query-intent.js";
+import { COMPANY_REF_HINT_ZH } from "./host.js";
 
 export { isCompanyCatalogQuery } from "./catalog-query-intent.js";
 
@@ -29,6 +30,7 @@ const CLASSIFY_PROMPT =
   "- catalog：本站产品/方案/案例/服务（售后质保培训等）、主展区展示与切换（有什么产品、换方案、回到产品展示、看看案例、保修多久等）。走站内目录，禁止 web。\n" +
   "- web：必须查外网最新新闻、实时数据、股价、天气、赛果、外部厂商新闻等。\n" +
   "- 不加通道：普通问答/翻译/概念解释（chat）。\n" +
+  COMPANY_REF_HINT_ZH + "\n" +
   "重要：涉及本公司/本站目录、服务或主展区导航，一律加 catalog，绝不要加 web。" +
   "产品/方案/案例/服务用哪一类由目录检索决定，你只标 catalog。\n" +
   "示例输出：tier1 / tier2 / tier2 catalog / tier2 web / tier3 / tier3 web";
@@ -51,6 +53,7 @@ const FEW_SHOT = [
   ["你们有哪些售后服务", "tier2 catalog"],
   ["保修多久", "tier2 catalog"],
   ["怎么报修", "tier2 catalog"],
+  ["杭州迪微的产品有哪些", "tier2 catalog"],
   ["今天有什么科技新闻", "tier2 web"],
   ["苹果现在股价多少", "tier2 web"],
   ["latest OpenAI model release news", "tier2 web"],

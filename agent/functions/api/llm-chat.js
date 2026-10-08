@@ -34,6 +34,8 @@ import {
   opsAuthErrorResponse,
   pickKvBinding,
   kvBindingHint,
+  COMPANY_PROMPT_ZH,
+  COMPANY_PROMPT_EN,
 } from "../lib/host.js";
 import { loadLlmModels } from "../lib/llm-models-store.js";
 import {
@@ -351,7 +353,7 @@ function ocrPromptBlock(ocr, replyLang) {
 function systemPrompt(replyLang, ocr, hasWeb, hasCatalog) {
   if (replyLang === "en") {
     return (
-      "You are the HZDV site assistant. Be concise and direct. " +
+      COMPANY_PROMPT_EN + "Be concise and direct. " +
       "Always answer in the same language the user wrote in. " +
       "The user wrote in English, so answer in English. " +
       "Ignore the site menu language. " +
@@ -377,7 +379,7 @@ function systemPrompt(replyLang, ocr, hasWeb, hasCatalog) {
     );
   }
   return (
-    "你是 HZDV 站点助手。回答简洁、直接。" +
+    COMPANY_PROMPT_ZH + "回答简洁、直接。" +
     "始终使用与用户提问相同的语言回答。" +
     "本次用户用中文提问，请用中文回答。" +
     "不要参考站点菜单语言。" +

@@ -16,3 +16,9 @@ export {
   assertAnyLoginAccess,
   opsAuthErrorResponse,
 } from "../../../functions/lib/ops-auth.js";
+
+export {
+  COMPANY_REF_HINT_ZH,
+  COMPANY_PROMPT_ZH,
+  COMPANY_PROMPT_EN,
+} from "../../../functions/lib/company-profile.js";

@@ -4,6 +4,7 @@
 import { embedTexts, pickAiBinding, deleteQaGoldVectors, indexQaGold } from "./catalog-vectorize.js";
 import { getEnterpriseQa, getQaGold } from "./agent-qa-d1.js";
 import { normalizeQuestion, notifyDevTeamOfNewQuestion, forgetQaCode } from "./wx-notify.js";
+import { COMPANY_REF_HINT_ZH, normalizeCompanyRefs } from "./company-profile.js";
 
 const CANDIDATE_SCAN_LIMIT = 500;
 const BACKFILL_LIMIT = 50;
@@ -48,7 +49,7 @@ async function backfillEmbeddings(d1, ai) {
     .all();
   const rows = ((rs && rs.results) || []).filter((r) => String(r.question || "").trim());
   if (!rows.length) return 0;
-  const vecs = await embedTexts(ai, rows.map((r) => r.question));
+  const vecs = await embedTexts(ai, rows.map((r) => normalizeCompanyRefs(r.question)));
   for (let i = 0; i < rows.length; i++) {
     await d1
       .prepare("UPDATE agent_enterprise_qa SET q_embed = ? WHERE id = ?")
@@ -63,6 +64,7 @@ export function buildJudgePrompt(question, cands) {
   return (
     "你在给企业网站的客户问题去重。判断【新问题】是否和下面某条【已有问题】在问同一件事" +
     "（换个说法、同义词、口语化都算同一件事；但问得更具体、范围不同、多问了别的方面，都不算）。\n" +
+    COMPANY_REF_HINT_ZH +
     "本企业是自动化设备与系统集成商：『案例』『成功项目』『做过的系统集成』『项目经验』是同一类；" +
     "『产品』『设备』是同一类；『方案』『解决方案』是同一类。" +
     "对同一类笼统地问『有哪些』『有没有』『介绍一下』，都算同一件事（只要没限定行业、型号、价格等具体条件）。\n" +
@@ -121,8 +123,10 @@ export async function findDuplicateQa(env, d1, qa) {
   const self = rows.find((r) => r.id === id);
   const others = rows.filter((r) => r.id !== id);
 
-  const norm = normalizeQuestion(qa.question);
-  const exact = norm ? others.find((r) => normalizeQuestion(r.question) === norm) : null;
+  const norm = normalizeQuestion(normalizeCompanyRefs(qa.question));
+  const exact = norm
+    ? others.find((r) => normalizeQuestion(normalizeCompanyRefs(r.question)) === norm)
+    : null;
   if (exact) return { dupOf: exact.id, method: "exact" };
 
   if (!self || !self.q_embed) return { dupOf: "", method: ai ? "no_embed" : "no_ai" };
