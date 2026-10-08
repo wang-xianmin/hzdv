@@ -54,6 +54,9 @@
   opacity: 0;
   transition: opacity var(--hero-transition, 800ms) ease;
   will-change: opacity;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
 }
 
 .site-hero__layer.is-active {
@@ -67,6 +70,15 @@
   object-fit: cover;
   display: block;
   pointer-events: none;
+}
+
+.site-hero__video {
+  opacity: 0;
+  transition: opacity 400ms ease;
+}
+
+.site-hero__video.is-playing {
+  opacity: 1;
 }
 
 .site-hero__overlay {

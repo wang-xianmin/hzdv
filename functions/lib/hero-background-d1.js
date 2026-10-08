@@ -10,6 +10,7 @@ export const DEFAULT_HERO_CONFIG = {
   rotate_interval_ms: 30000,
   transition_ms: 800,
   playback_mode: "sequential",
+  landscape_only: false,
 };
 
 const CREATE_CONFIG_SQL = `
@@ -89,6 +90,7 @@ export async function ensureHeroBackgroundTables(d1) {
     "ALTER TABLE hero_background_items ADD COLUMN poster_r2_key_mobile TEXT",
     "ALTER TABLE hero_background_items ADD COLUMN public_url_mobile TEXT",
     "ALTER TABLE hero_background_items ADD COLUMN poster_public_url_mobile TEXT",
+    "ALTER TABLE hero_background_config ADD COLUMN landscape_only INTEGER NOT NULL DEFAULT 0",
   ];
   for (const sql of alterCols) {
     try {
@@ -116,8 +118,7 @@ export async function ensureHeroBackgroundTables(d1) {
 export async function getHeroBackgroundConfig(d1) {
   const row = await d1
     .prepare(
-      `SELECT rotate_interval_ms, transition_ms, playback_mode, updated_at
-       FROM hero_background_config WHERE id = 1`
+      `SELECT * FROM hero_background_config WHERE id = 1`
     )
     .first();
   if (!row) return Object.assign({}, DEFAULT_HERO_CONFIG, { updated_at: Date.now() });
@@ -126,6 +127,7 @@ export async function getHeroBackgroundConfig(d1) {
     transition_ms: Number(row.transition_ms) || DEFAULT_HERO_CONFIG.transition_ms,
     playback_mode:
       row.playback_mode === "random" ? "random" : DEFAULT_HERO_CONFIG.playback_mode,
+    landscape_only: Number(row.landscape_only) === 1,
     updated_at: Number(row.updated_at) || Date.now(),
   };
 }
@@ -196,24 +198,33 @@ export async function listAllHeroBackgroundItems(d1, env) {
 }
 
 export async function saveHeroBackgroundConfig(d1, config) {
+  await ensureHeroBackgroundTables(d1);
   const now = Date.now();
   const rotate = Number(config.rotate_interval_ms);
   const transition = Number(config.transition_ms);
   const mode = config.playback_mode === "random" ? "random" : "sequential";
+  const landscapeOnly =
+    config.landscape_only === true ||
+    config.landscape_only === 1 ||
+    config.landscape_only === "1"
+      ? 1
+      : 0;
   await d1
     .prepare(
-      `INSERT INTO hero_background_config (id, rotate_interval_ms, transition_ms, playback_mode, updated_at)
-       VALUES (1, ?, ?, ?, ?)
+      `INSERT INTO hero_background_config (id, rotate_interval_ms, transition_ms, playback_mode, landscape_only, updated_at)
+       VALUES (1, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          rotate_interval_ms = excluded.rotate_interval_ms,
          transition_ms = excluded.transition_ms,
          playback_mode = excluded.playback_mode,
+         landscape_only = excluded.landscape_only,
          updated_at = excluded.updated_at`
     )
     .bind(
       rotate > 0 ? rotate : DEFAULT_HERO_CONFIG.rotate_interval_ms,
       transition >= 0 ? transition : DEFAULT_HERO_CONFIG.transition_ms,
       mode,
+      landscapeOnly,
       now
     )
     .run();
