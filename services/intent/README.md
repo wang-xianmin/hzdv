@@ -53,3 +53,14 @@ curl -s http://127.0.0.1:8090/v1/chat/completions \
 - 模型文件 ~1.1G（`./models`，已 gitignore）
 - 运行内存 ~1.3–1.6G（compose 限 2G）
 - 2 核 CPU 上分类（输出几个 token）通常 <1s
+- 以上依赖提示词缓存：分类提示词 + few-shot 约 700 token，缓存失效时从头算约 20s，而线上只等 6s
+
+## 改提示词后预热（必做）
+
+改了 `agent/functions/lib/intent.js`（`CLASSIFY_PROMPT` / `FEW_SHOT`）或 `functions/lib/company-profile.js`，推送后在仓库根目录跑：
+
+```bash
+sh services/intent/warmup.sh
+```
+
+用与线上逐字相同的提示词打一次本机分类器。输出里 `prompt eval time` 只有几个 token 说明缓存已热；分类器重启后也可跑一次。
