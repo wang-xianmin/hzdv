@@ -4,6 +4,7 @@
  *
  * Body: { phone, message, modelId?: "auto" | <registry id>, lang?: "zh"|"en",
  *         history?: [{ role, content }] 近期对话（短期记忆）,
+ *         memory?: string 前情摘要（更早对话的要点，见 /api/llm-summary）,
  *         stream?: true  → ③ 生成以 SSE 推送（delta/done + keepalive，破同步墙钟） }
  * Returns: JSON 包；或 stream 时 text/event-stream（event: meta|note|delta|done|error）
  *
@@ -82,7 +83,7 @@ function clampInt(v, min, max, fallback) {
 /** 短期记忆：规范化前端传来的 history */
 function normalizeChatHistory(raw) {
   if (!Array.isArray(raw)) return [];
-  const maxTurns = 16;
+  const maxTurns = 24;
   const maxPer = 500;
   const maxTotal = 8000;
   const out = [];
@@ -101,6 +102,21 @@ function normalizeChatHistory(raw) {
     out.unshift({ role, content });
   }
   return out;
+}
+
+/** 前情摘要：客人本机保存的更早对话要点 */
+function normalizeChatMemory(raw) {
+  return String(raw || "").trim().slice(0, 600);
+}
+
+function chatMemoryBlock(memory, replyLang) {
+  const m = String(memory || "").trim();
+  if (!m) return "";
+  return replyLang === "en"
+    ? "\n\n[Earlier conversation summary] Key points from earlier in this chat, before the recent turns. Use them when the user refers back to something said before:\n" +
+        m
+    : "\n\n【前情摘要】以下是本次对话更早部分的要点（在下方近期对话之前），用户提到「前面说的」「之前」等时据此回答：\n" +
+        m;
 }
 
 function resolveOcrLimits(raw) {
@@ -563,7 +579,9 @@ async function callModel(env, target, message, replyLang, ocr, useVision, webCtx
     messages: [
       {
         role: "system",
-        content: systemPrompt(replyLang, ocr, hasWeb, hasCatalog),
+        content:
+          systemPrompt(replyLang, ocr, hasWeb, hasCatalog) +
+          chatMemoryBlock(opts && opts.memory, replyLang),
       },
       ...history,
       { role: "user", content: userContent },
@@ -674,7 +692,9 @@ async function callModelStream(env, target, message, replyLang, ocr, useVision, 
     messages: [
       {
         role: "system",
-        content: systemPrompt(replyLang, ocr, hasWeb, hasCatalog),
+        content:
+          systemPrompt(replyLang, ocr, hasWeb, hasCatalog) +
+          chatMemoryBlock(opts && opts.memory, replyLang),
       },
       ...history,
       { role: "user", content: userContent },
@@ -923,6 +943,7 @@ async function streamManualGenerate(env, ctx) {
           country: ctx.country,
           catalogCtx: ctx.catalogCtx,
           history: ctx.history,
+          memory: ctx.memory,
           onDelta: function (full) {
             lastPartial = full;
             api.send("delta", { text: full });
@@ -1251,6 +1272,7 @@ export async function handleLlmChat(env, body, reqOpts) {
   const history = normalizeChatHistory(
     body.history || body.messages || body.chatHistory
   );
+  const memory = normalizeChatMemory(body.memory);
   const wantId = String(body.modelId || body.model || "auto").trim() || "auto";
   const ocrLimits = resolveOcrLimits(body.systemSettings || body.system_settings);
   const ocr = normalizeOcrContext(body.ocr, ocrLimits);
@@ -1312,6 +1334,7 @@ export async function handleLlmChat(env, body, reqOpts) {
         country,
         catalogCtx,
         history,
+        memory,
         langInfo,
         notes,
         uiLang,
@@ -1335,7 +1358,7 @@ export async function handleLlmChat(env, body, reqOpts) {
       ocr,
       useVision,
       web.webCtx || "",
-      { systemSettings, country, catalogCtx, history }
+      { systemSettings, country, catalogCtx, history, memory }
     );
     if (result.usedVision) {
       notes.push(
@@ -1630,6 +1653,7 @@ export async function handleLlmChat(env, body, reqOpts) {
         country,
         catalogCtx,
         history,
+        memory,
       })
     : null;
 
@@ -1852,7 +1876,7 @@ export async function handleLlmChat(env, body, reqOpts) {
       ? 2
       : 4;
   const callOpts = Object.assign(
-    { systemSettings, country, catalogCtx, history },
+    { systemSettings, country, catalogCtx, history, memory },
     phased
       ? {
           timeoutMs: proxy

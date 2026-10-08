@@ -1408,6 +1408,12 @@
   var CHAT_STORE_MAX = 400;
   var historyOwner = null;
   var saveHistoryTimer = null;
+  var CHAT_MEM_PREFIX = "hzdv_agent_mem:";
+  var CHAT_RECENT = 16;
+  var CHAT_RECENT_MAX = 24;
+  var CHAT_MEM_BATCH = 8;
+  var CHAT_SESSION_GAP_MS = 24 * 3600 * 1000;
+  var memoryBusy = false;
 
   function chatStoreKey(phone) {
     return CHAT_STORE_PREFIX + phone;
@@ -1485,6 +1491,7 @@
     if (historyOwner) {
       try {
         localStorage.removeItem(chatStoreKey(historyOwner));
+        localStorage.removeItem(CHAT_MEM_PREFIX + historyOwner);
       } catch (e) {}
     }
     renderThread();
@@ -2257,11 +2264,13 @@
   }
 
   function appendMessage(role, text, extra) {
+    var now = Date.now();
+    var lastTs = messages.length ? messages[messages.length - 1].ts || 0 : 0;
     var row = {
       role: role,
       text: String(text || ""),
       model: selectedModelId,
-      ts: Date.now(),
+      ts: now > lastTs ? now : lastTs + 1,
     };
     if (extra && typeof extra === "object") {
       if (extra.modelBadge) row.modelBadge = extra.modelBadge;
@@ -2277,14 +2286,9 @@
     appendMessage("assistant", text, extra);
   }
 
-  /**
-   * 短期记忆：取当前提问之前的最近对话（不含本轮思考中气泡）。
-   * @returns {{role:string,content:string}[]}
-   */
-  function buildChatHistory(currentQuestion) {
-    var maxTurns = 16;
-    var maxPer = 500;
-    var out = [];
+  /** 当前提问之前可作上下文的消息（不含本轮提问、思考中气泡、开场白） */
+  function historyRows(currentQuestion) {
+    var rows = [];
     var end = messages.length;
     // 去掉末尾「思考中…」助手气泡
     if (
@@ -2316,13 +2320,107 @@
       if (/^你好，我是 HZDV|^Hi there, you’re speaking with HZDV/i.test(text)) {
         continue;
       }
-      out.push({
-        role: m.role,
-        content: text.slice(0, maxPer),
-      });
+      rows.push({ role: m.role, text: text, ts: m.ts || 0 });
     }
-    if (out.length > maxTurns) out = out.slice(-maxTurns);
-    return out;
+    return rows;
+  }
+
+  function loadChatMemory(phone) {
+    try {
+      var mem = JSON.parse(localStorage.getItem(CHAT_MEM_PREFIX + phone) || "null");
+      if (mem && typeof mem.summary === "string" && mem.summary && mem.upto > 0) {
+        return mem;
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  /** 本次会话起点：从最新往前，相邻两条（含最新一条与现在）间隔超 24 小时即断开 */
+  function sessionStartTs(rows) {
+    var prev = Date.now();
+    var start = prev;
+    for (var i = rows.length - 1; i >= 0; i--) {
+      var ts = rows[i].ts || 0;
+      if (prev - ts > CHAT_SESSION_GAP_MS) break;
+      start = ts;
+      prev = ts;
+    }
+    return start;
+  }
+
+  /** 有效的前情摘要 + 已挤出近期窗口、尚未并入摘要的本次会话消息 */
+  function chatMemoryState(rows) {
+    var start = sessionStartTs(rows);
+    var mem = historyOwner ? loadChatMemory(historyOwner) : null;
+    if (mem && mem.upto < start) mem = null;
+    var upto = mem ? mem.upto : 0;
+    var pending = [];
+    var cut = Math.max(0, rows.length - CHAT_RECENT);
+    for (var i = 0; i < cut; i++) {
+      var ts = rows[i].ts || 0;
+      if (ts >= start && ts > upto) pending.push(rows[i]);
+    }
+    return { mem: mem, pending: pending };
+  }
+
+  function toHistoryItem(r) {
+    return { role: r.role, content: r.text.slice(0, 500) };
+  }
+
+  /**
+   * 短期记忆：最近 8 轮；已挤出窗口但尚未并入前情摘要的也一并带上（最多 12 轮）。
+   * @returns {{role:string,content:string}[]}
+   */
+  function buildChatHistory(currentQuestion) {
+    var rows = historyRows(currentQuestion);
+    var st = chatMemoryState(rows);
+    var keep = Math.min(CHAT_RECENT_MAX, CHAT_RECENT + st.pending.length);
+    return rows.slice(-keep).map(toHistoryItem);
+  }
+
+  function buildChatMemory(currentQuestion) {
+    var st = chatMemoryState(historyRows(currentQuestion));
+    return st.mem ? st.mem.summary : "";
+  }
+
+  /** 挤出窗口的消息攒够 4 轮就后台合并进前情摘要（不阻塞本轮提问） */
+  function maybeUpdateChatMemory(currentQuestion) {
+    if (memoryBusy || !historyOwner) return;
+    var st = chatMemoryState(historyRows(currentQuestion));
+    if (st.pending.length < CHAT_MEM_BATCH) return;
+    var batch = st.pending.slice(0, CHAT_RECENT_MAX);
+    var phone = historyOwner;
+    memoryBusy = true;
+    fetch("/api/llm-summary", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({
+        phone: phone,
+        summary: st.mem ? st.mem.summary : "",
+        messages: batch.map(toHistoryItem),
+      }),
+    })
+      .then(function (r) {
+        return r.json();
+      })
+      .then(function (j) {
+        if (!j || !j.success || !j.summary || historyOwner !== phone) return;
+        try {
+          localStorage.setItem(
+            CHAT_MEM_PREFIX + phone,
+            JSON.stringify({
+              summary: String(j.summary),
+              upto: batch[batch.length - 1].ts,
+              at: Date.now(),
+            })
+          );
+        } catch (e) {}
+      })
+      .catch(function () {})
+      .then(function () {
+        memoryBusy = false;
+      });
   }
 
   function submitPrompt(text) {
@@ -2440,7 +2538,9 @@
       modelId: want,
       lang: currentLang(),
       history: buildChatHistory(q),
+      memory: buildChatMemory(q),
     };
+    maybeUpdateChatMemory(q);
     if (ocrPayload) reqBody.ocr = ocrPayload;
     if (typeof window.getHzdvSystemSettings === "function") {
       try {
@@ -3334,6 +3434,7 @@
                   webCtx: webCtx || "",
                   catalogItems: ctx.catalogItems || [],
                   history: reqBody.history,
+                  memory: reqBody.memory,
                 },
                 {
                   onDelta: function (full) {
