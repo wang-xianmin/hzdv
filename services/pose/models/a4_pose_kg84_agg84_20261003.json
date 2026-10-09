@@ -1,0 +1,1 @@
+{"kind": "yolov8_pose", "name": "a4_pose_kg84_agg84_20261003_imgsz416", "imgsz": 416, "keypoints": 4, "kpt_names": ["TL", "TR", "BR", "BL"]}

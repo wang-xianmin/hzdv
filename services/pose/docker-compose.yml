@@ -1,0 +1,15 @@
+services:
+  pose:
+    build: .
+    image: hzdv-pose:latest
+    container_name: hzdv-pose
+    ports:
+      - "127.0.0.1:18093:8093"
+    env_file:
+      - .env
+    environment:
+      POSE_MODELS_DIR: /app/models
+    volumes:
+      - ./models:/app/models
+      - ./logs:/app/logs
+    restart: unless-stopped

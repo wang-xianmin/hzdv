@@ -1,0 +1,17 @@
+.env
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+models/**
+!models/.gitkeep
+!models/README.md
+!models/*.json
+*.onnx
+*.pt
+.export-venv/
+.DS_Store
+logs/
+train/
+*.bak*
+*_bak_*

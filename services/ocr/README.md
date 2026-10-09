@@ -44,18 +44,20 @@ curl -X POST http://127.0.0.1:8089/ocr \
   -F "file=@/path/to/image.jpg"
 ```
 
-返回大致为：
+返回大致为（`text` / `text_llm` 均面向 LLM/Agent，不再夹人读调试双份）：
 
 ```json
 {
   "success": true,
-  "text": "识别出的全文",
+  "text": "识别出的全文（阅读顺序，表格为 Markdown）",
+  "text_llm": "与 text 相同，供 Agent/对话送模",
   "lines": [{ "text": "...", "score": 0.98, "box": [...] }],
   "line_count": 1,
   "elapse": [...]
 }
 ```
 
+聊天区默认**不**展开 OCR 开发者预览（系统设置 `ocrShowDevPreview=0`）；结果挂到下一条用户消息送给模型。
 ## Cloudflare Pages 环境变量
 
 在 Pages → Settings → Environment variables 配置：
