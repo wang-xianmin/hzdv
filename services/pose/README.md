@@ -116,12 +116,12 @@ curl -X POST http://127.0.0.1:8093/scan/base64 \
 ## VPS 现行部署（2026-10-09）
 
 ```text
-pose.hzdv.net ─Tunnel→ 127.0.0.1:8093  pose_debug_proxy.py（宿主机进程）
-                                         └→ 127.0.0.1:18093 → hzdv-pose 容器:8093
+pose.hzdv.net ─Tunnel→ 127.0.0.1:8093 → hzdv-pose 容器:8093
 ```
 
-- 容器发布 `127.0.0.1:18093:8093`（Docker 发布端口绕过 UFW，必须绑 127.0.0.1）。
-- `pose_debug_proxy.py` 不是纯透传：它用宿主机 `models/active.onnx` 再推理一遍，按 A4 比例校准四角，置信度高于容器结果时**改写**响应里的 `corners`/`keypoints`；并把请求图片与摘要写入 `logs/`（含用户照片，勿入库）。
-- 代理为手动启动（`cd services/pose && nohup python3 -u pose_debug_proxy.py 8093 >> logs/proxy_stdout_v6i.log 2>&1 &`），用宿主机 `/usr/bin/python3.12`，需装 numpy / opencv / onnxruntime；**VPS 重启后不会自启**，`pose.hzdv.net` 会 502。
-- 代理只在启动时加载一次 `models/active.onnx`；换软链接后须重启代理，否则代理与容器用的不是同一模型。
-- `models/active.onnx`（软链接）与 `.onnx`/`.pt` 权重不入库；当前模型元数据见 `models/a4_pose_kg84_agg84_20261003.json`。
+- compose 发布 `127.0.0.1:8093:8093`（Docker 发布端口绕过 UFW，必须绑 127.0.0.1）。
+- `pose_debug_proxy.py` 已于 2026-10-09 下线，文件保留仅作回滚：回滚 = compose 改回 `127.0.0.1:18093:8093` 并 `docker compose up -d`，再 `cd services/pose && nohup python3 -u pose_debug_proxy.py 8093 >> logs/proxy_stdout_v6i.log 2>&1 &`。
+- 容器不再落盘原图，只在容器内 `/tmp/pose_last_resp.json` 保留最近一次响应。
+- 前端 ratio 校准参数（`calib_mode=ratio`）目前服务端不处理（另单跟进）；abs 偏移由前端本地叠加。
+
+`models/active.onnx`（软链接）与 `.onnx`/`.pt` 权重不入库；当前模型元数据见 `models/a4_pose_kg84_agg84_20261003.json`。

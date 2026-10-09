@@ -655,11 +655,9 @@ _last_pose = {"ts": None, "raw_path": None, "resp_path": None}
 def _persist_pose_last(raw_jpeg_bytes, resp_dict):
     import time, json
     ts = time.strftime("%Y%m%d_%H%M%S")
-    rpath = f"/tmp/pose_last_req_{ts}.jpg"
-    ppath = f"/tmp/pose_last_resp_{ts}.json"
-    open(rpath, "wb").write(raw_jpeg_bytes)
+    ppath = "/tmp/pose_last_resp.json"
     open(ppath, "w").write(json.dumps(resp_dict, ensure_ascii=False, indent=2))
-    _last_pose.update({"ts": ts, "raw_path": rpath, "resp_path": ppath})
+    _last_pose.update({"ts": ts, "raw_path": None, "resp_path": ppath})
 
 
 @app.get("/pose/debug")
