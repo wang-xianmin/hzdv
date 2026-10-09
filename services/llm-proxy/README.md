@@ -44,6 +44,30 @@ ufw allow 8092/tcp comment hzdv-llm-proxy
 
 未配置 `LLM_PROXY_SERVICE_URL` 时，行为与以前相同（CF 直连云端）。
 
+## 内置模型 ds-ocr / ds-ocr-thinking（Cursor / Trae 添加模型）
+
+| 模型 | 上游 |
+|------|------|
+| `ds-ocr` | DeepSeek `deepseek-flash`，非思考（`thinking: disabled`） |
+| `ds-ocr-thinking` | DeepSeek `deepseek-flash`，思考（`thinking: enabled`） |
+
+消息里的图片（base64 data URL）先由同机 `hzdv-ocr` 识别成文字（小图放大到长边约 2000px，按图片哈希缓存）再送模型；不抓取 http(s) 图片地址。工具调用、流式原样透传。
+
+`.env` 追加（均为 Secret，勿提交）：
+
+| 变量 | 说明 |
+|------|------|
+| `DEEPSEEK_API_KEY` | DeepSeek 密钥（服务端持有） |
+| `DS_OCR_API_KEY` | 客户端密钥，填在 Cursor / Trae 的 API Key 里（`LLM_PROXY_API_KEY` 也可用） |
+| `DS_OCR_OCR_API_KEY` | 与 `../ocr/.env` 的 `OCR_API_KEY` 一致 |
+| `DS_OCR_OCR_URL` | 默认 `http://host.docker.internal:8089` |
+
+客户端配置：Base URL `https://llm.hzdv.net/v1`，API Key 填 `DS_OCR_API_KEY`，模型名 `ds-ocr` / `ds-ocr-thinking`。Cursor 的模型设置是全局的，所有项目共用。
+
+```bash
+curl -s https://llm.hzdv.net/v1/models -H "Authorization: Bearer $DS_OCR_API_KEY"
+```
+
 ## 冒烟
 
 ```bash
