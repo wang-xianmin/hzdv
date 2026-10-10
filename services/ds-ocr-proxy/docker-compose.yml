@@ -1,0 +1,28 @@
+# 用法：
+#   cd services/ds-ocr-proxy
+#   cp .env.example .env   # 填 DEEPSEEK_API_KEY / OCR_* / DS_OCR_PROXY_API_KEY
+#   docker compose up -d --build
+#   curl http://127.0.0.1:8094/health
+
+services:
+  ds-ocr-proxy:
+    build: .
+    image: hzdv-ds-ocr-proxy:latest
+    container_name: hzdv-ds-ocr-proxy
+    ports:
+      - "${DS_OCR_PUBLISH:-8094}:8094"
+    environment:
+      DS_OCR_PROXY_API_KEY: "${DS_OCR_PROXY_API_KEY:-}"
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
+      DEEPSEEK_BASE_URL: "${DEEPSEEK_BASE_URL:-https://api.deepseek.com}"
+      DEEPSEEK_MODEL: "${DEEPSEEK_MODEL:-deepseek-flash}"
+      # Docker 内访问宿主机 OCR（Mac/Windows Docker Desktop）
+      OCR_SERVICE_URL: "${OCR_SERVICE_URL:-http://host.docker.internal:8089}"
+      OCR_API_KEY: "${OCR_API_KEY:-}"
+      DS_OCR_CORS_ORIGINS: "${DS_OCR_CORS_ORIGINS:-*}"
+      DS_OCR_UPSTREAM_TIMEOUT: "${DS_OCR_UPSTREAM_TIMEOUT:-180}"
+      DS_OCR_OCR_TIMEOUT: "${DS_OCR_OCR_TIMEOUT:-60}"
+      DS_OCR_REASONING_EFFORT: "${DS_OCR_REASONING_EFFORT:-high}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
