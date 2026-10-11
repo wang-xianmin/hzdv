@@ -11,7 +11,8 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
-COPY app.py .
+COPY app.py config.py docker-compose.yml ./
+COPY dashboard/ ./dashboard/
 
 EXPOSE 8092
 

@@ -1,9 +1,13 @@
-# 在 VPS / Mac 上启动 LLM 云端转发代理
+# HZDV LLM 代理：可插拔多模型壳 + Web 配置面板
+#
 # 用法：
 #   cd services/llm-proxy
 #   echo 'LLM_PROXY_API_KEY=换成你的密钥' > .env
 #   docker compose up -d --build
-#   curl http://127.0.0.1:8092/health
+#   curl http://127.0.0.1:8092/health          # 代理
+#   curl http://127.0.0.1:8292/                # 配置面板（仅内网）
+#
+# 面板保存 → 写 ./models.conf（与 llm-proxy 共享）→ 实时生效，无需重启。
 
 services:
   llm-proxy:
@@ -18,4 +22,34 @@ services:
       LLM_PROXY_CORS_ORIGINS: "${LLM_PROXY_CORS_ORIGINS:-*}"
       LLM_PROXY_UPSTREAM_TIMEOUT: "${LLM_PROXY_UPSTREAM_TIMEOUT:-120}"
       LLM_PROXY_CONNECT_TIMEOUT: "${LLM_PROXY_CONNECT_TIMEOUT:-15}"
+      LLM_PROXY_MODELS_CONF: "/app/models.conf"
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
+      DS_OCR_API_KEY: "${DS_OCR_API_KEY:-}"
+      DASHSCOPE_API_KEY: "${DASHSCOPE_API_KEY:-}"
+      SILICONFLOW_API_KEY: "${SILICONFLOW_API_KEY:-}"
+      DS_OCR_OCR_URL: "${DS_OCR_OCR_URL:-http://host.docker.internal:8089}"
+      DS_OCR_OCR_API_KEY: "${DS_OCR_OCR_API_KEY:-}"
+    volumes:
+      - ./models.conf:/app/models.conf
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  llm-dashboard:
+    build: .
+    image: hzdv-llm-proxy:latest
+    container_name: hzdv-llm-dashboard
+    command: ["uvicorn", "dashboard.dashboard:app", "--host", "0.0.0.0", "--port", "8094"]
+    environment:
+      LLM_PROXY_MODELS_CONF: "/app/models.conf"
+      LLM_PROXY_ENV_PATH: "/app/.env"
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
+      DS_OCR_API_KEY: "${DS_OCR_API_KEY:-}"
+      DASHSCOPE_API_KEY: "${DASHSCOPE_API_KEY:-}"
+      SILICONFLOW_API_KEY: "${SILICONFLOW_API_KEY:-}"
+    volumes:
+      - ./models.conf:/app/models.conf
+      - ./.env:/app/.env:ro
+    ports:
+      - "127.0.0.1:8292:8094"
     restart: unless-stopped
