@@ -54,6 +54,8 @@ export async function onRequest(context) {
       .map((c) => ({ type: "public-key", id: c.credential_id }));
 
     const ceremonyId = randomBase64Url(16);
+    // challenge 用 base64url 字符串；无论库内部如何处理，我们都显式地把要下发给浏览器的
+    // canonical challenge 定为 challenge，并以其 SHA-256 存库，保证 options/verify/hash 三者严格一致。
     const challenge = randomBase64Url(32);
     const challengeHash = await sha256Hex(challenge);
     const userHandle = new TextEncoder().encode(
@@ -69,7 +71,7 @@ export async function onRequest(context) {
       userDisplayName: "user",
       attestationType: "none",
       timeout: 60000,
-      challenge: challenge,
+      challenge,
       pubKeyCredParams: [
         { type: "public-key", alg: -7 },
         { type: "public-key", alg: -8 },
@@ -82,6 +84,9 @@ export async function onRequest(context) {
       },
       excludeCredentials: excludeCredentials,
     });
+
+    // 显式覆盖下发给客户端的 challenge，确保与存库 hash 一致
+    opts.challenge = challenge;
 
     await insertChallenge(d1, {
       ceremonyId,

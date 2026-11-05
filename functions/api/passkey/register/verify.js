@@ -136,6 +136,8 @@ export async function onRequest(context) {
       expectedChallenge: cdChallenge,
       expectedOrigin: cdOrigin,
       expectedRPID,
+      // 按 hard_rules：UV 落库但不强制 required
+      requireUserVerification: false,
     });
     if (!verification || verification.verified !== true) return reject("verify_lib_false");
     const reg = (verification && verification.registrationInfo) || {};
@@ -146,11 +148,15 @@ export async function onRequest(context) {
 
     let publicKeyBytes = null;
     let algorithm = 0;
-    if (reg.credentialPublicKey) {
-      publicKeyBytes =
-        reg.credentialPublicKey instanceof Uint8Array
-          ? reg.credentialPublicKey
-          : new Uint8Array(reg.credentialPublicKey);
+    if (reg.credential && reg.credential.publicKey) {
+      publicKeyBytes = reg.credential.publicKey; // COSE_Key 原始字节
+    } else if (reg.credentialPublicKey) {
+      publicKeyBytes = reg.credentialPublicKey;
+    }
+    if (publicKeyBytes) {
+      if (!(publicKeyBytes instanceof Uint8Array)) {
+        publicKeyBytes = new Uint8Array(publicKeyBytes);
+      }
       try {
         const coseMap = decodeCredentialPublicKey(publicKeyBytes) || new Map();
         algorithm = Number(coseMap.get(3)) || 0;

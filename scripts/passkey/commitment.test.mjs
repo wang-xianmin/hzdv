@@ -279,11 +279,11 @@ async function run() {
     [encText("attStmt"), encMap([])], // attStmt = {}
   ]);
 
-  function buildCredential(originOverride, rpIdHashOverride) {
+  function buildCredential(originOverride, rpIdHashOverride, challengeOverride) {
     const clientDataJSONBytes = new TextEncoder().encode(
       JSON.stringify({
         type: "webauthn.create",
-        challenge,
+        challenge: challengeOverride || challenge,
         origin: originOverride || "https://hzdv.net",
       })
     );
@@ -363,7 +363,7 @@ async function run() {
       body: JSON.stringify({
         ceremonyId: options2Body.ceremonyId,
         reauthToken,
-        credential: buildCredential("https://evil.example"),
+        credential: buildCredential("https://evil.example", null, options2Body.publicKey.challenge),
       }),
     })
   );
@@ -391,7 +391,7 @@ async function run() {
       body: JSON.stringify({
         ceremonyId: options3Body.ceremonyId,
         reauthToken,
-        credential: buildCredential("https://hzdv.net", evilRpIdHash),
+        credential: buildCredential("https://hzdv.net", evilRpIdHash, options3Body.publicKey.challenge),
       }),
     })
   );
