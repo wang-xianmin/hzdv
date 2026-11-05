@@ -589,6 +589,9 @@
             <li role="none" class="auth-menu-guest">
               <button type="button" role="menuitem" data-auth="login" data-i18n="auth_login_item">登录</button>
             </li>
+            <li role="none" class="auth-menu-guest">
+              <button type="button" role="menuitem" data-auth="passkey-login" data-i18n="auth_passkey_login">Passkey 登录</button>
+            </li>
             <li role="none" class="auth-menu-user" hidden>
               <button type="button" role="menuitem" data-auth="profile" data-i18n="auth_profile">个人资料</button>
             </li>
@@ -650,6 +653,7 @@
         login: "登录",
         auth_register: "注册",
         auth_login_item: "登录",
+        auth_passkey_login: "Passkey 登录",
         auth_profile: "个人资料",
         auth_logout: "退出",
         auth_ops: "系统运维",
@@ -672,6 +676,7 @@
         login: "Login",
         auth_register: "Register",
         auth_login_item: "Login",
+        auth_passkey_login: "Passkey",
         auth_profile: "Profile",
         auth_logout: "Log out",
         auth_ops: "System Ops",
@@ -913,6 +918,9 @@
   <script src="lib/user/catalog-admin-modal.js?v=20260810qa1"></script>
   <script src="lib/user/agent-qa-admin-modal.js?v=20260810qa1"></script>
   <script src="lib/user/system-settings-modal.js?v=20260801geo2"></script>
+  <script src="lib/user/passkey-auth.js?v=20261105t1"></script>
+  <script src="lib/user/passkey-login.js?v=20261105t3"></script>
+  <script src="lib/user/passkey-ui.js?v=20261105t4"></script>
   <script src="lib/user/login.js?v=20260803ts1"></script>
   <script src="lib/user/profile.js?v=20260729f"></script>
 </body>
