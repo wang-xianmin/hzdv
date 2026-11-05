@@ -82,3 +82,60 @@
    - 重复提交同一 challenge（同 ceremony / 同 credential）被拒
    - origin 不在白名单被拒
    - rpId 不匹配被拒
+
+---
+
+## 阶段3：登录（assertion）
+
+本轮新增登录端点，进入主站的身份证明。
+
+### 新增文件
+
+| 文件 | 作用 |
+| --- | --- |
+| `functions/api/passkey/authenticate/options.js` | `POST /api/passkey/authenticate/options`：生成 `flow='authenticate'` challenge；带 `phone`（可选）时 allowCredentials 收敛为该用户 active 凭据；无 phone 为 discoverable 模式；用户不存在/凭据为空返回同构 options（不枚举） |
+| `functions/api/passkey/authenticate/verify.js` | `POST /api/passkey/authenticate/verify`：`verifyAuthenticationResponse` 验签 → signCount CAS 更新 → 新建 `auth_session` → 返回 session token（明文只此一次，库里存 SHA-256） |
+| `functions/lib/passkey-d1.js`（增） | `loginAtomic()`：D1 `batch` 原子「消费 challenge + signCount 条件 UPDATE(CAS) + 写 auth_session」，任一失败整批回滚 |
+| `functions/lib/passkey-config.js`（增） | `sessionTtlMs()`：登录会话 TTL（`PASSKEY_SESSION_TTL_MS`，默认 7 天） |
+| `docs/PASSKEY.md` | 本文件 |
+| `scripts/passkey/assertion.test.mjs` | 登录集成测试（E2–E7） |
+
+### request / response
+
+`POST /api/passkey/authenticate/options`
+- body `{ phone?: string }`
+- → `{ ok:true, ceremonyId, publicKey:{ challenge, rpId:'hzdv.net', userVerification:'preferred', allowCredentials?:[...] } }`
+
+`POST /api/passkey/authenticate/verify`
+- body `{ ceremonyId, credential:{ id, rawId, type, response:{ clientDataJSON, authenticatorData, signature, userHandle? } } }`
+- → `{ ok:true, authMethod:'passkey', sessionToken, expiresAt, user }`
+- `sessionToken` 明文只在本次响应返回；落库为 `SHA-256(token)` 存 `auth_sessions(token_hash, auth_method='session')`。
+
+### 安全（阶段3 hard_rules 对照）
+
+- **身份服务端反查**：只认 `credentialId` → `findActiveCredentialById`（active 且绝对映射），绝不采信客户端 user id / phone / uuid。
+- **防枚举**：未知 credentialId 与签名失败返回**完全相同的模糊响应**（同 status + 同 body）。
+- **challenge**：只存 SHA-256、300s TTL、验签成功后 D1 batch 原子 `DELETE` 一次性消费；重复提交被拒。
+- **校验**：`clientDataJSON.type=='webauthn.get'`、challenge 一致、origin 白名单、rpIdHash==SHA256('hzdv.net')、UP=true；BE=0/BS=1 拒绝；BE 与注册时一致。
+- **signCount 策略**：`signCount=0` 视为同步 passkey，跳过递增校验（连续登录不误锁）；`signCount>0` 必须严格递增（库内 + `UPDATE ... WHERE sign_count=旧值` 的 CAS 双重校验，并发只有一个成功）。
+- **会话**：TTL 由调用方显式给出（`sessionTtlMs`）写 `expires_at`；仅 active 凭据可登录（`status='revoked'` 拒绝）。
+- **灰度**：所有新增逻辑由 `PASSKEY_ENABLED=false`（默认）包裹；不清生产 D1/KV、不部署生产。
+
+### 阶段3 新增/变更环境变量
+
+| 变量 | 必填 | 说明 |
+| --- | --- | --- |
+| `PASSKEY_SESSION_TTL_MS` | 否 | 登录会话 TTL（毫秒），默认 `604800000`（7 天），写入 `auth_sessions.expires_at`，不允许无过期 |
+
+### 登录集成测试（`scripts/passkey/assertion.test.mjs`）覆盖
+
+- E2 完整 assertion ceremony：options → verify 返回 session token，`auth_sessions` 出现 `auth_method='session'` 行
+- E3 同一 assertion 重放第二次被拒（一次性消费）
+- E4 signCount=0 同步 passkey 连续两次登录都成功（不误锁）
+- E5 signCount>0 用回退旧值提交被拒（克隆检测）
+- E6 未知 credentialId 与签名失败返回完全相同模糊响应
+- E7 signCount CAS 并发：同一凭据两个并发 verify 仅一个成功
+
+### 遗留（阶段3）
+
+登录端点在真实浏览器（iOS/Android/Windows/macOS）与真实 Pages 预览分支的 smoke、浏览器矩阵，以及登录页 UI（前端）仍需在后续轮完成；生产开启 `PASSKEY_ENABLED` 前需完成上述验证。

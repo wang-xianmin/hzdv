@@ -278,3 +278,70 @@ export async function revokeCredential(d1, userKey, credentialId) {
   const changes = res && res.meta ? Number(res.meta.changes) || 0 : 0;
   return changes > 0;
 }
+
+/**
+ * 登录一次性原子提交（D1 batch 保证）：
+ *   1) 消费 challenge（DELETE，一次性）
+ *   2) signCount 递增 + 更新 last_used_at/backed_up/user_verified（条件 UPDATE = CAS，防并发回退）
+ *   3) 写入 auth_session（token_hash 为 sessionTokenHash）
+ * 任一失败则整批回滚。
+ * @returns {{ challengeConsumed:boolean, credentialUpdated:boolean, sessionInserted:boolean, expiresAt:number }}
+ */
+export async function loginAtomic(d1, {
+  ceremonyId,
+  credentialId,
+  storedSignCount,
+  newSignCount,
+  backedUp,
+  userVerified,
+  userKey,
+  userUuid,
+  sessionTokenHash,
+  sessionTtlMs,
+  mfaLevel = 1,
+}) {
+  const now = Date.now();
+  const ttlMs = Math.max(1000, sessionTtlMs | 0);
+  const expiresAt = now + ttlMs;
+  const delChallenge = d1
+    .prepare(`DELETE FROM passkey_challenges WHERE ceremony_id = ?`)
+    .bind(ceremonyId);
+  const casUpdate = d1
+    .prepare(
+      `UPDATE passkey_credentials SET sign_count = ?, last_used_at = ?, backed_up = ?, user_verified = ?
+       WHERE credential_id = ? AND sign_count = ? AND status = 'active'`
+    )
+    .bind(
+      newSignCount | 0,
+      now,
+      backedUp ? 1 : 0,
+      userVerified ? 1 : 0,
+      credentialId,
+      storedSignCount | 0
+    );
+  const insertSession = d1
+    .prepare(
+      `INSERT INTO auth_sessions (token_hash, user_key, user_uuid, auth_method, mfa_level, created_at, last_seen_at, expires_at)
+       VALUES (?, ?, ?, 'session', ?, ?, ?, ?)`
+    )
+    .bind(
+      sessionTokenHash,
+      userKey,
+      userUuid || "",
+      mfaLevel,
+      now,
+      now,
+      expiresAt
+    );
+  const results = await d1.batch([delChallenge, casUpdate, insertSession]);
+  const changes = (i) => {
+    const m = results && results[i] && results[i].meta ? results[i].meta : {};
+    return Number(m.changes) || 0;
+  };
+  return {
+    challengeConsumed: changes(0) > 0,
+    credentialUpdated: changes(1) > 0,
+    sessionInserted: changes(2) > 0,
+    expiresAt,
+  };
+}

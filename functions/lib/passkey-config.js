@@ -59,3 +59,8 @@ export function reauthTtlMs(env) {
 export function challengeTtlMs(env) {
   return parsePositiveInt(env && env.PASSKEY_CHALLENGE_TTL_MS, 300000);
 }
+
+/** 登录会话 TTL（默认 7 天）。调用方显式给出，写入 auth_sessions.expires_at。 */
+export function sessionTtlMs(env) {
+  return parsePositiveInt(env && env.PASSKEY_SESSION_TTL_MS, 7 * 86400000);
+}
