@@ -599,9 +599,19 @@
               <button type="button" role="menuitem" data-auth="passkey-register" data-i18n="auth_passkey_register">注册 Passkey</button>
             </li>
             <li role="none" class="auth-menu-user" hidden>
+              <button type="button" role="menuitem" data-auth="passkey-credentials" data-i18n="auth_passkey_list">我的 Passkey</button>
+            </li>
+            <li role="none" class="auth-menu-user" hidden>
               <button type="button" role="menuitem" data-auth="logout" data-i18n="auth_logout">退出</button>
             </li>
           </ul>
+          <div
+            class="auth-dropdown"
+            id="passkeyCredentialsPanel"
+            role="dialog"
+            aria-label="Passkeys"
+            hidden
+          ></div>
         </div>
 
         <button
@@ -658,6 +668,11 @@
         auth_login_item: "登录",
         auth_passkey_login: "Passkey 登录",
         auth_passkey_register: "注册 Passkey",
+        auth_passkey_list: "我的 Passkey",
+        auth_passkey_revoke: "撤销",
+        auth_passkey_revoke_confirm: "确认撤销这把 Passkey？",
+        auth_passkey_empty: "暂无 Passkey",
+        auth_passkey_loading: "加载中…",
         auth_profile: "个人资料",
         auth_logout: "退出",
         auth_ops: "系统运维",
@@ -682,6 +697,11 @@
         auth_login_item: "Login",
         auth_passkey_login: "Passkey",
         auth_passkey_register: "Register Passkey",
+        auth_passkey_list: "My Passkeys",
+        auth_passkey_revoke: "Revoke",
+        auth_passkey_revoke_confirm: "Revoke this passkey?",
+        auth_passkey_empty: "No passkeys yet",
+        auth_passkey_loading: "Loading…",
         auth_profile: "Profile",
         auth_logout: "Log out",
         auth_ops: "System Ops",
@@ -926,7 +946,7 @@
   <script src="lib/user/passkey-auth.js?v=20261105t1"></script>
   <script src="lib/user/passkey-login.js?v=20261105t3"></script>
   <script src="lib/user/passkey-register.js?v=20261105t2"></script>
-  <script src="lib/user/passkey-ui.js?v=20261105t5"></script>
+  <script src="lib/user/passkey-ui.js?v=20261105t6"></script>
   <script src="lib/user/login.js?v=20260803ts1"></script>
   <script src="lib/user/profile.js?v=20260729f"></script>
 </body>
