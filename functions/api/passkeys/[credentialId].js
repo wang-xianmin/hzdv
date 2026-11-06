@@ -29,6 +29,14 @@ export async function onRequest(context) {
   } catch {
     body = {};
   }
+  if (!body || typeof body !== "object" || Array.isArray(body)) body = {};
+
+  // 撤销票据优先走请求头：DELETE 带 body 会被部分 CDN/WAF 丢弃。
+  // body.reauthToken 仅保留为兼容回退。
+  const headerToken = String(request.headers.get("x-reauth-token") || "").trim();
+  if (headerToken) {
+    body = Object.assign({}, body, { reauthToken: headerToken });
+  }
 
   const identity = await resolveIdentity(env, d1, request, body);
   if (!identity) return unauthorized();
