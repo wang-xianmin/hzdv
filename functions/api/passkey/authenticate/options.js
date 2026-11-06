@@ -77,6 +77,8 @@ export async function onRequest(context) {
   });
   // 显式下发 canonical challenge，保证 options 返回的 challenge 与存库 hash 一致
   opts.challenge = challenge;
+  // WebAuthn L3 hints（实验性，浏览器可忽略）：优先引导跨设备/扫码，同时保留本机入口
+  opts.hints = ["hybrid", "client-device"];
 
   await insertChallenge(d1, {
     ceremonyId,
