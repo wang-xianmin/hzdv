@@ -26,6 +26,7 @@ import {
   consumeAuthGrant,
 } from "./passkey-d1.js";
 import { hmacEnabled } from "./kv-secure.js";
+import { requireAuth } from "./auth-token.js";
 
 export const REAUTH_PREFIX = "pkrt.";
 
@@ -158,10 +159,40 @@ export async function verifyAuthSession(d1, token) {
 }
 
 /**
- * 从请求解析身份。优先级：Cookie → Authorization → body 字段。
- * 支持重票据（pkrt.）与会话 token。返回 identity 或 null。
+ * 桥接站点 auth-token（hz_auth Cookie / Authorization: Bearer）。
+ *
+ * 与 requireAuth 完全同源：签名 + tv 校验 + 超管二次验证 + KV 记录存在，
+ * 全部在服务端完成；前端拿不到、也不需要 KV 密码。
+ * 只在 session / reauth 都解析不出来时兜底。
  */
-export async function resolveIdentity(env, d1, request, body) {
+async function resolveSiteTokenIdentity(env, request) {
+  let auth = null;
+  try {
+    auth = await requireAuth({ request, env });
+  } catch {
+    return null; // fail-closed：任何异常都视为未登录
+  }
+  if (!auth || !auth.phone) return null;
+  const value = auth.value || {};
+  const userUuid = value.uuid != null ? String(value.uuid) : "";
+  return {
+    userKey: "phone:" + String(auth.phone),
+    userUuid,
+    kind: "auth_token",
+    expiresAt: Number(auth.exp || 0),
+    mfaLevel: auth.mfa ? 2 : 1,
+  };
+}
+
+/**
+ * 从请求解析身份。优先级：Cookie → Authorization → body 字段。
+ * 支持重票据（pkrt.）与会话 token；都没有时兜底桥接站点 auth-token。
+ * 返回 identity 或 null。
+ *
+ * @param {Object=} options {allowSiteToken:false} 时禁用 auth-token 桥接
+ *        （撤销等敏感操作仍要求 passkey 会话或 reauth 票据）。
+ */
+export async function resolveIdentity(env, d1, request, body, options) {
   const cookie = parseCookieHeader(request.headers.get("cookie"));
   const authz = String(request.headers.get("authorization") || "").trim();
 
@@ -193,7 +224,11 @@ export async function resolveIdentity(env, d1, request, body) {
       if (id) return id;
     }
   }
-  return null;
+  // 兜底：站点 auth-token（hz_auth Cookie / Bearer）。仅登录态即可，
+  // 因此对敏感操作（撤销）可显式关闭。
+  const opts = options || {};
+  if (opts.allowSiteToken === false) return null;
+  return await resolveSiteTokenIdentity(env, request);
 }
 
 /* ------------------------------------------------------------------ */

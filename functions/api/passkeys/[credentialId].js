@@ -38,7 +38,9 @@ export async function onRequest(context) {
     body = Object.assign({}, body, { reauthToken: headerToken });
   }
 
-  const identity = await resolveIdentity(env, d1, request, body);
+  // 撤销是敏感操作：只接受 passkey 会话或 reauth 票据，
+  // 不接受站点 auth-token 兜底（前端撤销路径仍强制 reauth）。
+  const identity = await resolveIdentity(env, d1, request, body, { allowSiteToken: false });
   if (!identity) return unauthorized();
 
   const credentialId = (params && params.credentialId) || "";
