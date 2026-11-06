@@ -1,0 +1,17 @@
+{
+  "name": "hzdv",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler pages dev . --compatibility-date 2026-08-03",
+    "functions:build": "wrangler pages functions build functions --compatibility-date 2026-08-03",
+    "passkey:test": "node scripts/passkey/commitment.test.mjs"
+  },
+  "dependencies": {
+    "@simplewebauthn/server": "14.0.3"
+  },
+  "devDependencies": {
+    "wrangler": "4.157.0"
+  }
+}

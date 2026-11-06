@@ -549,13 +549,29 @@
             <li role="none" class="auth-menu-guest">
               <button type="button" role="menuitem" data-auth="login" data-i18n="auth_login_item">登录</button>
             </li>
+            <li role="none" class="auth-menu-guest">
+              <button type="button" role="menuitem" data-auth="passkey-login" data-i18n="auth_passkey_login">Passkey 登录</button>
+            </li>
             <li role="none" class="auth-menu-user" hidden>
               <button type="button" role="menuitem" data-auth="profile" data-i18n="auth_profile">个人资料</button>
+            </li>
+            <li role="none" class="auth-menu-user" hidden>
+              <button type="button" role="menuitem" data-auth="passkey-register" data-i18n="auth_passkey_register">注册 Passkey</button>
+            </li>
+            <li role="none" class="auth-menu-user" hidden>
+              <button type="button" role="menuitem" data-auth="passkey-credentials" data-i18n="auth_passkey_list">我的 Passkey</button>
             </li>
             <li role="none" class="auth-menu-user" hidden>
               <button type="button" role="menuitem" data-auth="logout" data-i18n="auth_logout">退出</button>
             </li>
           </ul>
+          <div
+            class="auth-dropdown"
+            id="passkeyCredentialsPanel"
+            role="dialog"
+            aria-label="Passkeys"
+            hidden
+          ></div>
         </div>
 
         <button
@@ -609,6 +625,13 @@
         login: "登录",
         auth_register: "注册",
         auth_login_item: "登录",
+        auth_passkey_login: "Passkey 登录",
+        auth_passkey_register: "注册 Passkey",
+        auth_passkey_list: "我的 Passkey",
+        auth_passkey_revoke: "撤销",
+        auth_passkey_revoke_confirm: "确认撤销这把 Passkey？",
+        auth_passkey_empty: "暂无 Passkey",
+        auth_passkey_loading: "加载中…",
         auth_profile: "个人资料",
         auth_logout: "退出",
         auth_ops: "系统运维",
@@ -631,6 +654,13 @@
         login: "Login",
         auth_register: "Register",
         auth_login_item: "Login",
+        auth_passkey_login: "Passkey",
+        auth_passkey_register: "Register Passkey",
+        auth_passkey_list: "My Passkeys",
+        auth_passkey_revoke: "Revoke",
+        auth_passkey_revoke_confirm: "Revoke this passkey?",
+        auth_passkey_empty: "No passkeys yet",
+        auth_passkey_loading: "Loading…",
         auth_profile: "Profile",
         auth_logout: "Log out",
         auth_ops: "System Ops",
@@ -864,8 +894,9 @@
   <script src="agent/public/ai-assist-models.js?v=20260816g1"></script>
   <script src="agent/public/ai-assist-websearch-refine.js?v=20260801wr2"></script>
   <script src="agent/public/ai-assist.js?v=20261008mem1"></script>
-  <script src="lib/user/app-stubs.js?v=20261006nopwd1"></script>  <script src="lib/vendor/ag-grid/ag-grid-community.min.js"></script>
-  <script src="lib/user/login-shell.js?v=20261006wxl3"></script>
+  <script src="lib/user/app-stubs.js?v=20261006nopwd1"></script>
+  <script src="lib/vendor/ag-grid/ag-grid-community.min.js"></script>
+  <script src="lib/user/login-shell.js?v=20261106pk1"></script>
   <script src="lib/user/new-user-register.js"></script>
   <script src="lib/user/user-list-grid.js?v=20261005wxut2"></script>
   <script src="lib/user/user-list-modal.js"></script>
@@ -874,7 +905,14 @@
   <script src="lib/user/agent-qa-admin-modal.js?v=20261007qadup1"></script>
   <script src="lib/user/ops-docs-admin-modal.js?v=20260925pdf1"></script>
   <script src="lib/user/system-settings-modal.js?v=20260918w1"></script>
-  <script src="lib/user/login.js?v=20261006rej1"></script>
+  <script src="lib/user/passkey-auth.js?v=20261105t7"></script>
+  <script src="lib/user/passkey-login.js?v=20261105t7"></script>
+  <script src="lib/user/passkey-register.js?v=20261105t7"></script>
+  <script src="lib/user/passkey-ui.js?v=20261105t7"></script>
+  <script src="lib/user/vendor/qrcode-generator.min.js?v=20261106t1"></script>
+  <script src="lib/user/passkey-qr.js?v=20261106t1"></script>
+  <script src="lib/user/passkey-qr-scan.js?v=20261106t1"></script>
+  <script src="lib/user/login.js?v=20261106pk2"></script>
   <script src="lib/user/profile.js?v=20261006wxd1"></script>
 </body>
 </html>
