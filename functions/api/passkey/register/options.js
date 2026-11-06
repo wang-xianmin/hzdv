@@ -63,7 +63,7 @@ export async function onRequest(context) {
     );
     const rpID = rpId(env);
 
-    const opts = generateRegistrationOptions({
+    const opts = await generateRegistrationOptions({
       rpName: rpName(env),
       rpID,
       userID: userHandle,

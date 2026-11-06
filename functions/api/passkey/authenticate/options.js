@@ -68,7 +68,7 @@ export async function onRequest(context) {
     }
   }
 
-  const opts = generateAuthenticationOptions({
+  const opts = await generateAuthenticationOptions({
     rpID,
     challenge,
     allowCredentials,
