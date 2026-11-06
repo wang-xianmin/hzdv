@@ -17,6 +17,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import vm from "node:vm";
 import path from "node:path";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -172,7 +173,38 @@ class D1Adapter {
   }
 }
 
-function makeEnv() {
+/** 最小 Workers KV 适配层（供真实 readKvUser/writeKvUser 使用）。 */
+class MockKv {
+  constructor() {
+    this.map = new Map();
+  }
+  async getWithMetadata(key) {
+    const hit = this.map.get(key);
+    if (!hit) return { value: null, metadata: null };
+    return { value: hit.value, metadata: hit.metadata };
+  }
+  async get(key) {
+    const hit = this.map.get(key);
+    if (!hit) return null;
+    return {
+      value: null,
+      metadata: hit.metadata,
+      text: async () => String(hit.value),
+      json: async () => JSON.parse(String(hit.value)),
+    };
+  }
+  async put(key, value, opts) {
+    this.map.set(key, { value, metadata: opts && opts.metadata });
+  }
+  async delete(key) {
+    this.map.delete(key);
+  }
+  async list() {
+    return { keys: Array.from(this.map.keys()).map((name) => ({ name })) };
+  }
+}
+
+function makeEnv(kv) {
   return {
     PASSKEY_ENABLED: "true",
     PASSKEY_RP_ID: "hzdv.net",
@@ -184,6 +216,7 @@ function makeEnv() {
     PASSKEY_DEBUG_TRACE: "1",
     HMAC_SECRET: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     ENCRYPTION_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    dv_kv: kv,
   };
 }
 
@@ -221,11 +254,13 @@ async function run() {
   db.exec(readFileSync(MIGRATION_0006, "utf8"));
   db.exec(readFileSync(MIGRATION_0007, "utf8"));
   const d1 = new D1Adapter(db);
-  const env = makeEnv();
+  const kv = new MockKv();
+  const env = makeEnv(kv);
   env.hzdvd1 = d1;
   const ctx = (url, init) => ({ request: new Request(url, init), env, params: {} });
 
   const { insertCredential } = await import(path.resolve(__dirname, "../../functions/lib/passkey-d1.js"));
+  const { writeKvUser } = await import(path.resolve(__dirname, "../../functions/lib/kv-secure.js"));
   const { resolveIdentity } = await import(path.resolve(__dirname, "../../functions/lib/passkey-auth.js"));
   const { onRequest: initHandler } = await import(path.resolve(__dirname, "../../functions/api/passkey/qr/init.js"));
   const { onRequest: pollHandler } = await import(path.resolve(__dirname, "../../functions/api/passkey/qr/poll.js"));
@@ -235,6 +270,19 @@ async function run() {
 
   const userKey = "phone:13900001111";
   const userUuid = "uuid-qr";
+  const fullWxu = "wx-openid-secret-value";
+  await writeKvUser(kv, env, userKey, {
+    uuid: userUuid,
+    name: "KV 用户名",
+    email: "kv-user@example.com",
+    pwd: "plain-password-must-not-leak",
+    wxu: fullWxu,
+    avatar_url: "https://example.com/avatar.png",
+    avatar_r2_key: "avatar-r2-key",
+    avatar_data_url: "data:image/png;base64,AAA",
+    group: "group-a",
+    g_role: 1,
+  }, { status: 1, type: "2" });
   const kp = await generateEs256KeyPair();
   const credId = b64url(newBytes(32));
   await insertCredential(d1, {
@@ -299,6 +347,16 @@ async function run() {
   const cBody = await cResp.json();
   ok("claim_status", cResp.status);
   ok("claim_has_token", !!cBody.sessionToken);
+  ok("claim_user_key", cBody.user && cBody.user.userKey === userKey);
+  ok("claim_user_uuid", cBody.user && cBody.user.userUuid === userUuid);
+  ok("claim_stored_username", cBody.user && cBody.user.stored_username === "KV 用户名");
+  ok("claim_stored_email", cBody.user && cBody.user.stored_email === "kv-user@example.com");
+  ok("claim_user_data_uuid", cBody.user && cBody.user.user_data && cBody.user.user_data.other_data === userUuid);
+  ok("claim_wxu_prefix", cBody.user && cBody.user.user_data && cBody.user.user_data.wxu_prefix === fullWxu.slice(0, 8));
+  ok("claim_pwd_empty", cBody.user && cBody.user.user_data && cBody.user.user_data.pwd === "");
+  ok("claim_no_pwd_hash", JSON.stringify(cBody).indexOf("pwd_hash") < 0);
+  ok("claim_no_plain_password", JSON.stringify(cBody).indexOf("plain-password-must-not-leak") < 0);
+  ok("claim_no_full_wxu", JSON.stringify(cBody).indexOf(fullWxu) < 0);
   const c2 = await claimHandler(ctx(`https://hzdv.net/api/passkey/qr/claim?sid=${sid}`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
   }));
@@ -324,7 +382,71 @@ async function run() {
   }));
   ok("expired_claim_status", c3.status);
 
-  // 9) PASSKEY_ENABLED=false → 404
+  // 9) 无 KV 用户时：claim 仍成功，资料安全降级为空投影
+  const envNoKv = makeEnv();
+  envNoKv.hzdvd1 = d1;
+  const ctxNoKv = (url, init) => ({ request: new Request(url, init), env: envNoKv, params: {} });
+  const initNoKvResp = await initHandler(ctxNoKv("https://hzdv.net/api/passkey/qr/init", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+  }));
+  const initNoKvBody = await initNoKvResp.json();
+  const sidNoKv = initNoKvBody.session_id;
+  const chNoKvResp = await challengeHandler(ctxNoKv(`https://hzdv.net/api/passkey/qr/challenge?sid=${sidNoKv}`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+  }));
+  const chNoKvBody = await chNoKvResp.json();
+  const assertionNoKv = await buildAssertion(chNoKvBody.publicKey.challenge, 1, { signKey: kp.privateKey, credentialId: credId, origin: "https://hzdv.net" });
+  const vNoKvResp = await verifyHandler(ctxNoKv(`https://hzdv.net/api/passkey/qr/verify?sid=${sidNoKv}`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: sidNoKv, credential: assertionNoKv }),
+  }));
+  ok("no_kv_verify_status", vNoKvResp.status);
+  const cNoKvResp = await claimHandler(ctxNoKv(`https://hzdv.net/api/passkey/qr/claim?sid=${sidNoKv}`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+  }));
+  const cNoKvBody = await cNoKvResp.json();
+  ok("no_kv_claim_status", cNoKvResp.status);
+  ok("no_kv_stored_username_empty", cNoKvBody.user && cNoKvBody.user.stored_username === "");
+  ok("no_kv_stored_email_empty", cNoKvBody.user && cNoKvBody.user.stored_email === "");
+  ok("no_kv_user_data_empty", cNoKvBody.user && cNoKvBody.user.user_data && Object.keys(cNoKvBody.user.user_data).length === 0);
+
+  const passkeyQrClientSrc = readFileSync(path.resolve(__dirname, "../../lib/user/passkey-qr.js"), "utf8");
+  const profileClientSrc = readFileSync(path.resolve(__dirname, "../../lib/user/profile.js"), "utf8");
+  ok("client_no_hardcoded_passkey_user", passkeyQrClientSrc.indexOf("通行密钥用户") < 0);
+  ok("client_username_fallback_to_phone", /stored_username[\s\S]{0,120}\|\|\s*phone/.test(passkeyQrClientSrc));
+  ok("profile_cached_wxu_prefix", /__LENG_USER[\s\S]{0,300}wxu_prefix/.test(profileClientSrc));
+
+  // 客户端 applyDesktopLogin 真实源码行为：使用 claim 字段；无资料时回退手机号。
+  const applyStart = passkeyQrClientSrc.indexOf("function applyDesktopLogin(user)");
+  const applyEnd = passkeyQrClientSrc.indexOf("async function confirm()", applyStart);
+  const applySrc = passkeyQrClientSrc.slice(applyStart, applyEnd);
+  const clientCalls = [];
+  const clientSandbox = {
+    global: {
+      markProfileNavUnlockedByLogin(...args) { clientCalls.push(args); },
+      L_ENG_Register: null,
+      syncAuthMenuMode() {},
+    },
+  };
+  vm.createContext(clientSandbox);
+  vm.runInContext(applySrc + "\nglobalThis.__applyDesktopLogin = applyDesktopLogin;", clientSandbox);
+  clientSandbox.__applyDesktopLogin({
+    userKey: "phone:13900001111",
+    userUuid: "uuid-qr",
+    stored_username: "KV 用户名",
+    stored_email: "kv-user@example.com",
+    user_data: { other_data: "uuid-qr", pwd: "", wxu_prefix: fullWxu.slice(0, 8) },
+  });
+  ok("client_uses_claim_username", clientCalls[0] && clientCalls[0][1] === "KV 用户名");
+  ok("client_uses_claim_email", clientCalls[0] && clientCalls[0][2] === "kv-user@example.com");
+  ok("client_uses_claim_user_data", clientCalls[0] && clientCalls[0][5] && clientCalls[0][5].wxu_prefix === fullWxu.slice(0, 8));
+  clientCalls.length = 0;
+  clientSandbox.__applyDesktopLogin({ userKey: "phone:13900001111", userUuid: "uuid-qr" });
+  ok("client_fallback_username_phone", clientCalls[0] && clientCalls[0][1] === "13900001111");
+  ok("client_fallback_email_empty", clientCalls[0] && clientCalls[0][2] === "");
+  ok("client_fallback_user_data_empty", clientCalls[0] && clientCalls[0][5] && Object.keys(clientCalls[0][5]).length === 0);
+
+  // 10) PASSKEY_ENABLED=false → 404
   const envOff = makeEnv();
   envOff.PASSKEY_ENABLED = "false";
   envOff.hzdvd1 = d1;
@@ -347,10 +469,34 @@ async function run() {
   assert(out.steps.find((s) => s.poll_no_raw_user_key)?.poll_no_raw_user_key === true, "no raw user_key");
   assert(out.steps.find((s) => s.claim_status)?.claim_status === 200, "claim 200");
   assert(out.steps.find((s) => s.claim_has_token)?.claim_has_token === true, "claim token");
+  assert(out.steps.find((s) => s.claim_user_key)?.claim_user_key === true, "claim user key");
+  assert(out.steps.find((s) => s.claim_user_uuid)?.claim_user_uuid === true, "claim user uuid");
+  assert(out.steps.find((s) => s.claim_stored_username)?.claim_stored_username === true, "claim username");
+  assert(out.steps.find((s) => s.claim_stored_email)?.claim_stored_email === true, "claim email");
+  assert(out.steps.find((s) => s.claim_user_data_uuid)?.claim_user_data_uuid === true, "claim user data uuid");
+  assert(out.steps.find((s) => s.claim_wxu_prefix)?.claim_wxu_prefix === true, "claim wxu prefix");
+  assert(out.steps.find((s) => s.claim_pwd_empty)?.claim_pwd_empty === true, "claim pwd empty");
+  assert(out.steps.find((s) => s.claim_no_pwd_hash)?.claim_no_pwd_hash === true, "no pwd hash");
+  assert(out.steps.find((s) => s.claim_no_plain_password)?.claim_no_plain_password === true, "no plain password");
+  assert(out.steps.find((s) => s.claim_no_full_wxu)?.claim_no_full_wxu === true, "no full wxu");
   assert(out.steps.find((s) => s.second_claim_status)?.second_claim_status === 409, "second claim 409");
   assert(out.steps.find((s) => s.token_is_real_session)?.token_is_real_session === true, "real session");
   assert(out.steps.find((s) => s.replay_verify_status)?.replay_verify_status === 400, "replay rejected");
   assert(out.steps.find((s) => s.expired_claim_status)?.expired_claim_status === 409, "expired claim 409");
+  assert(out.steps.find((s) => s.no_kv_verify_status)?.no_kv_verify_status === 200, "no kv verify 200");
+  assert(out.steps.find((s) => s.no_kv_claim_status)?.no_kv_claim_status === 200, "no kv claim 200");
+  assert(out.steps.find((s) => s.no_kv_stored_username_empty)?.no_kv_stored_username_empty === true, "no kv username empty");
+  assert(out.steps.find((s) => s.no_kv_stored_email_empty)?.no_kv_stored_email_empty === true, "no kv email empty");
+  assert(out.steps.find((s) => s.no_kv_user_data_empty)?.no_kv_user_data_empty === true, "no kv user data empty");
+  assert(out.steps.find((s) => s.client_no_hardcoded_passkey_user)?.client_no_hardcoded_passkey_user === true, "no hardcoded passkey user");
+  assert(out.steps.find((s) => s.client_username_fallback_to_phone)?.client_username_fallback_to_phone === true, "username fallback phone");
+  assert(out.steps.find((s) => s.profile_cached_wxu_prefix)?.profile_cached_wxu_prefix === true, "profile cached wxu prefix");
+  assert(out.steps.find((s) => s.client_uses_claim_username)?.client_uses_claim_username === true, "client claim username");
+  assert(out.steps.find((s) => s.client_uses_claim_email)?.client_uses_claim_email === true, "client claim email");
+  assert(out.steps.find((s) => s.client_uses_claim_user_data)?.client_uses_claim_user_data === true, "client claim user data");
+  assert(out.steps.find((s) => s.client_fallback_username_phone)?.client_fallback_username_phone === true, "client fallback username phone");
+  assert(out.steps.find((s) => s.client_fallback_email_empty)?.client_fallback_email_empty === true, "client fallback email empty");
+  assert(out.steps.find((s) => s.client_fallback_user_data_empty)?.client_fallback_user_data_empty === true, "client fallback user data empty");
   assert(out.steps.find((s) => s.disabled_status)?.disabled_status === 404, "disabled 404");
   console.log("[qr-session.test] PASS");
 }
