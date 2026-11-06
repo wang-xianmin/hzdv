@@ -36,8 +36,8 @@ export async function insertQrSession(d1, { sessionId, rpId, origin, ttlMs }) {
     .prepare(
       `INSERT INTO passkey_qr_sessions (
          session_id, status, user_key, user_uuid, challenge_hash, challenge_plain,
-         rp_id, origin, session_token, created_at, expires_at)
-       VALUES (?, 'pending', NULL, '', NULL, NULL, ?, ?, NULL, ?, ?)`
+         rp_id, origin, session_token, created_at, expires_at, flow)
+       VALUES (?, 'pending', NULL, '', NULL, NULL, ?, ?, NULL, ?, ?, 'login')`
     )
     .bind(sessionId, rpId, origin, now, expiresAt)
     .run();
@@ -48,9 +48,9 @@ export async function findQrSession(d1, sessionId) {
   const row = await d1
     .prepare(
       `SELECT session_id, status, user_key, user_uuid, challenge_hash, challenge_plain,
-              rp_id, origin, session_token, created_at, expires_at
+              rp_id, origin, session_token, created_at, expires_at, flow
          FROM passkey_qr_sessions
-        WHERE session_id = ?`
+        WHERE session_id = ? AND flow = 'login'`
     )
     .bind(sessionId)
     .first();
@@ -62,7 +62,7 @@ export async function setQrChallenge(d1, sessionId, { challengeHash, challengePl
   const res = await d1
     .prepare(
       `UPDATE passkey_qr_sessions SET challenge_hash = ?, challenge_plain = ?
-        WHERE session_id = ? AND status = 'pending' AND expires_at > ?`
+        WHERE session_id = ? AND flow = 'login' AND status = 'pending' AND expires_at > ?`
     )
     .bind(challengeHash, challengePlain, sessionId, Date.now())
     .run();
@@ -120,7 +120,7 @@ export async function completeQrSession(
       `UPDATE passkey_qr_sessions
           SET status = 'success', user_key = ?, user_uuid = ?,
               challenge_hash = NULL, challenge_plain = NULL, session_token = ?
-        WHERE session_id = ? AND status = 'pending' AND expires_at > ?`
+        WHERE session_id = ? AND flow = 'login' AND status = 'pending' AND expires_at > ?`
     )
     .bind(userKey, userUuid || "", sessionToken, sessionId, now);
   const insertSession = d1
@@ -176,7 +176,7 @@ export async function claimQrSession(d1, sessionId) {
   const res = await d1
     .prepare(
       `UPDATE passkey_qr_sessions SET session_token = NULL
-        WHERE session_id = ? AND status = 'success' AND session_token = ?`
+        WHERE session_id = ? AND flow = 'login' AND status = 'success' AND session_token = ?`
     )
     .bind(sessionId, token)
     .run();
@@ -199,4 +199,49 @@ export async function cleanupExpiredQrSessions(d1) {
       .bind(Date.now() - 60000)
       .run();
   } catch (e) {}
+}
+
+/* ------------------------------------------------------------------ */
+/* 扫码注册（flow='register'）：电脑出码，手机上 create，私钥在手机      */
+/*                                                                     */
+/* 身份来源：桌面端发起时的登录态（会话 / reauth / 站点 auth-token）， */
+/* 由桌面预写入 user_key/user_uuid；手机端不提供也不被信任任何身份。   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 建一条扫码注册会话：flow='register'，user_key 预先写入（来自桌面登录态）。
+ * 需要先执行 migrations/0007_passkey_qr_register.sql。
+ */
+export async function insertQrRegisterSession(
+  d1,
+  { sessionId, rpId, origin, userKey, userUuid, ttlMs }
+) {
+  const now = Date.now();
+  const expiresAt = now + Math.max(1000, Math.min(QR_SESSION_MAX_TTL_MS, ttlMs | 0));
+  await d1
+    .prepare(
+      `INSERT INTO passkey_qr_sessions (
+         session_id, status, user_key, user_uuid, challenge_hash, challenge_plain,
+         rp_id, origin, session_token, created_at, expires_at, flow)
+       VALUES (?, 'pending', ?, ?, NULL, NULL, ?, ?, NULL, ?, ?, 'register')`
+    )
+    .bind(sessionId, userKey, userUuid || "", rpId, origin, now, expiresAt)
+    .run();
+  return { createdAt: now, expiresAt };
+}
+
+/** 只取扫码注册会话（flow 必须是 register）；登录流程的会话一律返回 null。 */
+export async function findQrRegisterSession(d1, sessionId) {
+  const row = await d1
+    .prepare(
+      `SELECT session_id, status, user_key, user_uuid, challenge_hash, challenge_plain,
+              rp_id, origin, session_token, created_at, expires_at, flow
+         FROM passkey_qr_sessions
+        WHERE session_id = ?`
+    )
+    .bind(sessionId)
+    .first();
+  if (!row) return null;
+  if (String(row.flow || "login") !== "register") return null;
+  return row;
 }

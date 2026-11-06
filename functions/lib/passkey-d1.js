@@ -176,6 +176,63 @@ export async function insertCredential(d1, cred) {
 }
 
 /**
+ * 原子完成扫码注册：仅当 QR 会话仍是 pending/register 时插入 credential，
+ * 随后把会话置 success。身份从 session.user_key/user_uuid 读取，不接受调用方传入。
+ *
+ * INSERT ... SELECT ... WHERE EXISTS 使并发重放只会有一次插入成功；第二次
+ * 插入 changes=0，不会遗留额外凭据。
+ */
+export async function completeQrRegisterSession(d1, { sessionId, credential }) {
+  const now = Date.now();
+  const insert = d1
+    .prepare(
+      `INSERT INTO passkey_credentials (
+         user_key, user_uuid, credential_id, public_key_cose, algorithm,
+         sign_count, transports, aaguid, backup_eligible, backed_up,
+         user_verified, attestation_format, attestation_type, credential_device_type,
+         rp_id, origin, status, created_at, label)
+       SELECT s.user_key, s.user_uuid, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?
+         FROM passkey_qr_sessions s
+        WHERE s.session_id = ? AND s.flow = 'register' AND s.status = 'pending' AND s.expires_at > ?`
+    )
+    .bind(
+      credential.credentialId,
+      credential.publicKeyCose,
+      credential.algorithm,
+      credential.signCount || 0,
+      JSON.stringify(credential.transports || []),
+      credential.aaguid || "",
+      credential.backupEligible ? 1 : 0,
+      credential.backedUp ? 1 : 0,
+      credential.userVerified ? 1 : 0,
+      credential.attestationFormat || "none",
+      credential.attestationType || "none",
+      credential.credentialDeviceType || "",
+      credential.rpId,
+      credential.origin,
+      now,
+      credential.label || "",
+      sessionId,
+      now
+    );
+  const complete = d1
+    .prepare(
+      `UPDATE passkey_qr_sessions
+          SET status = 'success', challenge_hash = NULL, challenge_plain = NULL
+        WHERE session_id = ? AND flow = 'register' AND status = 'pending' AND expires_at > ?`
+    )
+    .bind(sessionId, now);
+
+  const results = await d1.batch([insert, complete]);
+  const insertMeta = results && results[0] && results[0].meta ? results[0].meta : {};
+  const completeMeta = results && results[1] && results[1].meta ? results[1].meta : {};
+  return {
+    inserted: Number(insertMeta.changes) > 0,
+    completed: Number(completeMeta.changes) > 0,
+  };
+}
+
+/**
  * 原子「消费 ceremony + 插入 credential」。
  * 用 D1 batch 保证一次性：验证成功后才写凭据，且同 ceremony/同 credential 重放会被拒绝。
  * @returns {{ consumed: boolean, inserted: boolean, lastId: number|null }}

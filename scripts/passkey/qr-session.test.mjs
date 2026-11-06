@@ -22,6 +22,7 @@ import path from "node:path";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATION_0005 = path.resolve(__dirname, "../../migrations/0005_passkey.sql");
 const MIGRATION_0006 = path.resolve(__dirname, "../../migrations/0006_passkey_qr_sessions.sql");
+const MIGRATION_0007 = path.resolve(__dirname, "../../migrations/0007_passkey_qr_register.sql");
 
 /* ---------- helpers ---------- */
 function encBytes(u8) {
@@ -218,6 +219,7 @@ async function run() {
   const db = new DatabaseSync(":memory:");
   db.exec(readFileSync(MIGRATION_0005, "utf8"));
   db.exec(readFileSync(MIGRATION_0006, "utf8"));
+  db.exec(readFileSync(MIGRATION_0007, "utf8"));
   const d1 = new D1Adapter(db);
   const env = makeEnv();
   env.hzdvd1 = d1;
