@@ -70,10 +70,23 @@ async function run() {
 
   const calls = [];
   let registerShouldFail = false;
+  let revokeShouldFail = false;
+  let confirmAnswer = true;
+  globalThis.confirm = (msg) => { calls.push({ fn: "confirm", msg }); return confirmAnswer; };
   globalThis.HZDVPasskeyAuth = {
     VAGUE_FAIL: "vague",
     listPasskeys: async () => { calls.push({ fn: "list" }); return { credentials: [{ id: "cred-1", name: "MacBook", createdAt: 1750000000000 }] }; },
-    revokePasskey: async (id, token) => { calls.push({ fn: "revoke", id, token }); return { ok: true }; },
+    revokePasskey: async (id, token) => {
+      calls.push({ fn: "revoke", id, token });
+      // 无票据且服务端判定无身份 → 401（与真实后端一致：有站点登录态才允许免 reauth 撤销）
+      if (revokeShouldFail && !token) {
+        const err = new Error("vague");
+        err.status = 401;
+        err.needReauth = true;
+        throw err;
+      }
+      return { ok: true };
+    },
     fetchJSON: async (url, opts) => {
       calls.push({ fn: "fetchJSON", url, method: opts && opts.method, headers: opts && opts.headers, hasBody: !!(opts && opts.body != null) });
       if (url === "/api/passkey/reauth") return { reauthToken: "tk-123" };
@@ -119,7 +132,7 @@ async function run() {
   check("reauth 浮层 fixed + z-index 3000", !!panel && panel.style.position === "fixed" && panel.style.zIndex === "3000");
   check("reauth 浮层可滚动（窄屏不裁剪）", !!panel && panel.style.overflow === "auto" && !!panel.style.maxHeight);
 
-  // --- 撤销：先 reauth，票据走请求头 ---
+  // --- 撤销：先无票据直撤（站点登录态），仅 401 才回退 reauth 浮层 ---
   const container = makeEl("div");
   let revokedId = null;
   mgr.renderSummary(container, list, { onRevoke: (id) => { revokedId = id; } });
@@ -129,21 +142,48 @@ async function run() {
   revokeBtn.handlers.click[0]({ preventDefault() {}, stopPropagation() {} });
   check("撤销回调收到 credentialId", revokedId === "cred-1");
 
+  const reauthPanels = () => body.children.filter((c) => c.getAttribute && c.getAttribute("id") === "passkeyReauthPanel");
+
+  // 场景 1：用户点「取消」→ 不发任何撤销请求
+  calls.length = 0;
+  confirmAnswer = false;
   mgr.revoke("cred-1", { triggerButton: revokeBtn, onSuccess: () => calls.push({ fn: "onSuccess" }) });
-  const panel2 = body.children.find((c) => c.getAttribute && c.getAttribute("id") === "passkeyReauthPanel");
-  check("撤销也走同一个 reauth 浮层", !!panel2);
-  const phone = panel2.children.find((c) => c.getAttribute && c.getAttribute("data-passkey-reauth-phone") !== null);
-  const pwd = panel2.children.find((c) => c.getAttribute && c.getAttribute("data-passkey-reauth-password") !== null);
-  const submit = panel2.children[4].children[0];
+  await new Promise((r) => setTimeout(r, 20));
+  check("撤销弹 confirm 且文案是产品原文", calls.some((c) => c.fn === "confirm" && c.msg === "撤销通行密钥，需要同步删除手机上的hzdv.net私钥"), JSON.stringify(calls.filter((c) => c.fn === "confirm")));
+  check("confirm 选 N → 不发撤销请求", !calls.some((c) => c.fn === "revoke"));
+  check("confirm 选 N → 不触发 onSuccess", !calls.some((c) => c.fn === "onSuccess"));
+
+  // 场景 2：站点登录态可撤销 → 直接 DELETE（无票据），不弹 reauth 浮层
+  calls.length = 0;
+  confirmAnswer = true;
+  const panelsBefore = reauthPanels().length;
+  mgr.revoke("cred-1", { triggerButton: revokeBtn, onSuccess: () => calls.push({ fn: "onSuccess" }) });
+  await new Promise((r) => setTimeout(r, 20));
+  const directCall = calls.find((c) => c.fn === "revoke");
+  check("撤销先走无票据 DELETE（靠站点 Cookie 身份）", !!directCall && !directCall.token, JSON.stringify(directCall));
+  check("站点登录态可撤销 → 不弹 reauth 浮层", reauthPanels().length === panelsBefore);
+  check("撤销成功触发 onSuccess（不整页 reload）", calls.some((c) => c.fn === "onSuccess"));
+
+  // 场景 3：服务端 401（无站点身份）→ 回退 reauth 浮层，验证通过后带票据重试
+  calls.length = 0;
+  revokeShouldFail = true;
+  mgr.revoke("cred-2", { triggerButton: revokeBtn, onSuccess: () => calls.push({ fn: "onSuccess" }) });
+  await new Promise((r) => setTimeout(r, 20));
+  check("撤销 401 → 走 reauth 浮层（复用已有浮层，不新建）", reauthPanels().length === panelsBefore);
+  check("撤销 401 后尚未成功（等 reauth）", !calls.some((c) => c.fn === "onSuccess"));
+  const revokePanel = reauthPanels().pop();
+  const phone = revokePanel.children.find((c) => c.getAttribute && c.getAttribute("data-passkey-reauth-phone") !== null);
+  const pwd = revokePanel.children.find((c) => c.getAttribute && c.getAttribute("data-passkey-reauth-password") !== null);
+  const submit = revokePanel.children[4].children[0];
   phone.value = "13800000000";
   pwd.value = "secret";
   await submit.handlers.click[0]();
   await new Promise((r) => setTimeout(r, 20));
 
-  const revokeCall = calls.find((c) => c.fn === "revoke");
-  check("撤销票据传给 revokePasskey", !!revokeCall && revokeCall.token === "tk-123");
+  const revokeCall = calls.find((c) => c.fn === "revoke" && c.token === "tk-123");
+  check("撤销票据传给 revokePasskey", !!revokeCall);
   check("撤销请求不带 body（票据走请求头）", !calls.some((c) => c.fn === "fetchJSON" && c.url && c.url.includes("/api/passkeys/") && c.hasBody));
-  check("撤销成功触发 onSuccess（不整页 reload）", calls.some((c) => c.fn === "onSuccess"));
+  check("reauth 后撤销成功触发 onSuccess", calls.some((c) => c.fn === "onSuccess"));
 
   if (failures) {
     console.error(`\n[profile-ui.test] FAILED (${failures})`);

@@ -1,6 +1,7 @@
 /**
  * DELETE /api/passkeys/:credentialId
- * 撤销一把 passkey（软删，保留审计）。需要有效会话或 reauth 票据，且凭据必须属于当前用户。
+ * 撤销一把 passkey（软删，保留审计）。需要可验证身份（passkey 会话 / reauth 票据 /
+ * 站点登录态），且凭据必须属于当前用户。
  */
 
 import { passkeyEnabled } from "../../lib/passkey-config.js";
@@ -38,9 +39,11 @@ export async function onRequest(context) {
     body = Object.assign({}, body, { reauthToken: headerToken });
   }
 
-  // 撤销是敏感操作：只接受 passkey 会话或 reauth 票据，
-  // 不接受站点 auth-token 兜底（前端撤销路径仍强制 reauth）。
-  const identity = await resolveIdentity(env, d1, request, body, { allowSiteToken: false });
+  // 撤销身份：passkey 会话 / reauth 票据 / 站点登录态（hz_auth Cookie）均可，
+  // 与 list / register 保持一致（它们默认都允许站点 token 兜底）。
+  // 个人资料已登录时可直接撤销服务端凭据记录；客户端仍会提示用户
+  // 同步删除手机上的 hzdv.net 私钥（见 passkey-ui.js 的 confirm 文案）。
+  const identity = await resolveIdentity(env, d1, request, body);
   if (!identity) return unauthorized();
 
   const credentialId = (params && params.credentialId) || "";
