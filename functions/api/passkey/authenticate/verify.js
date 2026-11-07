@@ -41,6 +41,10 @@ import {
   randomBase64Url,
 } from "../../../lib/passkey-crypto.js";
 import { rateLimit, clientBucketId } from "../../../lib/passkey-rate.js";
+import { pickKvBinding } from "../../../lib/kv-binding.js";
+import { readKvUser } from "../../../lib/kv-secure.js";
+import { roleOf } from "../../../lib/auth-roles.js";
+import { issueSiteAuthToken, buildClearMfaCookie } from "../../../lib/auth-token.js";
 
 /** 未知 credentialId 与签名失败共用的同一模糊响应（防枚举）。 */
 function authFail(status, env, stage) {
@@ -174,7 +178,40 @@ export async function onRequest(context) {
       return authFail(409, env, "concurrent"); // challenge 已消费 / signCount CAS 失败（并发回退）
     }
 
-    return jsonResponse({
+    // 通行密钥单通道：除 passkey 会话外，同时签发站点令牌 hz_auth，
+    // 否则登录后站点接口（个人资料/运维）会因缺 hz_auth 而 401。
+    // 超管必须带 mfa=true（requireAuth 对超管强制要求）。
+    // best-effort：KV 读不到或签发失败都不影响 passkey 登录本身。
+    const cookies = [];
+    let typeMask = 0;
+    let storedUsername = "";
+    let storedEmail = "";
+    try {
+      const kv = pickKvBinding(env);
+      const userKey = String(cred.user_key);
+      const phoneMatch = /^phone:(\d{6,20})$/.exec(userKey);
+      const phone = phoneMatch ? phoneMatch[1] : "";
+      if (kv && phone) {
+        const row = await readKvUser(kv, env, "phone:" + phone);
+        if (row && row.value) {
+          const role = roleOf(row);
+          typeMask = role.typeMask;
+          storedUsername = row.value.name != null ? String(row.value.name) : "";
+          storedEmail = row.value.email != null ? String(row.value.email) : "";
+          const issued = await issueSiteAuthToken(env, phone, {
+            tv: Number(row.value.tv || 0),
+            isSuper: !!role.isSuper,
+          });
+          cookies.push(issued.cookie);
+          // 半程凭证 600s 内不被消费：单通道登录成功后清掉，避免旧半程被跨会话复用
+          cookies.push(buildClearMfaCookie());
+        }
+      }
+    } catch (authErr) {
+      console.error("[authn/verify] issue site auth token failed:", authErr.message);
+    }
+
+    const resp = jsonResponse({
       ok: true,
       authMethod: "passkey",
       sessionToken, // 明文只此一次返回
@@ -182,8 +219,19 @@ export async function onRequest(context) {
       user: {
         userKey: String(cred.user_key),
         userUuid: cred.user_uuid ? String(cred.user_uuid) : "",
+        stored_username: storedUsername,
+        stored_email: storedEmail,
+        // 与扫码 claim 的投影保持同构：前端 applyDesktopLogin 读 user_data.type 解锁超管菜单
+        user_data: {
+          type: typeMask,
+          other_data: cred.user_uuid ? String(cred.user_uuid) : "",
+        },
       },
-    });
+    }, 200);
+    // 必须逐个 append：Headers/Response 结构体里传数组会被拼成一条逗号连起来的 Set-Cookie，
+    // 浏览器只会当作单个 cookie 解析，导致后一个 cookie 丢失（对齐 wx-login-poll 的写法）。
+    for (const c of cookies) resp.headers.append("Set-Cookie", c);
+    return resp;
   } catch (e) {
     console.error("[passkey/authenticate/verify]", e);
     return authFail(401, env, "exception");

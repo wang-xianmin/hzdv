@@ -4,7 +4,7 @@
 import { pickKvBinding } from '../lib/kv-binding.js';
 import { readKvUser, decryptKvInner } from '../lib/kv-secure.js';
 import { readWxuIndex } from '../lib/wx-index.js';
-import { issueAuthToken, buildAuthCookie, superFactorStep } from '../lib/auth-token.js';
+import { issueSiteAuthToken, buildClearMfaCookie } from '../lib/auth-token.js';
 import { pickWxScanD1, getWxScan, deleteWxScan } from '../lib/wx-scan-d1.js';
 
 function json(body, status = 200) {
@@ -200,7 +200,7 @@ export async function onRequest(context) {
     } else {
       typeMask = parseInt(typeRaw, 10) || 0;
     }
-    const isSuperuser = (typeMask & 1) !== 0; // 超管：微信只算第一步（因素 a），完整令牌要等相机扫码也完成
+    const isSuperuser = (typeMask & 1) !== 0; // 超管：微信单通道即完整令牌（mfa=true），不再与相机/邮箱组成双因素
 
     // 删除登录记录（成功后）
     try {
@@ -210,20 +210,14 @@ export async function onRequest(context) {
       return json({ success: false, error: 'internal_error' }, 500);
     }
     
-    // 签发令牌
-    let authCookie, exp = null, superPending = false;
+    // 签发令牌：超管微信单通道 → 完整令牌（mfa=true）；非超管同理（mfa=false）
+    let authCookie, exp = null;
+    const superPending = false; // 微信单通道：不再有半程，故不会返回 super_pending
     try {
       const tv = Number(value.tv || 0);
-      if (isSuperuser) {
-        const step = await superFactorStep(env, context.request, idx.phone, tv, 'a');
-        authCookie = step.cookie;
-        exp = step.full ? step.exp : null;
-        superPending = !step.full;
-      } else {
-        const issued = await issueAuthToken(env, idx.phone, { tv });
-        authCookie = buildAuthCookie(issued.token, 2592000);
-        exp = issued.exp;
-      }
+      const issued = await issueSiteAuthToken(env, idx.phone, { tv, isSuper: isSuperuser });
+      authCookie = issued.cookie;
+      exp = issued.exp;
     } catch (tokenErr) {
       console.error('issueAuthToken failed:', tokenErr.message);
       return json({ success: false, error: 'token_error' }, 500);
@@ -265,11 +259,13 @@ export async function onRequest(context) {
       ...(superPending ? { super_pending: true } : {})
     });
     
-    // 设置两个 Cookie
+    // 设置 Cookie：站点令牌 + 清理微信扫码临时态 + 清理超管半程凭证
     response.headers.append('Set-Cookie', authCookie);
     response.headers.append('Set-Cookie',
       'hz_wxl=; Path=/api/wx-login-poll; Max-Age=0; HttpOnly; Secure; SameSite=Lax'
     );
+    // 半程凭证 600s 内不被消费：单通道登录成功后清掉，避免旧半程被跨会话复用
+    response.headers.append('Set-Cookie', buildClearMfaCookie());
     
     return response;
     

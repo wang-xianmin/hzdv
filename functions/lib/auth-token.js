@@ -186,6 +186,28 @@ export function buildClearAuthCookie() {
 }
 
 /**
+ * 构建清除超管半程凭证的 Cookie 头值（hz_mfa）。
+ * 半程凭证 600s 内不被消费；签发完整令牌后必须清掉，避免旧半程被跨会话复用。
+ * @returns {string}
+ */
+export function buildClearMfaCookie() {
+  return 'hz_mfa=; Path=/api; HttpOnly; Secure; SameSite=Lax; Max-Age=0';
+}
+
+/**
+ * 统一签发站点令牌（hz_auth）。
+ * 超管必须带 mfa=true，否则 requireAuth 会以「超管未完成两步」拒掉（表现为登录成功但接口 401）。
+ * @param {any} env
+ * @param {string} phone 手机号（仅数字）
+ * @param {object} options {tv, isSuper, ttlSec}
+ * @returns {Promise<{ cookie: string, exp: number }>}
+ */
+export async function issueSiteAuthToken(env, phone, { tv = 0, isSuper = false, ttlSec = DEFAULT_TTL_SEC } = {}) {
+  const { token, exp } = await issueAuthToken(env, phone, { tv, ttlSec, mfa: !!isSuper });
+  return { cookie: buildAuthCookie(token, ttlSec), exp };
+}
+
+/**
  * 认证中间件
  * @param {any} context
  * @returns {Promise<{ phone: string, value: object, metadata: object, exp: number } | null>}
@@ -261,7 +283,10 @@ async function verifyMfaProof(env, proof) {
 
 /**
  * 超管登录完成一步：本浏览器已有另一类因素的半程凭证（同手机号、同 tv）→ 签完整令牌；否则下发本因素的半程凭证。
- * factor: "a" = 密码或微信，"b" = 相机扫码。tv 由调用方传入（调用方已读过用户记录）。
+ *
+ * factor: "a" = 密码（只有密码流程 check-user.js 可签发 'a'），"b" = 相机扫码/邮箱验证码。
+ * 微信与通行密钥为单通道登录：它们直接签完整令牌（mfa=true），不再参与本配对。
+ * tv 由调用方传入（调用方已读过用户记录）。
  */
 export async function superFactorStep(env, request, phone, tv, factor) {
   const prev = await verifyMfaProof(env, readCookie(request, 'hz_mfa'));

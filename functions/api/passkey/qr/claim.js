@@ -12,9 +12,10 @@ import { claimQrSession, isQrSessionId } from "../../../lib/passkey-qr.js";
 import { pickKvBinding } from "../../../lib/kv-binding.js";
 import { readKvUser } from "../../../lib/kv-secure.js";
 import { roleOf } from "../../../lib/auth-roles.js";
+import { issueSiteAuthToken, buildClearMfaCookie } from "../../../lib/auth-token.js";
 
 function emptyProfileProjection() {
-  return { stored_username: "", stored_email: "", user_data: {} };
+  return { stored_username: "", stored_email: "", auth: null, user_data: {} };
 }
 
 function phoneFromClaimedUserKey(userKey) {
@@ -26,6 +27,8 @@ function phoneFromClaimedUserKey(userKey) {
  * 从 KV 读取已认领账号的资料，并只投影个人资料页需要的白名单字段。
  * claim 的一次性 sessionToken 已被消费，因此这里必须 best-effort：读取失败
  * 返回空投影，不能让整个登录在客户端无法重试 claim 的情况下失败。
+ *
+ * 同时带出签发站点令牌所需的 auth 上下文（phone / tv / isSuper）。
  */
 async function hydrateClaimedUser(env, claimed) {
   const phone = phoneFromClaimedUserKey(claimed && claimed.userKey);
@@ -46,6 +49,11 @@ async function hydrateClaimedUser(env, claimed) {
     return {
       stored_username: value.name != null ? String(value.name) : "",
       stored_email: value.email != null ? String(value.email) : "",
+      auth: {
+        phone,
+        tv: Number(value.tv || 0),
+        isSuper: !!role.isSuper,
+      },
       user_data: {
         other_data: value.uuid != null ? String(value.uuid) : "",
         pwd: "",
@@ -86,7 +94,28 @@ export async function onRequest(context) {
     const claimed = await claimQrSession(d1, sid);
     if (!claimed.ok) return fail(409);
     const profile = await hydrateClaimedUser(env, claimed);
-    return jsonResponse({
+
+    // 通行密钥单通道：除 passkey 会话外，同时签发站点令牌 hz_auth，
+    // 否则登录后站点接口（个人资料/运维）会因缺 hz_auth 而 401。
+    // 超管必须带 mfa=true（requireAuth 对超管强制要求），否则表现为「登录成功但接口 401」。
+    // best-effort：签发失败不影响 passkey 会话本身。
+    const cookies = [];
+    const authCtx = profile.auth;
+    if (authCtx && authCtx.phone) {
+      try {
+        const issued = await issueSiteAuthToken(env, authCtx.phone, {
+          tv: authCtx.tv,
+          isSuper: authCtx.isSuper,
+        });
+        cookies.push(issued.cookie);
+        // 半程凭证 600s 内不被消费：单通道登录成功后清掉，避免旧半程被跨会话复用
+        cookies.push(buildClearMfaCookie());
+      } catch (authErr) {
+        console.error("[passkey/qr/claim] issue site auth token failed:", authErr.message);
+      }
+    }
+
+    const resp = jsonResponse({
       ok: true,
       sessionToken: claimed.sessionToken,
       user: {
@@ -96,7 +125,11 @@ export async function onRequest(context) {
         stored_email: profile.stored_email,
         user_data: profile.user_data,
       },
-    });
+    }, 200);
+    // 必须逐个 append：Headers/Response 结构体里传数组会被拼成一条逗号连起来的 Set-Cookie，
+    // 浏览器只会当作单个 cookie 解析，导致后一个 cookie 丢失（对齐 wx-login-poll 的写法）。
+    for (const c of cookies) resp.headers.append("Set-Cookie", c);
+    return resp;
   } catch (e) {
     console.error("[passkey/qr/claim]", e);
     return fail(503);

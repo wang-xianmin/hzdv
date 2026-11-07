@@ -12,7 +12,7 @@ import {
 } from "../lib/kv-secure.js";
 import { normalizePasswordForAuth } from "../lib/password-normalize.js";
 import { kvBindingHint, pickKvBinding } from "../lib/kv-binding.js";
-import { issueAuthToken, buildAuthCookie, superFactorStep } from "../lib/auth-token.js";
+import { issueAuthToken, buildAuthCookie, superFactorStep, buildClearMfaCookie } from "../lib/auth-token.js";
 
 function jsonResponse(body, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(body), {
@@ -191,14 +191,18 @@ export async function onRequest(context) {
     let authCookieHeader = null;
     let authPayload = null;
     let superPending = false;
+    let clearMfaCookie = null;
     if (passwordMatches === true && userStatus !== 3) {
       try {
         const tv = Number(value.tv || 0);
         if (isSuperuser) {
+          // 密码是唯一的 'a' 因素来源；与相机/邮箱半程配对后签完整令牌
           const step = await superFactorStep(env, request, phone, tv, "a");
           authCookieHeader = step.cookie;
           authPayload = step.full ? { exp: step.exp } : null;
           superPending = !step.full;
+          // 完整令牌已签发 → 清掉半程凭证，避免旧半程跨会话被复用
+          if (step.full) clearMfaCookie = buildClearMfaCookie();
         } else {
           const { token, exp } = await issueAuthToken(env, phone, { tv });
           authCookieHeader = buildAuthCookie(token, 2592000);
@@ -211,7 +215,11 @@ export async function onRequest(context) {
 
     const reveal = passwordMatches === true || emailMatches === true;
 
-    return jsonResponse({
+    const setCookies = authCookieHeader ? [authCookieHeader] : [];
+    if (authCookieHeader && clearMfaCookie) setCookies.push(clearMfaCookie);
+    // 必须逐个 append：Headers/Response 结构体里传数组会被拼成一条逗号连起来的 Set-Cookie，
+    // 浏览器只会当作单个 cookie 解析，导致后一个 cookie 丢失（对齐 wx-login-poll 的写法）。
+    const resp = jsonResponse({
       success: true,
       phone_exists: true,
       password_matches: passwordMatches,
@@ -246,7 +254,9 @@ export async function onRequest(context) {
       },
       ...(authPayload ? { auth: authPayload } : {}),
       ...(superPending ? { super_pending: true } : {}),
-    }, 200, authCookieHeader ? { "Set-Cookie": authCookieHeader } : {});
+    }, 200);
+    for (const c of setCookies) resp.headers.append("Set-Cookie", c);
+    return resp;
   } catch (e) {
     console.error("check-user:", e);
     return jsonResponse(

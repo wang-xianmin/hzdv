@@ -11,12 +11,15 @@
  *   5. 无任何凭据 → null（fail-closed）
  *
  * 运行：node scripts/passkey/session-bridge.test.mjs
+ *
+ * 本文件同时导出 MockKv / D1Adapter / makeEnv 脚手架，供其它 passkey 测试复用
+ * （直接执行时才跑用例；被 import 时不自动执行）。
  */
 
 import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -55,7 +58,7 @@ class Stmt {
     return { success: true, meta: { changes: Number(info.changes), last_row_id: Number(info.lastInsertRowid) } };
   }
 }
-class D1Adapter {
+export class D1Adapter {
   constructor(db) {
     this.db = db;
   }
@@ -72,7 +75,7 @@ class D1Adapter {
 // ---------------------------------------------------------------------------
 // 最小 KV 适配层（Workers KV 语义：getWithMetadata / put / delete / list）
 // ---------------------------------------------------------------------------
-class MockKv {
+export class MockKv {
   constructor() {
     this.map = new Map();
   }
@@ -81,15 +84,23 @@ class MockKv {
     if (!hit) return { value: null, metadata: null };
     return { value: hit.value, metadata: hit.metadata };
   }
-  async get(key) {
+  /**
+   * Workers KV 语义：默认返回原始字符串（string | null）。
+   * 部分代码路径（如 wx-login-poll / wx-index / auth-claim-scan）直接 JSON.parse(kv.get(key))，
+   * 若这里返回对象会静默走不通，所以保持与线上一致的原始字符串语义。
+   */
+  async get(key, options) {
     const hit = this.map.get(key);
     if (!hit) return null;
-    return {
-      value: null,
-      metadata: hit.metadata,
-      text: async () => String(hit.value),
-      json: async () => JSON.parse(String(hit.value)),
-    };
+    const raw = hit.value;
+    if (options && options.type === "json") {
+      try {
+        return JSON.parse(String(raw));
+      } catch {
+        return null;
+      }
+    }
+    return typeof raw === "string" ? raw : String(raw);
   }
   async put(key, value, opts) {
     this.map.set(key, { value, metadata: opts && opts.metadata });
@@ -102,7 +113,7 @@ class MockKv {
   }
 }
 
-function makeEnv(kv) {
+export function makeEnv(kv) {
   return {
     PASSKEY_ENABLED: "true",
     PASSKEY_RP_ID: "hzdv.net",
@@ -224,7 +235,11 @@ async function run() {
   console.log("\n[session-bridge.test] PASS");
 }
 
-run().catch((err) => {
-  console.error(err);
-  process.exitCode = 1;
-});
+// 仅在直接执行本文件时跑用例；被别的测试 import（复用 MockKv/D1/makeEnv 脚手架）时不自动执行。
+const IS_MAIN = !!process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (IS_MAIN) {
+  run().catch((err) => {
+    console.error(err);
+    process.exitCode = 1;
+  });
+}

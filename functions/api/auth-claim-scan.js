@@ -11,7 +11,7 @@
  */
 import { pickKvBinding } from "../lib/kv-binding.js";
 import { readKvUser } from "../lib/kv-secure.js";
-import { issueAuthToken, buildAuthCookie, superFactorStep } from "../lib/auth-token.js";
+import { issueAuthToken, buildAuthCookie, superFactorStep, buildClearMfaCookie } from "../lib/auth-token.js";
 
 function jsonResponse(body, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(body), {
@@ -171,13 +171,17 @@ export async function onRequest(context) {
 
   // 签发令牌
   let authCookieHeader, exp = null, superPending = false;
+  let clearMfaCookie = null;
   try {
     const tv = Number((userRow.value || {}).tv || 0);
     if (isSuperuser) {
+      // 相机/邮箱是 'b' 因素；另一因素只能是密码（微信/通行密钥为单通道，不参与配对）
       const step = await superFactorStep(env, request, phoneStr, tv, "b");
       authCookieHeader = step.cookie;
       exp = step.full ? step.exp : null;
       superPending = !step.full;
+      // 完整令牌已签发 → 清掉半程凭证，避免旧半程跨会话被复用
+      if (step.full) clearMfaCookie = buildClearMfaCookie();
     } else {
       const issued = await issueAuthToken(env, phoneStr, { tv });
       authCookieHeader = buildAuthCookie(issued.token, 2592000);
@@ -188,9 +192,14 @@ export async function onRequest(context) {
     return jsonResponse({ success: false, error: "token_error" }, 500);
   }
 
-  return jsonResponse(
+  const cookies = [authCookieHeader];
+  if (clearMfaCookie) cookies.push(clearMfaCookie);
+  // 必须逐个 append：Headers/Response 结构体里传数组会被拼成一条逗号连起来的 Set-Cookie，
+  // 浏览器只会当作单个 cookie 解析，导致后一个 cookie 丢失（对齐 wx-login-poll 的写法）。
+  const resp = jsonResponse(
     { success: true, ...(exp ? { auth: { exp } } : {}), ...(superPending ? { super_pending: true } : {}) },
-    200,
-    { "Set-Cookie": authCookieHeader }
+    200
   );
+  for (const c of cookies) resp.headers.append("Set-Cookie", c);
+  return resp;
 }
