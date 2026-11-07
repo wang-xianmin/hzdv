@@ -137,6 +137,8 @@ async function run() {
   let revokedId = null;
   mgr.renderSummary(container, list, { onRevoke: (id) => { revokedId = id; } });
   const revokeBtn = container.children[0].children[1];
+  check("凭据行左对齐（撤销紧挨文案，不再贴右缘）", container.children[0].style.justifyContent === "flex-start", container.children[0].style.justifyContent);
+  check("凭据行内联样式与 CSS 一致（不再是 space-between）", container.children[0].style.justifyContent !== "space-between");
   check("撤销按钮带 credentialId", revokeBtn.getAttribute("data-passkey-revoke") === "cred-1");
   check("撤销按钮标记为调用方托管", revokeBtn.getAttribute("data-passkey-revoke-managed") !== null);
   revokeBtn.handlers.click[0]({ preventDefault() {}, stopPropagation() {} });
