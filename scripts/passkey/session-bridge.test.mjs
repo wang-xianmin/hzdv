@@ -14,6 +14,7 @@
  */
 
 import { DatabaseSync } from "node:sqlite";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -25,6 +26,9 @@ const MIGRATION = path.resolve(ROOT, "migrations/0005_passkey.sql");
 // ---------------------------------------------------------------------------
 // 最小 D1 适配层（node:sqlite 内存库）
 // ---------------------------------------------------------------------------
+/** 设为某个 token 的 sha256 hex 时，该 token 的查询会抛错（模拟坏候选） */
+let THROW_ON_TOKEN_HASH = null;
+
 class Stmt {
   constructor(db, sql) {
     this.db = db;
@@ -39,6 +43,10 @@ class Stmt {
     return { results: this.db.prepare(this.sql).all(...this.params), success: true };
   }
   async first() {
+    // 模拟「坏候选」：某个 token 的查询直接抛错（D1 抖动 / 脏数据）
+    if (THROW_ON_TOKEN_HASH && this.params[0] === THROW_ON_TOKEN_HASH) {
+      throw new Error("d1 boom for bad token");
+    }
     const row = this.db.prepare(this.sql).get(...this.params);
     return row === undefined ? null : row;
   }
@@ -188,6 +196,25 @@ async function run() {
   const forged = authToken.slice(0, -2) + "00";
   const forgedId = await resolveIdentity(env, d1, withCookie("hz_auth", forged), {});
   check("伪造 auth-token 被拒", forgedId === null, forgedId);
+
+  // 8) 坏候选（校验抛错）不能阻断站点 auth-token 兜底
+  //    hzdv_session 排在 auth-token 之前；若它抛错就整段失败，
+  //    站点登录态明明有效也会被打成 401（个人资料 edit 一直显示 passkey 的原因之一）。
+  {
+    const badToken = "bad-session-token";
+    const badHash = createHash("sha256").update(badToken).digest("hex");
+    THROW_ON_TOKEN_HASH = badHash;
+    try {
+      const req = new Request(url, {
+        headers: { cookie: `hzdv_session=${badToken}; hz_auth=${authToken}` },
+      });
+      const afterBad = await resolveIdentity(env, d1, req, {});
+      check("坏 session 候选抛错 → 仍用站点 auth-token 兜底", afterBad && afterBad.kind === "auth_token", afterBad);
+      check("坏 session 候选抛错 → userKey 正确", afterBad && afterBad.userKey === userKey, afterBad);
+    } finally {
+      THROW_ON_TOKEN_HASH = null;
+    }
+  }
 
   if (failures) {
     console.error(`\n[session-bridge.test] FAILED (${failures})`);

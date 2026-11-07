@@ -87,6 +87,8 @@ function makeSandbox(mgr) {
     Date,
     Math,
     JSON,
+    setTimeout,
+    clearTimeout,
     window: { HZDVPasskeyManager: mgr },
     profilePasskeyBtn: btn,
     profilePasskeyStatus: status,
@@ -171,6 +173,57 @@ const tick = () => new Promise((r) => setTimeout(r, 20));
   api.profilePasskeyRevoke("c1", {});
   await tick();
   check("撤销后列表为空 → 回到 passkey", btn.textContent === "passkey", btn.textContent);
+}
+
+// 场景 F：list 首次失败 → 自动重试 1 次 → 第二次成功 → 落到 passkey...
+{
+  let calls = 0;
+  const mgr = {
+    async list() {
+      calls++;
+      if (calls === 1) throw new Error("network");
+      return [{ id: "c1" }];
+    },
+    renderSummary() {},
+  };
+  const { api, btn } = makeSandbox(mgr);
+  btn.textContent = "passkey";
+  api.profilePasskeyRefreshStatus();
+  await tick();
+  check("首次失败 → 不误判成无凭据", btn.textContent === "passkey", btn.textContent);
+  await new Promise((r) => setTimeout(r, 1100));
+  check("重试后成功 → passkey...", btn.textContent === "passkey...", btn.textContent);
+  check("重试后成功 → 恰好 2 次请求", calls === 2, calls);
+  check("重试成功 → 清掉失败信号", !btn.title, btn.title);
+}
+
+// 场景 G：list 连续失败（已重试）→ 保留上次已知态 + 留下可感知信号
+{
+  let calls = 0;
+  const mgr = {
+    async list() {
+      calls++;
+      throw new Error("network");
+    },
+    renderSummary() {},
+  };
+  const { api, btn, status } = makeSandbox(mgr);
+  btn.textContent = "passkey..."; // 上次已知：有凭据
+  api.profilePasskeyRefreshStatus();
+  await new Promise((r) => setTimeout(r, 1100));
+  check("重试后仍失败 → 只重试 1 次（共 2 次请求）", calls === 2, calls);
+  check("重试后仍失败 → 保留上次已知态", btn.textContent === "passkey...", btn.textContent);
+  check("重试后仍失败 → status 有可感知信号", /加载失败/.test(status.textContent), status.textContent);
+  check("重试后仍失败 → edit 按钮有 title 信号", /加载失败/.test(btn.title || ""), btn.title);
+}
+
+// 场景 H：管理器不可用（list 不可用）→ 不得清掉 label
+{
+  const { api, btn } = makeSandbox(null);
+  btn.textContent = "passkey...";
+  api.profilePasskeyRefreshStatus();
+  await tick();
+  check("管理器不可用 → 不清 label（保留 passkey...）", btn.textContent === "passkey...", btn.textContent);
 }
 
 if (failures) {

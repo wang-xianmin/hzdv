@@ -191,6 +191,9 @@ async function resolveSiteTokenIdentity(env, request) {
  *
  * @param {Object=} options {allowSiteToken:false} 时禁用 auth-token 桥接
  *        （撤销等敏感操作仍要求 passkey 会话或 reauth 票据）。
+ *
+ * 每个候选单独 try/catch：单个候选校验抛错只跳过该候选，
+ * 不影响后续候选与最后的站点 auth-token 兜底。
  */
 export async function resolveIdentity(env, d1, request, body, options) {
   const cookie = parseCookieHeader(request.headers.get("cookie"));
@@ -216,12 +219,19 @@ export async function resolveIdentity(env, d1, request, body, options) {
   for (const tok of candidates) {
     if (seen.has(tok)) continue;
     seen.add(tok);
-    if (tok.indexOf(REAUTH_PREFIX) === 0) {
-      const id = await verifyReauthTicket(env, d1, tok);
-      if (id) return id;
-    } else {
-      const id = await verifyAuthSession(d1, tok);
-      if (id) return id;
+    try {
+      if (tok.indexOf(REAUTH_PREFIX) === 0) {
+        const id = await verifyReauthTicket(env, d1, tok);
+        if (id) return id;
+      } else {
+        const id = await verifyAuthSession(d1, tok);
+        if (id) return id;
+      }
+    } catch (err) {
+      // 单个候选抛错（坏 Cookie / 损坏票据 / D1 抖动 / 票据签发失败）不能整段失败：
+      // 继续试下一个候选，最后仍会兜底到站点 auth-token（hz_auth）。
+      // 否则一个坏 Cookie 就会把「站点登录态可用的请求」打成 401。
+      continue;
     }
   }
   // 兜底：站点 auth-token（hz_auth Cookie / Bearer）。仅登录态即可，
