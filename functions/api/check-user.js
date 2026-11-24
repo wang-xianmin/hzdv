@@ -7,6 +7,7 @@
  */
 import {
   assertPhoneKey,
+  kvUserStatusGate,
   readKvUser,
   verifyPasswordArgon2idEncodedFlexible,
 } from "../lib/kv-secure.js";
@@ -113,6 +114,22 @@ export async function onRequest(context) {
 
     const value = row.value || {};
     const meta = row.metadata || {};
+
+    /* 登录门禁（拍板 T2）：手机号已在 KV 命中，进入密码校验等下一步之前必须过 status 检查；
+       仅整数 1 放行，否则立刻返回四句原文之一，不做密码校验、不签发任何 cookie。 */
+    const gate = kvUserStatusGate(meta);
+    if (gate.allowed !== true) {
+      let blockedStatus = parseInt(meta.status, 10);
+      if (isNaN(blockedStatus)) blockedStatus = null;
+      return jsonResponse({
+        success: false,
+        error: gate.error_msg,
+        error_msg: gate.error_msg,
+        error_code: "user_status",
+        status_code: gate.status_code,
+        user_status: blockedStatus,
+      });
+    }
     const storedEmail = value.email != null ? String(value.email) : "";
     const emailNorm = normalizeEmail(email);
     const storedEmailNorm = normalizeEmail(storedEmail);

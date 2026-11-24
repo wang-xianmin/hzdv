@@ -42,7 +42,7 @@ import {
 } from "../../../lib/passkey-crypto.js";
 import { rateLimit, clientBucketId } from "../../../lib/passkey-rate.js";
 import { pickKvBinding } from "../../../lib/kv-binding.js";
-import { readKvUser } from "../../../lib/kv-secure.js";
+import { kvUserStatusGate, readKvUser } from "../../../lib/kv-secure.js";
 import { roleOf } from "../../../lib/auth-roles.js";
 import { issueSiteAuthToken, buildClearMfaCookie } from "../../../lib/auth-token.js";
 
@@ -153,6 +153,31 @@ export async function onRequest(context) {
     // signCount 策略（库内已做 >0 时必须严格递增；这里再按需重申语义）
     if (storedCounter > 0 && newCounter <= storedCounter) {
       return authFail(401, env, "clone_counter"); // 克隆/回退检测
+    }
+
+    /* 登录门禁（拍板 T4）：签名验证已证明身份，loginAtomic 发 session 之前必须查
+       该用户 KV Metadata 的 status，仅整数 ===1 放行。KV 未绑 / 读失败 / 无此用户
+       一律 fail-closed 按「账号未激活」，绝不 loginAtomic、不用 authFail 盖掉原文。
+       未知凭据的模糊失败（防枚举）在此之前，未改动。 */
+    const kv = pickKvBinding(env);
+    let gateRow = null;
+    if (kv) {
+      try {
+        gateRow = await readKvUser(kv, env, String(cred.user_key));
+      } catch (e) {
+        console.error("[authn/verify] gate readKvUser failed:", e && e.message);
+      }
+    }
+    const gate = gateRow && gateRow.value
+      ? kvUserStatusGate(gateRow.metadata || {})
+      : { allowed: false, status_code: 0, error_code: "user_status", error_msg: "账号未激活" };
+    if (gate.allowed !== true) {
+      return jsonResponse({
+        ok: false,
+        error_code: "user_status",
+        error_msg: gate.error_msg,
+        status_code: gate.status_code,
+      });
     }
 
     // 生成 session token（明文只此一次返回，库中只存 SHA-256）

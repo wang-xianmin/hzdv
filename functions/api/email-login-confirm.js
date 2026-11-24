@@ -7,7 +7,7 @@
  */
 
 import { pickKvBinding, kvBindingHint } from "../lib/kv-binding.js";
-import { assertPhoneKey, readKvUser } from "../lib/kv-secure.js";
+import { assertPhoneKey, kvUserStatusGate, readKvUser } from "../lib/kv-secure.js";
 
 function htmlPage(title, bodyHtml, status = 200, lang = "zh") {
   const isEn = String(lang || "").toLowerCase().indexOf("en") === 0;
@@ -74,23 +74,23 @@ function escapeHtml(s) {
 async function phoneEmailMatchInKv(kv, env, phone, email) {
   const digits = normalizePhoneDigits(phone);
   const wantEmail = normalizeEmail(email);
-  if (!digits || !wantEmail) return false;
+  if (!digits || !wantEmail) return { hit: false, matched: false };
   const key = "phone:" + digits;
   try {
     assertPhoneKey(key);
   } catch (e) {
-    return false;
+    return { hit: false, matched: false };
   }
   let row = null;
   try {
     row = await readKvUser(kv, env, key);
   } catch (e) {
     console.error("[email-login-confirm] readKvUser failed:", e);
-    return false;
+    return { hit: false, matched: false };
   }
-  if (!row || !row.value) return false;
+  if (!row || !row.value) return { hit: false, matched: false };
   const stored = normalizeEmail(row.value.email);
-  return !!stored && stored === wantEmail;
+  return { hit: true, row, matched: !!stored && stored === wantEmail };
 }
 
 async function writeSessionPhoneMismatch(kv, sessionId, link) {
@@ -248,11 +248,28 @@ export async function onRequest(context) {
 
   const link = loaded.link;
 
-  // POST：消费 token 并确认
-  await kv.delete("elink:" + token);
+  // POST：先只读查 KV（命中即拿 metadata），过 status 门禁后才消费 token、写确认
+  const lookup = await phoneEmailMatchInKv(kv, env, link.phone, link.email);
 
-  const matched = await phoneEmailMatchInKv(kv, env, link.phone, link.email);
-  if (!matched) {
+  /* 登录门禁（拍板 T3）：手机号已在 KV 命中之后、删 token 与写 emailLoginConfirmed 之前，
+     仅 status 整数 ===1 放行；拦下时页面正文为 gate.error_msg 原文，不 delete、不写会话。
+     KV 无此手机号（hit=false）保持原「不匹配」行为，不套用门禁。 */
+  if (lookup.hit) {
+    const gate = kvUserStatusGate(lookup.row.metadata || {});
+    if (gate.allowed !== true) {
+      const safeMsg = escapeHtml(gate.error_msg);
+      return htmlPage(
+        safeMsg,
+        lang === "en"
+          ? "<h1 class='err'>" + safeMsg + "</h1><p>This account cannot sign in right now. Please return to the computer or contact the administrator.</p>"
+          : "<h1 class='err'>" + safeMsg + "</h1><p>请返回电脑端，或联系管理员处理。</p>",
+        403,
+        lang
+      );
+    }
+  }
+
+  if (!lookup.matched) {
     await writeSessionPhoneMismatch(kv, link.sessionId, link);
     return htmlPage(
       lang === "en" ? "Wrong phone number" : "手机号错",
@@ -263,6 +280,9 @@ export async function onRequest(context) {
       lang
     );
   }
+
+  // status 门禁与手机号+邮箱匹配都已通过，此刻才消费 token
+  await kv.delete("elink:" + token);
 
   let sessionData = {
     scanned: true,

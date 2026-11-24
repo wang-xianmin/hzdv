@@ -13,7 +13,9 @@
 
 import { pickKvBinding } from "../lib/kv-binding.js";
 import {
+  kvUserStatusGate,
   listKvUserStorageKeys,
+  readKvUser,
   readKvUserByStorageKey,
 } from "../lib/kv-secure.js";
 
@@ -288,6 +290,41 @@ export async function onRequest(context) {
       }
       phone = found.phone;
       if (!username) username = found.username;
+    }
+
+    /* 登录门禁（拍板 T8）：手机号已确定，kv.put("elink:") 与发信之前必须查该号
+       KV Metadata 的 status，仅整数 ===1 放行。
+       - 读到 row：kvUserStatusGate(row.metadata)，allowed!==true → 不 put elink、
+         不写会话、不发信，HTTP200 {success:false, error/error_msg 四句原文,
+         error_code:user_status, status_code:0|2|3}。
+       - 确认 KV 里没有这个手机号：保持现在的发信流程，不改判「账号未激活」。
+       - readKvUser 抛错（含非法手机号格式）：fail-closed，按「账号未激活」。
+       未注册邮箱的 404 与 already_sent 跳过未改动。 */
+    const gateKey = "phone:" + String(phone).replace(/\D/g, "");
+    let gateRow = null;
+    try {
+      gateRow = await readKvUser(kv, env, gateKey);
+    } catch (e) {
+      console.error("[send-email-code] gate readKvUser failed:", e && e.message);
+      return jsonResponse({
+        success: false,
+        error: "账号未激活",
+        error_msg: "账号未激活",
+        error_code: "user_status",
+        status_code: 0,
+      });
+    }
+    if (gateRow && gateRow.value) {
+      const gate = kvUserStatusGate(gateRow.metadata || {});
+      if (gate.allowed !== true) {
+        return jsonResponse({
+          success: false,
+          error: gate.error_msg,
+          error_msg: gate.error_msg,
+          error_code: "user_status",
+          status_code: gate.status_code,
+        });
+      }
     }
 
     const reqUrl = new URL(request.url);

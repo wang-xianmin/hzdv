@@ -11,6 +11,8 @@ import { passkeyEnabled, isAllowedOrigin, sessionTtlMs } from "../../../lib/pass
 import { pickD1, findActiveCredentialById } from "../../../lib/passkey-d1.js";
 import { jsonResponse, methodNotAllowed, disabled, notConfigured, fail } from "../../../lib/passkey-resp.js";
 import { rateLimit } from "../../../lib/passkey-rate.js";
+import { pickKvBinding } from "../../../lib/kv-binding.js";
+import { kvUserStatusGate, readKvUser } from "../../../lib/kv-secure.js";
 import {
   findQrSession,
   completeQrSession,
@@ -123,6 +125,31 @@ export async function onRequest(context) {
     const ai = (verification && verification.authenticationInfo) || {};
     const newCounter = Number(ai.newCounter) || 0;
     if (storedCounter > 0 && newCounter <= storedCounter) return authFail(401);
+
+    /* 登录门禁（拍板 T6）：签名验证已证明身份，completeQrSession 之前必须查
+       该用户 KV Metadata 的 status，仅整数 ===1 放行。KV 未绑 / 读失败 / 无此用户
+       一律 fail-closed 按「账号未激活」，绝不 completeQrSession、不用 authFail 盖掉
+       原文。未知凭据的模糊失败（防枚举）在此之前，未改动。 */
+    const kv = pickKvBinding(env);
+    let gateRow = null;
+    if (kv) {
+      try {
+        gateRow = await readKvUser(kv, env, String(cred.user_key));
+      } catch (ge) {
+        console.error("[passkey/qr/verify] gate readKvUser failed:", ge && ge.message);
+      }
+    }
+    const gate = gateRow && gateRow.value
+      ? kvUserStatusGate(gateRow.metadata || {})
+      : { allowed: false, status_code: 0, error_code: "user_status", error_msg: "账号未激活" };
+    if (gate.allowed !== true) {
+      return jsonResponse({
+        ok: false,
+        error_code: "user_status",
+        error_msg: gate.error_msg,
+        status_code: gate.status_code,
+      });
+    }
 
     // --- 签发会话（明文一次性交接给桌面；hash 落 auth_sessions）---
     const sessionToken = randomBase64Url(32);

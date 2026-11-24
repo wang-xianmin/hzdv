@@ -15,6 +15,7 @@ import { passkeyEnabled, reauthTtlMs } from "../../lib/passkey-config.js";
 import { pickD1 } from "../../lib/passkey-d1.js";
 import { pickKvBinding } from "../../lib/kv-binding.js";
 import {
+  kvUserStatusGate,
   readKvUser,
   assertPhoneKey,
   verifyPasswordArgon2idEncodedFlexible,
@@ -93,6 +94,19 @@ export async function onRequest(context) {
           normalizePasswordForAuth(pwdRaw) === normalizePasswordForAuth(password);
       }
       if (!verified) return unauthorized();
+
+      /* 登录门禁（拍板 T5）：密码已 verified===true，issueReauthTicket 之前必须查该条
+         KV Metadata 的 status，仅整数 ===1 放行；不过则不发 ticket、不设 cookie，
+         直接回四句原文。密码错误的 unauthorized 路径未改动。 */
+      const gate = kvUserStatusGate(row.metadata || {});
+      if (gate.allowed !== true) {
+        return jsonResponse({
+          ok: false,
+          error_code: "user_status",
+          error_msg: gate.error_msg,
+          status_code: gate.status_code,
+        });
+      }
       userKey = key;
       userUuid = value.uuid != null ? String(value.uuid) : "";
     } else {
@@ -103,14 +117,32 @@ export async function onRequest(context) {
       const granted = await verifyEmailReauthCode(d1, { email, code });
       if (!granted) return unauthorized();
       // 交叉核对：票据绑定的账号邮箱 == 请求邮箱
+      /* 登录门禁（拍板 T5b fail-closed）：读不到 metadata.status 就不是整数 1，
+         不得发 ticket。KV 未绑、readKvUser 失败、或没有这条 row → 一律 HTTP200
+         {ok:false, error_code:'user_status', error_msg:'账号未激活', status_code:0}。
+         读到 row 后仍用 kvUserStatusGate，allowed!==true 返回四句原文。
+         邮箱码校验失败的 unauthorized 与邮箱不一致的 unauthorized 路径未改动。 */
       const kv = pickKvBinding(env);
-      if (kv) {
-        const row = await readKvUser(kv, env, key).catch(() => null);
-        if (row && row.value) {
-          const stored = normalizeEmail(row.value.email);
-          if (stored && stored !== normalizeEmail(email)) return unauthorized();
-          userUuid = row.value.uuid != null ? String(row.value.uuid) : "";
-        }
+      const gateRow = kv ? await readKvUser(kv, env, key).catch(() => null) : null;
+      if (!gateRow || !gateRow.value) {
+        return jsonResponse({
+          ok: false,
+          error_code: "user_status",
+          error_msg: "账号未激活",
+          status_code: 0,
+        });
+      }
+      const stored = normalizeEmail(gateRow.value.email);
+      if (stored && stored !== normalizeEmail(email)) return unauthorized();
+      userUuid = gateRow.value.uuid != null ? String(gateRow.value.uuid) : "";
+      const gate = kvUserStatusGate(gateRow.metadata || {});
+      if (gate.allowed !== true) {
+        return jsonResponse({
+          ok: false,
+          error_code: "user_status",
+          error_msg: gate.error_msg,
+          status_code: gate.status_code,
+        });
       }
       userKey = granted.userKey || key;
     }

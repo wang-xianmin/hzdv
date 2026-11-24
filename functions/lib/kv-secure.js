@@ -598,3 +598,20 @@ export async function readKvUserByStorageKey(kv, env, storageKey) {
   }
   return null;
 }
+
+/**
+ * 登录门禁（拍板 T1，msg#5777 选 B）：手机号在 KV 命中后、进入下一步之前，
+ * 必须用本函数检查该条 KV Metadata 的 status。仅整数 1 放行；
+ * 2→「账号已封禁」，3→「账号已注销」，0/缺失/NaN/其它一律「账号未激活」。
+ * 只读判定，不写存储；调用方负责把 error_msg 原文透出（服务端必须拦）。
+ *
+ * @param {{status?:any}|null|undefined} meta KV 记录的 metadata
+ * @returns {{allowed:true}|{allowed:false,status_code:0|2|3,error_code:"user_status",error_msg:string}}
+ */
+export function kvUserStatusGate(meta) {
+  const s = Number(String((meta && meta.status) ?? "").trim());
+  if (s === 1) return { allowed: true };
+  const code = s === 2 ? 2 : s === 3 ? 3 : 0;
+  const msg = code === 2 ? "账号已封禁" : code === 3 ? "账号已注销" : "账号未激活";
+  return { allowed: false, status_code: code, error_code: "user_status", error_msg: msg };
+}

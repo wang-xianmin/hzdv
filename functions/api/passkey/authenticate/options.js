@@ -24,6 +24,8 @@ import {
 } from "../../../lib/passkey-resp.js";
 import { randomBase64Url, sha256Hex } from "../../../lib/passkey-crypto.js";
 import { rateLimit, clientBucketId } from "../../../lib/passkey-rate.js";
+import { pickKvBinding } from "../../../lib/kv-binding.js";
+import { kvUserStatusGate, readKvUser } from "../../../lib/kv-secure.js";
 
 export async function onRequest(context) {
   const { request, env } = context;
@@ -56,6 +58,45 @@ export async function onRequest(context) {
   const phone = String(body.phone || "").trim();
   if (phone) {
     const key = "phone:" + phone.replace(/\D/g, "");
+
+    /* 登录门禁（拍板 T7，选项 B）：带 phone 时先查 KV，手机号命中则 kvUserStatusGate，
+       仅整数 ===1 放行；不通过时不查凭据、不 insertChallenge，当场回四句原文。
+       KV 里没有这个手机号：保持现状空 allowCredentials、继续原 ceremony，不返回
+       「账号未激活」、也不给「用户不存在」信号。KV 未绑或 readKvUser 抛错：
+       fail-closed，不 insertChallenge，按「账号未激活」。 */
+    const kv = pickKvBinding(env);
+    if (!kv) {
+      return jsonResponse({
+        ok: false,
+        error_code: "user_status",
+        error_msg: "账号未激活",
+        status_code: 0,
+      });
+    }
+    let gateRow = null;
+    try {
+      gateRow = await readKvUser(kv, env, key);
+    } catch (e) {
+      console.error("[authn/options] gate readKvUser failed:", e && e.message);
+      return jsonResponse({
+        ok: false,
+        error_code: "user_status",
+        error_msg: "账号未激活",
+        status_code: 0,
+      });
+    }
+    if (gateRow && gateRow.value) {
+      const gate = kvUserStatusGate(gateRow.metadata || {});
+      if (gate.allowed !== true) {
+        return jsonResponse({
+          ok: false,
+          error_code: "user_status",
+          error_msg: gate.error_msg,
+          status_code: gate.status_code,
+        });
+      }
+    }
+
     try {
       const rows = await findUserActiveCredentials(d1, key);
       allowCredentials = rows
