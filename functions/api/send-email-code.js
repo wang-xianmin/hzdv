@@ -306,6 +306,29 @@ export async function onRequest(context) {
       gateRow = await readKvUser(kv, env, gateKey);
     } catch (e) {
       console.error("[send-email-code] gate readKvUser failed:", e && e.message);
+      // 门禁失败也必须让扫码会话离开 processing（HTTP 200 success:false 同样推进终态）
+      try {
+        const prevSessRaw = await kv.get(sessionId);
+        let prevSess = {};
+        if (prevSessRaw) {
+          const pj = JSON.parse(prevSessRaw);
+          if (pj && typeof pj === "object") prevSess = pj;
+        }
+        await kv.put(
+          sessionId,
+          JSON.stringify({
+            ...prevSess,
+            scanned: true,
+            pcStatus: "reject_send",
+            userStatusBlocked: true,
+            status_code: 0,
+            statusMsgZh: "账号未激活",
+            emailLoginPending: false,
+            awaitingPc: false,
+          }),
+          { expirationTtl: 600 }
+        );
+      } catch (eGateWrite) {}
       return jsonResponse({
         success: false,
         error: "账号未激活",
@@ -317,6 +340,29 @@ export async function onRequest(context) {
     if (gateRow && gateRow.value) {
       const gate = kvUserStatusGate(gateRow.metadata || {});
       if (gate.allowed !== true) {
+        // 门禁失败也必须让扫码会话离开 processing（四句原文原样携带进会话）
+        try {
+          const prevSessRaw = await kv.get(sessionId);
+          let prevSess = {};
+          if (prevSessRaw) {
+            const pj = JSON.parse(prevSessRaw);
+            if (pj && typeof pj === "object") prevSess = pj;
+          }
+          await kv.put(
+            sessionId,
+            JSON.stringify({
+              ...prevSess,
+              scanned: true,
+              pcStatus: "reject_send",
+              userStatusBlocked: true,
+              status_code: gate.status_code,
+              statusMsgZh: gate.error_msg,
+              emailLoginPending: false,
+              awaitingPc: false,
+            }),
+            { expirationTtl: 600 }
+          );
+        } catch (eGateWrite) {}
         return jsonResponse({
           success: false,
           error: gate.error_msg,

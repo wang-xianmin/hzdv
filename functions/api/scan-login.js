@@ -29,6 +29,44 @@ function looksLikeEmail(s) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s || "").trim());
 }
 
+async function pushScanSessionTerminal(env, sid, body) {
+  if (!sid) return;
+  try {
+    const kv = pickKvBinding(env);
+    if (!kv) {
+      console.warn("[scan-login] pushScanSessionTerminal: KV not configured");
+      return;
+    }
+    let prev = {};
+    try {
+      const raw = await kv.get(sid);
+      if (raw) {
+        const j = JSON.parse(raw);
+        if (j && typeof j === "object") prev = j;
+      }
+    } catch (ePrev) {}
+    if (prev.pcStatus === "ok" || prev.pcStatus === "reject_send") {
+      console.log("[scan-login] session already terminal, skip push:", sid, prev.pcStatus);
+      return;
+    }
+    const patch = {
+      ...prev,
+      pcStatus: "reject_send",
+      awaitingPc: false,
+      emailLoginPending: false,
+    };
+    if (body && body.error_code === "user_status") {
+      patch.userStatusBlocked = true;
+      patch.status_code = body.status_code != null ? body.status_code : 0;
+      patch.statusMsgZh = String(body.error_msg || body.error || "");
+    }
+    await kv.put(sid, JSON.stringify(patch), { expirationTtl: 600 });
+    console.log("[scan-login] session pushed to reject_send:", sid);
+  } catch (ePush) {
+    console.error("[scan-login] pushScanSessionTerminal failed:", ePush);
+  }
+}
+
 async function triggerMagicLinkFromScan(request, env, sid, data) {
   const phone = String((data && data.phone) || "").trim();
   const email = String((data && data.email) || "").trim();
@@ -51,11 +89,25 @@ async function triggerMagicLinkFromScan(request, env, sid, data) {
         lang,
       }),
     });
-    if (!res.ok) {
-      console.warn("scan-login magic_link trigger HTTP", res.status);
+    let body = null;
+    try {
+      const resText = await res.text();
+      body = JSON.parse(resText);
+    } catch (eJson) {
+      body = null;
+    }
+    const triggeredOk = res.ok && !!body && body.success === true;
+    if (!triggeredOk) {
+      console.warn(
+        "[scan-login] magic_link trigger not success:",
+        res.status,
+        body && (body.error_code || body.error)
+      );
+      await pushScanSessionTerminal(env, sid, body);
     }
   } catch (err) {
     console.warn("scan-login magic_link trigger failed:", err);
+    await pushScanSessionTerminal(env, sid, null);
   }
 }
 
