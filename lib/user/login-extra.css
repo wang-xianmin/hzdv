@@ -71,6 +71,12 @@
   border-color: #ffc9c9;
 }
 
+.lreg-root .register-login-status.is-pending.is-emphasis {
+  background: #f1f3f5;
+  border: 1px solid #dee2e6;
+  color: #1f4b7a;
+}
+
 .lreg-root .register-split-inner--single .register-col-form {
   width: 100%;
   min-width: 0;
