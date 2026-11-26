@@ -253,7 +253,16 @@ export async function onRequest(context) {
         avatar_data_url,
         type: typeMask,
         group: value.group != null ? String(value.group) : '',
-        g_role: Number(value.g_role) === 1 ? 1 : 0
+        g_role: Number(value.g_role) === 1 ? 1 : 0,
+        ...(meta.superuser != null ? { superuser: meta.superuser } : {}),
+        ...(meta.dbg_stf != null ? { dbg_stf: meta.dbg_stf } : {}),
+        ...(meta.cnt_mgr != null ? { cnt_mgr: meta.cnt_mgr } : {}),
+        ...(meta.cnt_stf != null ? { cnt_stf: meta.cnt_stf } : {}),
+        ...(meta.cnt_dev != null ? { cnt_dev: meta.cnt_dev } : {}),
+        ...(meta.cnt_unspec != null ? { cnt_unspec: meta.cnt_unspec } : {}),
+        ...(meta.uA != null ? { uA: meta.uA } : {}),
+        ...(meta.uB != null ? { uB: meta.uB } : {}),
+        ...(meta.uC != null ? { uC: meta.uC } : {}),
       },
       ...(exp ? { auth: { exp } } : {}),
       ...(superPending ? { super_pending: true } : {})

@@ -64,6 +64,15 @@ async function hydrateClaimedUser(env, claimed) {
         group: value.group != null ? String(value.group) : "",
         g_role: Number(value.g_role) === 1 ? 1 : 0,
         wxu_prefix: wxuPrefix,
+        ...((row.metadata && row.metadata.superuser != null) ? { superuser: row.metadata.superuser } : {}),
+        ...((row.metadata && row.metadata.dbg_stf != null) ? { dbg_stf: row.metadata.dbg_stf } : {}),
+        ...((row.metadata && row.metadata.cnt_mgr != null) ? { cnt_mgr: row.metadata.cnt_mgr } : {}),
+        ...((row.metadata && row.metadata.cnt_stf != null) ? { cnt_stf: row.metadata.cnt_stf } : {}),
+        ...((row.metadata && row.metadata.cnt_dev != null) ? { cnt_dev: row.metadata.cnt_dev } : {}),
+        ...((row.metadata && row.metadata.cnt_unspec != null) ? { cnt_unspec: row.metadata.cnt_unspec } : {}),
+        ...((row.metadata && row.metadata.uA != null) ? { uA: row.metadata.uA } : {}),
+        ...((row.metadata && row.metadata.uB != null) ? { uB: row.metadata.uB } : {}),
+        ...((row.metadata && row.metadata.uC != null) ? { uC: row.metadata.uC } : {}),
       },
     };
   } catch (e) {

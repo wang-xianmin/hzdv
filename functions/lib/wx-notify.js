@@ -1,14 +1,12 @@
 /**
  * 企业问答新问题 → 测试号模板消息，逐个推给开发小组
- * 开发小组 = A 类（type 含 0x10）且 uA_Tier=1 且已绑微信（value.wxu）
+ * 开发小组 = metadata.cnt_dev 第 5 位为 1（算法同登录后 USER_TYPE_CNT_DEV）且未注销（status!==3）且已绑微信（value.wxu）
  */
 import { getMpAccessToken, ACCESS_TOKEN_KEY } from "./wx-mp.js";
 import { listKvUserStorageKeys, readKvUserByStorageKey } from "./kv-secure.js";
 import { roleOf } from "./auth-roles.js";
 
 export const WX_NOTIFY_TEMPLATE_ID_DEFAULT = "uJJfsDsMiUSzPv8tn8pxOozm29AR3Y9gBlzWd2JJ9So";
-export const USER_TYPE_UA = 0x10;
-export const UA_TIER_DEV_TEAM = 1;
 const NOTIFY_LINK = "https://hzdv.net/";
 const QUESTION_MAX = 60;
 const ANSWER_MAX = 200;
@@ -24,12 +22,23 @@ const MODE_LABEL = {
   prose: "AI 自由回答",
 };
 
+/**
+ * cnt_dev 第 5 位（位值 16）判定，算法与登录后 USER_TYPE_CNT_DEV 相同：
+ * 纯 0/1 串按二进制解析，否则按十进制；空或 NaN 为 0；(n & 16) !== 0 则为 1。
+ */
+function cntDevBitOn(raw) {
+  if (raw == null || String(raw).trim() === "") return 0;
+  const s = String(raw).trim();
+  const n = /^[01]+$/.test(s) ? parseInt(s, 2) : parseInt(s, 10);
+  if (!isFinite(n)) return 0;
+  return (n & 16) !== 0 ? 1 : 0;
+}
+
 export function isDevTeamMember(row) {
   if (!row) return false;
   const role = roleOf(row);
   if (role.status === 3) return false;
-  const tier = Number((row.metadata || {}).uA_Tier);
-  return (role.typeMask & USER_TYPE_UA) !== 0 && tier === UA_TIER_DEV_TEAM;
+  return cntDevBitOn((row.metadata || {}).cnt_dev) === 1;
 }
 
 export function normalizeQuestion(q) {
@@ -53,7 +62,7 @@ function fmtBeijing(ms) {
 export async function listDevTeamOpenids(kv, env, stats) {
   const out = new Set();
   const st = stats || {};
-  Object.assign(st, { keys: 0, read: 0, readErr: 0, typeA: 0, tier1: 0, typeAtier1: 0, withWxu: 0, firstErr: "" });
+  Object.assign(st, { keys: 0, read: 0, readErr: 0, cntDev: 0, withWxu: 0, firstErr: "" });
   const keys = await listKvUserStorageKeys(kv);
   st.keys = keys.length;
   for (const sk of keys) {
@@ -61,14 +70,11 @@ export async function listDevTeamOpenids(kv, env, stats) {
       const row = await readKvUserByStorageKey(kv, env, sk);
       if (!row) continue;
       st.read++;
-      const isA = (roleOf(row).typeMask & USER_TYPE_UA) !== 0;
-      const isTier1 = Number((row.metadata || {}).uA_Tier) === UA_TIER_DEV_TEAM;
-      if (isA) st.typeA++;
-      if (isTier1) st.tier1++;
-      if (isA && isTier1) st.typeAtier1++;
+      const isDev = isDevTeamMember(row);
+      if (isDev) st.cntDev++;
       const wxu = row.value && typeof row.value.wxu === "string" ? row.value.wxu.trim() : "";
       if (wxu) st.withWxu++;
-      if (wxu && isDevTeamMember(row)) out.add(wxu);
+      if (wxu && isDev) out.add(wxu);
     } catch (e) {
       st.readErr++;
       if (!st.firstErr) st.firstErr = String((e && e.message) || e).slice(0, 120);

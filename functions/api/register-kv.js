@@ -26,8 +26,9 @@ function jsonResponse(body, status = 200) {
 
 function defaultRegisterMetadata() {
   return {
-    status: 1, type: "00010000", superuser: "00000000", dbg_stf: "00000000",
-    cnt_mgr: "00000000", cnt_stf: "00000000", uA: "00010000", uB: "00000000", uC: "00000000",
+    status: 1, type: "01000000", superuser: "00000000", dbg_stf: "00000000",
+    cnt_mgr: "00000000", cnt_stf: "00000000", cnt_dev: "00000000", cnt_unspec: "00000000",
+    uA: "01000000", uB: "00000000", uC: "00000000",
     uA_Tier: 4, uB_Tier: 1, uC_Tier: 1, uC_EType: 1,
     uC_Tier_twn: "00000001", uC_Tier_cty: "00000010", uC_Tier_city: "00000100", uC_Tier_prov: "00001000",
     uC_EType1: "00000001", uC_EType2: "00000010", uC_EType3: "00000100",

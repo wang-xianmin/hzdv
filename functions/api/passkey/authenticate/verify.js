@@ -211,6 +211,7 @@ export async function onRequest(context) {
     let typeMask = 0;
     let storedUsername = "";
     let storedEmail = "";
+    let typeMeta = {};
     try {
       const kv = pickKvBinding(env);
       const userKey = String(cred.user_key);
@@ -221,6 +222,7 @@ export async function onRequest(context) {
         if (row && row.value) {
           const role = roleOf(row);
           typeMask = role.typeMask;
+          typeMeta = row.metadata && typeof row.metadata === "object" ? row.metadata : {};
           storedUsername = row.value.name != null ? String(row.value.name) : "";
           storedEmail = row.value.email != null ? String(row.value.email) : "";
           const issued = await issueSiteAuthToken(env, phone, {
@@ -250,6 +252,15 @@ export async function onRequest(context) {
         user_data: {
           type: typeMask,
           other_data: cred.user_uuid ? String(cred.user_uuid) : "",
+          ...(typeMeta.superuser != null ? { superuser: typeMeta.superuser } : {}),
+          ...(typeMeta.dbg_stf != null ? { dbg_stf: typeMeta.dbg_stf } : {}),
+          ...(typeMeta.cnt_mgr != null ? { cnt_mgr: typeMeta.cnt_mgr } : {}),
+          ...(typeMeta.cnt_stf != null ? { cnt_stf: typeMeta.cnt_stf } : {}),
+          ...(typeMeta.cnt_dev != null ? { cnt_dev: typeMeta.cnt_dev } : {}),
+          ...(typeMeta.cnt_unspec != null ? { cnt_unspec: typeMeta.cnt_unspec } : {}),
+          ...(typeMeta.uA != null ? { uA: typeMeta.uA } : {}),
+          ...(typeMeta.uB != null ? { uB: typeMeta.uB } : {}),
+          ...(typeMeta.uC != null ? { uC: typeMeta.uC } : {}),
         },
       },
     }, 200);
