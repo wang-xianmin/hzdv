@@ -1,6 +1,6 @@
 /**
  * 新人注册写入 KV：POST /api/register-kv
- * Body: { key, value, turnstileToken? }（metadata 忽略，服务器用默认值）
+ * Body: { key, value, metadata, turnstileToken? }
  * 默认须通过 Turnstile（与 verify-turnstile 同源 siteverify）；
  * Pages 环境变量：TURNSTILE_SECRET_KEY；可选 REGISTER_KV_SKIP_TURNSTILE=1/true/yes 跳过校验（仅本地排错）。
  * KV：仅写 uk:+HMAC（禁止新用户写明文 phone:）；ENCRYPTION_KEY / HMAC_SECRET 缺失 fail-closed。
@@ -22,17 +22,6 @@ function jsonResponse(body, status = 200) {
     status,
     headers: { "Content-Type": "application/json; charset=utf-8" },
   });
-}
-
-function defaultRegisterMetadata() {
-  return {
-    status: 1, type: "01000000", superuser: "00000000", dbg_stf: "00000000",
-    cnt_mgr: "00000000", cnt_stf: "00000000", cnt_dev: "00000000", cnt_unspec: "00000000",
-    uA: "01000000", uB: "00000000", uC: "00000000",
-    uA_Tier: 4, uB_Tier: 1, uC_Tier: 1, uC_EType: 1,
-    uC_Tier_twn: "00000001", uC_Tier_cty: "00000010", uC_Tier_city: "00000100", uC_Tier_prov: "00001000",
-    uC_EType1: "00000001", uC_EType2: "00000010", uC_EType3: "00000100",
-  };
 }
 
 async function verifyTurnstileWithEnv(env, token) {
@@ -90,6 +79,7 @@ export async function onRequest(context) {
     const body = await request.json();
     const key = body.key;
     const value = body.value;
+    const metadata = body.metadata;
     if (!key || typeof key !== "string") {
       return jsonResponse({ success: false, error: "Missing key" }, 400);
     }
@@ -98,9 +88,14 @@ export async function onRequest(context) {
     } catch (e) {
       return jsonResponse({ success: false, error: String(e.message || e) }, 400);
     }
-    if (typeof value !== "object" || value === null) {
+    if (
+      typeof value !== "object" ||
+      value === null ||
+      typeof metadata !== "object" ||
+      metadata === null
+    ) {
       return jsonResponse(
-        { success: false, error: "value must be an object" },
+        { success: false, error: "value and metadata must be objects" },
         400
       );
     }
@@ -160,17 +155,29 @@ export async function onRequest(context) {
       }
     }
 
-    const valueToStore = Object.assign({}, value);
-    valueToStore.g_role = 0;
-    ["tv", "pwd_hash", "wxu", "wxu_type"].forEach((k) => delete valueToStore[k]);
-
-    await writeKvUser(kv, env, key, valueToStore, defaultRegisterMetadata());
+    /**
+     * 拍板 D1/D2(v2)：服务端构造注册默认 metadata——
+     * type 缺省 '0'（九位掩码全空）、uA_Tier 缺省 0；剔除 legacy 字符串列避免双写；
+     * 凡写 type 统一盖 type_layout='v2'。
+     */
+    const metaOut = Object.assign({}, metadata || {});
+    ["superuser", "dbg_stf", "cnt_mgr", "cnt_stf", "uA", "uB", "uC"].forEach((k) => {
+      delete metaOut[k];
+    });
+    if (metaOut.type == null || String(metaOut.type).trim() === "") {
+      metaOut.type = "0";
+    }
+    if (metaOut.uA_Tier == null) {
+      metaOut.uA_Tier = 0;
+    }
+    metaOut.type_layout = "v2";
+    await writeKvUser(kv, env, key, value, metaOut);
     let indexSynced = true;
     let indexSyncWarning = "";
     try {
       const phone = getPhoneFromPhoneKey(key);
       if (phone) {
-        await upsertUserGroupIndex(kv, env, phone, valueToStore);
+        await upsertUserGroupIndex(kv, env, phone, value);
       }
     } catch (e) {
       indexSynced = false;

@@ -2,7 +2,8 @@
  * 用户密码登录校验（KV 实时）：POST /api/check-user
  * Body: { phone, password?, email?, username? }
  * 返回：{ success, phone_exists, password_matches|null, password_verifiable|null,
- *   user_status, email_matches, username_matches, stored_email, stored_username, is_superuser }
+ *   user_status, email_matches, username_matches, stored_email, stored_username, is_superuser,
+ *   user_type（成功分支为归一后的九位掩码；未命中分支为 0） }
  * password_verifiable：已传 password 且 KV 中存在可校验材料时为 true；无材料为 false；未传 password 为 null。
  */
 import {
@@ -13,12 +14,11 @@ import {
 } from "../lib/kv-secure.js";
 import { normalizePasswordForAuth } from "../lib/password-normalize.js";
 import { kvBindingHint, pickKvBinding } from "../lib/kv-binding.js";
-import { issueAuthToken, buildAuthCookie, superFactorStep, buildClearMfaCookie } from "../lib/auth-token.js";
 
-function jsonResponse(body, status = 200, extraHeaders = {}) {
+function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "Content-Type": "application/json; charset=utf-8", ...extraHeaders },
+    headers: { "Content-Type": "application/json; charset=utf-8" },
   });
 }
 
@@ -96,6 +96,14 @@ export async function onRequest(context) {
       throw lastReadErr;
     }
     if (!row) {
+      const passwordDebugNoRow =
+        passwordNorm !== ""
+          ? {
+              input_len: passwordNorm.length,
+              kv_pwd_field_len: null,
+              kv_pwd_hash_field_len: null,
+            }
+          : null;
       return jsonResponse({
         success: true,
         phone_exists: false,
@@ -109,6 +117,7 @@ export async function onRequest(context) {
         user_type: 0,
         user_group: "",
         user_g_role: 0,
+        ...(passwordDebugNoRow ? { password_debug: passwordDebugNoRow } : {}),
       });
     }
 
@@ -180,6 +189,38 @@ export async function onRequest(context) {
       }
     }
 
+    /**
+     * 调试：明文 pwd、NFKC 后与输入等长、仍校验失败时，标出首个不同下标及两侧字符。
+     * 若 KV.pwd 原文长度与输入长度相同，则不附加逐位字符（调试窗约定同长不展示，减敏感面）。
+     */
+    if (
+      passwordDebug &&
+      passwordNorm &&
+      passwordMatches === false &&
+      passwordMaterialPresent &&
+      pwdRaw &&
+      pwdRaw.charAt(0) !== "$" &&
+      pwdRawNorm.length === passwordNorm.length &&
+      pwdRaw.length !== passwordNorm.length
+    ) {
+      for (let i = 0; i < passwordNorm.length; i++) {
+        if (passwordNorm.charAt(i) !== pwdRawNorm.charAt(i)) {
+          passwordDebug.first_wrong_index_0based = i;
+          passwordDebug.first_wrong_char_input = passwordNorm.charAt(i);
+          passwordDebug.first_wrong_char_kv = pwdRawNorm.charAt(i);
+          if (i < pwdRaw.length) {
+            passwordDebug.first_wrong_char_kv_raw = pwdRaw.charAt(i);
+          }
+          break;
+        }
+      }
+    }
+
+    /**
+     * 归一 metadata.type（纯 0/1 串按二进制，否则十进制）；D2 过渡期兼容层：
+     * type 空而 legacy uA 非空时只读回退解析 uA（存量已是新位，不移位）。
+     * 与客户端 parseUserTypeMask 保持一致；list-kv-users 审计归零后删除回退。
+     */
     const typeRaw = String(
       meta.type != null && String(meta.type) !== "" ? meta.type : meta.uA != null ? meta.uA : ""
     ).trim();
@@ -205,84 +246,34 @@ export async function onRequest(context) {
     const avatar_data_url =
       value.avatar_data_url != null ? String(value.avatar_data_url) : "";
 
-    let authCookieHeader = null;
-    let authPayload = null;
-    let superPending = false;
-    let clearMfaCookie = null;
-    if (passwordMatches === true && userStatus !== 3) {
-      try {
-        const tv = Number(value.tv || 0);
-        if (isSuperuser) {
-          // 密码是唯一的 'a' 因素来源；与相机/邮箱半程配对后签完整令牌
-          const step = await superFactorStep(env, request, phone, tv, "a");
-          authCookieHeader = step.cookie;
-          authPayload = step.full ? { exp: step.exp } : null;
-          superPending = !step.full;
-          // 完整令牌已签发 → 清掉半程凭证，避免旧半程跨会话被复用
-          if (step.full) clearMfaCookie = buildClearMfaCookie();
-        } else {
-          const { token, exp } = await issueAuthToken(env, phone, { tv });
-          authCookieHeader = buildAuthCookie(token, 2592000);
-          authPayload = { exp };
-        }
-      } catch (tokenErr) {
-        console.error("check-user token issue:", tokenErr);
-      }
-    }
-
-    const reveal = passwordMatches === true || emailMatches === true;
-
-    const setCookies = authCookieHeader ? [authCookieHeader] : [];
-    if (authCookieHeader && clearMfaCookie) setCookies.push(clearMfaCookie);
-    // 必须逐个 append：Headers/Response 结构体里传数组会被拼成一条逗号连起来的 Set-Cookie，
-    // 浏览器只会当作单个 cookie 解析，导致后一个 cookie 丢失（对齐 wx-login-poll 的写法）。
-    const resp = jsonResponse({
+    return jsonResponse({
       success: true,
       phone_exists: true,
       password_matches: passwordMatches,
       password_verifiable: passwordNorm ? passwordMaterialPresent : null,
       /** 与 Functions 内验证实现对照；argon2id_* 时校验恒 false，需明文 pwd 或改密迁移为 kdf_sha256 */
       password_hash_format: passwordHashFormat,
-      ...(passwordDebug && passwordMatches === true ? { password_debug: passwordDebug } : {}),
+      ...(passwordDebug ? { password_debug: passwordDebug } : {}),
       user_status: userStatus,
       email_matches: emailMatches,
       username_matches: usernameMatches,
-      stored_email: reveal ? storedEmail : "",
-      stored_username: reveal ? storedUsername : "",
-      is_superuser: reveal ? isSuperuser : false,
-      user_data: reveal ? {
+      stored_email: storedEmail,
+      stored_username: storedUsername,
+      is_superuser: isSuperuser,
+      /** 拍板 D6：与未命中分支 user_type:0 对齐；成功分支回带归一后的九位掩码 */
+      user_type: typeMask,
+      user_data: {
         other_data: value.uuid != null ? String(value.uuid) : "",
-        pwd: passwordMatches === true ? String(value.pwd ?? "") : "",
+        pwd: value.pwd != null ? String(value.pwd) : "",
         avatar_url,
         avatar_r2_key,
         avatar_data_url,
         type: typeMask,
+        user_type: typeMask,
         group: userGroup,
         g_role: userGRole,
-        ...(meta.superuser != null ? { superuser: meta.superuser } : {}),
-        ...(meta.dbg_stf != null ? { dbg_stf: meta.dbg_stf } : {}),
-        ...(meta.cnt_mgr != null ? { cnt_mgr: meta.cnt_mgr } : {}),
-        ...(meta.cnt_stf != null ? { cnt_stf: meta.cnt_stf } : {}),
-        ...(meta.cnt_dev != null ? { cnt_dev: meta.cnt_dev } : {}),
-        ...(meta.cnt_unspec != null ? { cnt_unspec: meta.cnt_unspec } : {}),
-        ...(meta.uA != null ? { uA: meta.uA } : {}),
-        ...(meta.uB != null ? { uB: meta.uB } : {}),
-        ...(meta.uC != null ? { uC: meta.uC } : {}),
-      } : {
-        other_data: "",
-        pwd: "",
-        avatar_url: "",
-        avatar_r2_key: "",
-        avatar_data_url: "",
-        type: 0,
-        group: "",
-        g_role: 0,
       },
-      ...(authPayload ? { auth: authPayload } : {}),
-      ...(superPending ? { super_pending: true } : {}),
-    }, 200);
-    for (const c of setCookies) resp.headers.append("Set-Cookie", c);
-    return resp;
+    });
   } catch (e) {
     console.error("check-user:", e);
     return jsonResponse(

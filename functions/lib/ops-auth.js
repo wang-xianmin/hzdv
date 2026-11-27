@@ -4,6 +4,11 @@
  * - assertOpsAccess：超管 | 技术调试员（AI 模型库、系统设置等）
  * - assertHeroOpsAccess：超管 | 技术调试员 | 内容审核总负责 | 内容审核员（网站背景、产品目录、企业问答、发布栏）
  * - assertAnyLoginAccess：任意已注册用户（KV 有记录即可；AI 对话等，不与运维绑定）
+ *
+ * type 掩位对照（type_layout=v2 九位）：0x01 超管 / 0x02 技术调试员 / 0x04 内容审核总负责 /
+ * 0x08 内容审核员 / 0x10 内容开发 / 0x20 内容未分类 / 0x40 A类 / 0x80 B类 / 0x100 C类。
+ * 本文件仅用字面量掩码（MASK_SUPER/DBG/CNT_MGR/CNT_STF），不新增服务端授权语义：
+ * 内容开发/内容未分类/A/B/C 类位不授予任何运维或翻译器权限（拍板 D5）。
  */
 
 import { requireAuth } from "./auth-token.js";

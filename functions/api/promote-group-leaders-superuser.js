@@ -63,11 +63,12 @@ function metadataWithSuperBit(meta) {
       ? String(m.type)
       : m.uA != null && String(m.uA) !== ""
         ? String(m.uA)
-        : "00010000";
+        : "0";
   const parsed = parseTypeField(typeStr);
   const next = formatTypeField(parsed);
   m.type = next;
-  m.uA = next;
+  /** 拍板 D1/D2：不再双写 legacy uA 列（uA 仅保留只读回退）；type 写盖 type_layout='v2' */
+  m.type_layout = "v2";
   return m;
 }
 

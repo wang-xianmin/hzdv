@@ -1,21 +1,18 @@
 /**
  * 已注册用户更新 KV 中的 value/metadata（个人资料用户名、密码等）
- * 须携带有效登录令牌（hz_auth）；权限见 ../lib/auth-roles.js
  * POST /api/update-kv-profile
  * Body: { key, value, metadata } — 须为完整对象；key 必须在 KV 中已存在。
+ * 不要求 Turnstile（与持有本地收据的浏览器会话一致；若需加强可后续加鉴权）。
  * KV 加密见 ../lib/kv-secure.js。
  */
 import { assertPhoneKey, readKvUser, writeKvUser } from "../lib/kv-secure.js";
 import { getPhoneFromPhoneKey, syncUserGroupIndexOnUpdate } from "../lib/group-index.js";
 import { kvBindingHint, pickKvBinding } from "../lib/kv-binding.js";
-import { requireAuth, issueAuthToken, buildAuthCookie } from "../lib/auth-token.js";
-import { roleOf, parseTypeMask, keepServerManagedValueKeys, sanitizeValueForViewer, authRequiredResponse, forbiddenResponse, deletedCallerResponse } from "../lib/auth-roles.js";
-import { normalizePasswordForAuth } from "../lib/password-normalize.js";
 
-function jsonResponse(body, status = 200, extraHeaders = {}) {
+function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "Content-Type": "application/json; charset=utf-8", ...extraHeaders },
+    headers: { "Content-Type": "application/json; charset=utf-8" },
   });
 }
 
@@ -35,17 +32,11 @@ export async function onRequest(context) {
       503
     );
   }
-
-  const auth = await requireAuth(context);
-  if (!auth) return authRequiredResponse();
-  const caller = roleOf(auth);
-  if (caller.status === 3) return deletedCallerResponse();
-
   try {
     const body = await request.json();
     const key = body.key;
     const value = body.value;
-    const metadata = body.metadata ?? {};
+    const metadata = body.metadata;
     if (!key || typeof key !== "string") {
       return jsonResponse({ success: false, error: "Missing key" }, 400);
     }
@@ -57,7 +48,8 @@ export async function onRequest(context) {
     if (
       typeof value !== "object" ||
       value === null ||
-      (metadata !== undefined && metadata !== null && typeof metadata !== "object")
+      typeof metadata !== "object" ||
+      metadata === null
     ) {
       return jsonResponse(
         { success: false, error: "value and metadata must be objects" },
@@ -85,35 +77,9 @@ export async function onRequest(context) {
       );
     }
 
-    const target = roleOf(prev);
-    const isSelf = key === "phone:" + auth.phone;
-
-    let valueIn, metaIn;
-    if (caller.isSuper) {
-      valueIn = value;
-      metaIn = metadata;
-    } else if (caller.isDbg) {
-      if (target.isSuper) return forbiddenResponse("无权限修改超管账号");
-      valueIn = value;
-      metaIn = metadata;
-    } else {
-      if (!isSelf) return forbiddenResponse();
-      const allowedKeys = ["name", "email", "pwd", "avatar_url", "avatar_r2_key", "avatar_data_url"];
-      valueIn = {};
-      for (const k of allowedKeys) {
-        if (Object.prototype.hasOwnProperty.call(value, k)) valueIn[k] = value[k];
-      }
-      metaIn = {};
-    }
-
-    if (valueIn.pwd == null || String(valueIn.pwd).trim() === "") {
-      valueIn = { ...valueIn };
-      delete valueIn.pwd;
-    }
-
-    const valueMerged = Object.assign({}, prev.value || {}, valueIn);
-    const metadataMerged = Object.assign({}, prev.metadata || {}, metaIn);
-    keepServerManagedValueKeys(valueMerged, prev.value);
+    /** 与已有 KV 浅合并，避免客户端收据缺字段时覆盖掉权限等 metadata / value */
+    const valueMerged = Object.assign({}, prev.value || {}, value || {});
+    const metadataMerged = Object.assign({}, prev.metadata || {}, metadata || {});
     /** 已废弃：原「权限设置」列，保存时从 metadata 剔除 */
     [
       "uA_perms",
@@ -132,29 +98,9 @@ export async function onRequest(context) {
         delete metadataMerged[k];
       }
     });
-
-    if (caller.isDbg && !caller.isSuper) {
-      const newRole = roleOf({ value: valueMerged, metadata: metadataMerged });
-      const addSuper = (newRole.isSuper && !target.isSuper) ||
-        ((parseTypeMask(metadataMerged.uA) & 1) !== 0 && (parseTypeMask((prev.metadata || {}).uA) & 1) === 0);
-      if (addSuper) return forbiddenResponse("技术调试员不能授予超管权限");
-    }
-
-    const prevPwd = String((prev.value || {}).pwd == null ? "" : prev.value.pwd);
-    const pwdChanged = valueIn.pwd != null && normalizePasswordForAuth(String(valueIn.pwd)) !== prevPwd;
-    let newCookie = null, authPayload = null;
-    if (pwdChanged) {
-      const newTv = Number((prev.value || {}).tv || 0) + 1;
-      valueMerged.tv = newTv;
-      if (isSelf) {
-        try {
-          const { token, exp } = await issueAuthToken(env, auth.phone, { tv: newTv, mfa: caller.isSuper });
-          newCookie = buildAuthCookie(token, 2592000);
-          authPayload = { exp };
-        } catch (e) {
-          return jsonResponse({ success: false, error: "令牌签发失败，密码未修改" }, 500);
-        }
-      }
+    /** 拍板 D2(v2)：落库 metadata 含 type 的写操作统一盖 type_layout='v2'（九位新布局） */
+    if (Object.prototype.hasOwnProperty.call(metadataMerged, "type")) {
+      metadataMerged.type_layout = "v2";
     }
     const valueToStore = valueMerged;
 
@@ -189,13 +135,12 @@ export async function onRequest(context) {
     return jsonResponse({
       success: true,
       key,
-      value: sanitizeValueForViewer(valueToStore, caller.isSuper || isSelf),
+      value: valueToStore,
       metadata: metadataMerged,
       index_sync: indexSync,
       index_synced: indexSynced,
       index_sync_warning: indexSyncWarning,
-      ...(authPayload ? { auth: authPayload } : {}),
-    }, 200, newCookie ? { "Set-Cookie": newCookie } : {});
+    });
   } catch (e) {
     console.error("update-kv-profile:", e);
     return jsonResponse(
